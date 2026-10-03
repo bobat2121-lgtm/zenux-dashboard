@@ -1,15 +1,15 @@
-# ZENUX dashboard theme: light editorial look (brand green on white, light-gray bands). feed.css carries the rest.
+# ZENUX dashboard theme: a black base with white accents, the brand-green top bar and footer. feed.css carries the rest.
 [theme]
-base = "light"
+base = "dark"
 primaryColor = "#006341"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F7F7F7"
-textColor = "#444444"
+backgroundColor = "#0A0A0A"
+secondaryBackgroundColor = "#141414"
+textColor = "#EDEDED"
 font = "sans serif"
-linkColor = "#006341"
-borderColor = "#C4C4C4"
-baseRadius = "4px"
-buttonRadius = "4px"
+linkColor = "#3DDC97"
+borderColor = "#2A2A2A"
+baseRadius = "6px"
+buttonRadius = "6px"
 
 [browser]
 gatherUsageStats = false

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import html
+import zlib
 from datetime import datetime, timezone, tzinfo
 from email.utils import parsedate_to_datetime
 from functools import lru_cache
@@ -20,6 +21,10 @@ UTC = timezone.utc
 MIN_TIME = datetime.min.replace(tzinfo=UTC)
 
 MODULE_NAMES = {"ai-infra": "AI infrastructure", "defense-unmanned": "defense unmanned"}
+MODULE_COLORS = {"ai-infra": "#A78BFA", "defense-unmanned": "#2DD4BF"}  # violet, teal
+TAG_COLORS = ("#FBBF24", "#F472B6", "#38BDF8", "#A3E635")  # amber, pink, sky, lime: any other module, by a stable hash
+TAG_FILL = 0.14  # a tag's translucent fill; its text stays at 4.5:1 or more on the dark cards
+TAG_LINE = 0.55  # a tag's border
 
 PILL_CLASS = {
     "ok": "ok", "healthy": "ok", "done": "ok", "active": "ok", "approved": "ok", "published": "ok", "free": "ok",
@@ -250,6 +255,22 @@ def module_name(module_id: Any) -> str:
     """A module's display name: "ai-infra" -> "AI infrastructure"; an unknown id with its dashes as spaces."""
     mid = one_line(module_id)
     return MODULE_NAMES.get(mid.lower()) or mid.replace("-", " ").replace("_", " ")
+
+
+def module_color(module_id: Any) -> str:
+    """A module's tag colour: fixed for the known modules, else one of TAG_COLORS picked by a stable hash of the id."""
+    mid = one_line(module_id).lower()
+    return MODULE_COLORS.get(mid) or TAG_COLORS[zlib.crc32(mid.encode("utf-8")) % len(TAG_COLORS)]
+
+
+def rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
+def tag_style(color: str) -> str:
+    """Inline style for a coloured pill: coloured text, a coloured border and a tinted translucent fill."""
+    return f"color:{color};border-color:{rgba(color, TAG_LINE)};background:{rgba(color, TAG_FILL)}"
 
 
 def join_and(parts: list[str]) -> str:

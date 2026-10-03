@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import zlib
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -271,7 +272,8 @@ class ViewShapeTests(unittest.TestCase):
                          ["defense-unmanned", "ai-infra"])
         self.assertEqual(feed_view.item_modules({}), [])
         self.assertEqual(feed_view.module_tags_html({"modules": ["ai-infra", "<x>"]}),
-                         '<span class="module-tag">AI INFRASTRUCTURE</span><span class="module-tag">&lt;X&gt;</span>')
+                         f'<span class="module-tag" style="{fmt.tag_style("#A78BFA")}">AI INFRASTRUCTURE</span>'
+                         f'<span class="module-tag" style="{fmt.tag_style(fmt.module_color("<x>"))}">&lt;X&gt;</span>')
         self.assertNotIn("score", feed_view.item_html(fx.editions(1)["editions"][0]["items"][0]).lower())
 
     def test_fallback_summary(self):
@@ -298,6 +300,47 @@ class ViewShapeTests(unittest.TestCase):
         self.assertEqual(feed_view.summary_of({"summary": None}, items), feed_view.fallback_summary(list(items)))
         self.assertEqual(feed_view.note_of({"note": "  Rank 2 is paywalled.\n"}), "Rank 2 is paywalled.")
         self.assertEqual(feed_view.note_of({"note": "   "}), "")
+
+    def test_module_colors(self):
+        self.assertEqual(fmt.module_color("ai-infra"), "#A78BFA")  # violet
+        self.assertEqual(fmt.module_color("defense-unmanned"), "#2DD4BF")  # teal
+        self.assertEqual(fmt.module_color("AI-Infra"), "#A78BFA")
+        self.assertEqual(fmt.TAG_COLORS, ("#FBBF24", "#F472B6", "#38BDF8", "#A3E635"))  # amber, pink, sky, lime
+        others = ["space-launch", "grid-power", "coverage", "biotech", "nuclear", "shipbuilding", "x"]
+        for mid in others:  # any other module: a palette colour, the same in every process (no salted hash())
+            self.assertIn(fmt.module_color(mid), fmt.TAG_COLORS)
+            self.assertEqual(fmt.module_color(mid),
+                             fmt.TAG_COLORS[zlib.crc32(mid.encode("utf-8")) % len(fmt.TAG_COLORS)])
+        self.assertGreater(len({fmt.module_color(m) for m in others}), 1)  # the hash spreads modules over the palette
+        self.assertEqual(fmt.tag_style("#2DD4BF"),
+                         "color:#2DD4BF;border-color:rgba(45,212,191,0.55);background:rgba(45,212,191,0.14)")
+
+    def test_tag_text_stays_readable_on_its_tinted_fill(self):
+        """WCAG: small text needs 4.5:1. A pill's fill is its colour at TAG_FILL over the darkest-to-lightest dark
+        surfaces it sits on (page, card, hovered row)."""
+        def channel(c: float) -> float:
+            c /= 255
+            return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+        def luminance(rgb) -> float:
+            r, g, b = (channel(c) for c in rgb)
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+        def rgb(hex_color: str) -> tuple[int, int, int]:
+            h = hex_color.lstrip("#")
+            return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+        css_pills = ("#34D399", "#FBBF24", "#F87171", "#38BDF8")  # status ok, warn, bad; sky chips (feed.css)
+        colours = list(fmt.MODULE_COLORS.values()) + list(fmt.TAG_COLORS) + list(css_pills)
+        for surface in ("#0A0A0A", "#141414", "#1A1A1A"):
+            for colour in colours:
+                fill = tuple(round(fmt.TAG_FILL * c + (1 - fmt.TAG_FILL) * s) for c, s in zip(rgb(colour), rgb(surface)))
+                hi, lo = sorted((luminance(rgb(colour)), luminance(fill)), reverse=True)
+                with self.subTest(colour=colour, surface=surface):
+                    self.assertGreaterEqual((hi + 0.05) / (lo + 0.05), 4.5)
+        css = (helpers.DASHBOARD / "feed.css").read_text(encoding="utf-8").lower()
+        for colour in css_pills:
+            self.assertIn(colour.lower(), css)
 
     def test_status_pills_and_inline_png(self):
         self.assertEqual(fmt.pill("missing"), '<span class="status-pill missing">missing</span>')

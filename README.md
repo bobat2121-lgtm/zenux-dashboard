@@ -1,12 +1,12 @@
 # ZENUX dashboard
 
-The Zenux news-intelligence dashboard, built with Streamlit. It is a Zenux app, separate from the legacy PHYSAI news dashboard, and never talks to the legacy system. Its look is a light editorial design: a full-width brand-green top bar (the ZENUX mark and wordmark, then the five tabs), white cards on light-gray bands, green feature bands for edition headers, and a green footer. The theme is in `.streamlit/config.toml`; `feed.css` carries the rest.
+The Zenux news-intelligence dashboard, built with Streamlit. It is a Zenux app, separate from the legacy PHYSAI news dashboard, and never talks to the legacy system. Its look is a black base with white accents: a full-width brand-green top bar (the ZENUX mark and wordmark, then the five tabs), dark cards with hairline borders, bold white headlines, coloured tags (violet for ai-infra, teal for defense-unmanned, a stable palette colour for any other module), and a green footer. The theme is in `.streamlit/config.toml`; `feed.css` carries the rest.
 
 ## Tabs
 
 | Tab | What it shows | Hub routes |
 | --- | --- | --- |
-| **Feed** | Published editions, newest first. Each edition opens with a green band: its one-sentence summary as the title (for an older edition without one, a sentence built from its items, such as "9 items across AI infrastructure (4) and defense unmanned (5), led by ..."), the edition line and stats tiles (items, reviewed, lead 90+, digest 70-89, items per module). Each item card shows its source, its headline and its module tags, and opens to its factual text, metrics and sources. The Grader's grading note sits in a collapsed **Grading notes** expander at the bottom of its edition. Use **Search** to filter the loaded items, and **Load earlier editions** to page back. | `GET /editions?limit=10&before=` |
+| **Feed** | Published editions, newest first. Each edition opens with its line (edition, age, time, items) and its one-sentence summary as the title (for an older edition without one, a sentence built from its items, such as "9 items across AI infrastructure (4) and defense unmanned (5), led by ..."). The latest edition is the hero: a LATEST pill, and on the right 2x2 tiles (items, reviewed, lead 90+, digest 70-89) over a bar that splits its items by module, with a legend. Each item card shows its source, its headline and its module tags, and opens to its factual text, metrics and sources. The Grader's grading note sits in a collapsed **Grading notes** expander at the bottom of its edition. Use **Search** to filter the loaded items, and **Load earlier editions** to page back. | `GET /editions?limit=10&before=` |
 | **Rejected** | Graded events that did not make an edition: rejected, duplicate or already covered. Each shows its score, tier, reason code and the Grader's rationale. You can filter by window (1–14 days), module and decision. | `GET /rejected?days=N` |
 | **Rules** | The learned layer of the rubric. Write a rule or a worked example, approve or reject the Zenux Rule refiner's proposal (editing it first if you like), and retire active rules. | `GET /rules`, `POST /rules/drafts`, `POST /rules/:id/{approve,reject,retire}` |
 | **Radar** | Changes to what the workspace collects. Ask to track a source, report a missed story or ask for new coverage, then approve or reject the Zenux Radar scout's proposal. | `GET /radar`, `POST /radar/requests`, `POST /radar/:id/{approve,reject}` |
@@ -126,7 +126,7 @@ To rotate a token or the PIN, edit the app's secrets. Community Cloud restarts t
 | Path | Purpose |
 | --- | --- |
 | `streamlit_app.py` | Entry point: page config, masthead, navigation, Owner popover, view dispatch |
-| `feed.css` | The design system: Roboto, brand green bars and bands, cards, pills, tables |
+| `feed.css` | The design system: Roboto, the black base, the brand-green bars, cards, the hero, coloured pills, tables |
 | `assets/zenux-mark.png`, `assets/zenux-favicon.png` | The logo mark (inlined into the top bar) and the browser-tab icon |
 | `zenux_dashboard/config.py` | Parses and validates `st.secrets` into workspaces and modules |
 | `zenux_dashboard/api.py` | `requests` client for the hub and module Workers (bearer tokens in headers only) |

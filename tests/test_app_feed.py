@@ -13,8 +13,10 @@ import fixtures as fx
 import streamlit as st
 from helpers import (AppCase, BETA_HUB, BETA_READ, DASHBOARD, FakeResponse, OWNER, PILOT_HUB, PIN, READ, beta_secrets,
                      one_workspace, two_workspaces, wrong_pin)
+from zenux_dashboard import fmt
 
 ITEM_CARD = re.compile(r'<article class="feed-item">.*?</article>')
+BLANK_LINE = chr(10) * 2
 
 
 FOOTER = '<footer class="zx-footer">ZENUX · internal research tool · data from public sources</footer>'
@@ -59,19 +61,26 @@ class ShellTests(AppCase):
         self.assertTrue(icon.is_file())
         self.assertEqual(spy.call_args.kwargs["page_title"], "ZENUX")
 
-    def test_theme_is_light_and_green(self):
+    def test_theme_is_black_with_the_brand_green(self):
         with open(DASHBOARD / ".streamlit" / "config.toml", "rb") as handle:
             theme = tomllib.load(handle)["theme"]
         self.assertEqual(
             {k: theme[k] for k in ("base", "primaryColor", "backgroundColor", "secondaryBackgroundColor", "textColor",
                                    "font")},
-            {"base": "light", "primaryColor": "#006341", "backgroundColor": "#FFFFFF",
-             "secondaryBackgroundColor": "#F7F7F7", "textColor": "#444444", "font": "sans serif"})
+            {"base": "dark", "primaryColor": "#006341", "backgroundColor": "#0A0A0A",
+             "secondaryBackgroundColor": "#141414", "textColor": "#EDEDED", "font": "sans serif"})
         css = (DASHBOARD / "feed.css").read_text(encoding="utf-8")
         self.assertTrue(css.lstrip().startswith("/*") and "@import url(\"https://fonts.googleapis.com/css2?family=Roboto"
                                                          ":wght@400;500;700;900" in css.split("{", 1)[0])
-        for dark in ("#060709", "#0c0e12", "backdrop-filter"):  # the old dark theme is gone
-            self.assertNotIn(dark, css.lower())
+        tokens = dict(re.findall(r"(--zx-[a-z-]+):\s*(#[0-9a-f]{6})", css))
+        # the CSS surfaces match the theme: near-black page, dark cards, hairlines, light text, gray meta
+        self.assertEqual(tokens["--zx-bg"], theme["backgroundColor"].lower())
+        self.assertEqual(tokens["--zx-card"], theme["secondaryBackgroundColor"].lower())
+        self.assertEqual(tokens["--zx-text"], theme["textColor"].lower())
+        self.assertEqual((tokens["--zx-muted"], tokens["--zx-line"]), ("#9a9a9a", "#2a2a2a"))
+        self.assertEqual(tokens["--zx-green"], "#006341")  # the top bar, the footer and primary buttons stay on brand
+        for light in ("#f7f7f7", "#e3e3e3", "#c4c4c4", "--zx-band"):  # the light design's surfaces are gone
+            self.assertNotIn(light, css.lower())
 
     def test_footer_on_every_page(self):
         self.http.on("GET", PILOT_HUB + "/editions", fx.editions())
@@ -130,36 +139,48 @@ class FeedTests(AppCase):
         self.http.on("GET", PILOT_HUB + "/editions", fx.editions())
 
     def edition_blocks(self, at) -> list[str]:
-        """The edition card HTML blocks (band and items), newest first."""
+        """The edition card HTML blocks (header and items), newest first."""
         return [str(m.value) for m in at.markdown if str(m.value).startswith('<section class="feed-edition')]
 
-    def test_editions_render_newest_first_as_green_bands_over_item_cards(self):
+    def test_editions_render_newest_first_with_the_hero_on_the_latest(self):
         at = self.app()
         self.assert_clean(at)
         html = self.html(at)
+        latest, older = self.edition_blocks(at)
         self.assertLess(html.index("Edition #12"), html.index("Edition #11"))
         self.assertEqual(html.count('<span class="latest-badge">LATEST</span>'), 1)
-        self.assertIn('<section class="feed-edition latest-edition"><header class="edition-band">'
-                      '<span class="latest-badge">LATEST</span><div class="edition-title" role="heading" aria-level="2">',
-                      html)
-        self.assertIn('<div class="edition-meta"><span class="edition-label">Edition #12</span>'
-                      '<span aria-hidden="true">·</span><span>2h ago</span>', html)
-        self.assertIn('<span aria-hidden="true">·</span><span>2 items</span></div>', html)
+        # the hero: the kicker (LATEST, edition, age, time, items), the summary as the title, then the stats panel
+        self.assertTrue(latest.startswith(
+            '<section class="feed-edition latest-edition"><header class="edition-head has-stats"><div class="edition-main">'
+            '<div class="edition-kicker"><span class="latest-badge">LATEST</span><span class="edition-label">Edition #12'
+            '</span><span aria-hidden="true">·</span><span>2h ago</span><span aria-hidden="true">·</span><span>'))
+        self.assertIn('<span aria-hidden="true">·</span><span>2 items</span></div>'
+                      '<div class="edition-title" role="heading" aria-level="2">2 items across AI infrastructure (1) and '
+                      'defense unmanned (1), led by Neocloud signs 200 MW &lt;lease&gt; with hyperscaler.</div></div>'
+                      '<div class="edition-stats"><div class="stat-grid">', latest)
+        # 2x2 tiles: white ITEMS and REVIEWED, orange LEAD 90+, amber DIGEST 70-89
+        self.assertIn('<div class="stat-grid">'
+                      '<div class="stat"><div class="stat-n">2</div><div class="stat-l">ITEMS</div></div>'
+                      '<div class="stat"><div class="stat-n">41</div><div class="stat-l">REVIEWED</div></div>'
+                      '<div class="stat stat-high"><div class="stat-n">1</div><div class="stat-l">LEAD 90+</div></div>'
+                      '<div class="stat stat-medium"><div class="stat-n">1</div><div class="stat-l">DIGEST 70–89</div></div>'
+                      '</div>', latest)
+        # the module split bar and its legend: violet ai-infra, teal defense-unmanned
+        self.assertIn('<div class="theme-bar" aria-hidden="true"><span style="flex-grow:1;background:#A78BFA"></span>'
+                      '<span style="flex-grow:1;background:#2DD4BF"></span></div>'
+                      '<div class="theme-legend"><span><i style="background:#A78BFA"></i>AI-INFRA 1</span>'
+                      '<span><i style="background:#2DD4BF"></i>DEFENSE-UNMANNED 1</span></div></div></header>', latest)
+        # an older edition: the kicker and its title, no stats panel
+        self.assertTrue(older.startswith('<section class="feed-edition"><header class="edition-head"><div class="edition-main">'
+                                         '<div class="edition-kicker"><span class="edition-label">Edition #11</span>'))
+        self.assertNotIn("stat-grid", older)
+        self.assertNotIn("theme-bar", older)
         self.assertIn('<div class="rank-marker">01</div>', html)
-        # escaped headline and text; the blank line in the text never reaches the HTML block
+        # bold white headlines (the colour is the stylesheet's); escaped headline and text, no blank line in the block
         self.assertIn('<div class="feed-item-headline">Neocloud signs 200 MW &lt;lease&gt; with hyperscaler</div>', html)
         self.assertIn("critical IT capacity.<br>Energization is planned for 2027.", html)
-        # the source line above the headline, without a module dot
+        # the source line above the headline
         self.assertIn('<div class="feed-source">Company newsroom</div><details class="feed-details">', html)
-        self.assertNotIn("feed-theme", html)
-        # stats tiles inside the band, every edition, with per-module counts
-        for tile in ('<div class="stat"><div class="stat-n">2</div><div class="stat-l">ITEMS</div></div>',
-                     '<div class="stat"><div class="stat-n">41</div><div class="stat-l">REVIEWED</div></div>',
-                     '<div class="stat"><div class="stat-n">1</div><div class="stat-l">LEAD 90+</div></div>',
-                     '<div class="stat"><div class="stat-n">1</div><div class="stat-l">DIGEST 70–89</div></div>',
-                     '<div class="stat stat-module"><div class="stat-n">1</div><div class="stat-l">AI INFRASTRUCTURE</div></div>',
-                     '<div class="stat stat-module"><div class="stat-n">1</div><div class="stat-l">DEFENSE UNMANNED</div></div>'):
-            self.assertEqual(html.count(tile), 2, tile)
         # metrics, sources, tags and the owner's earlier grade
         self.assertIn('<span class="feed-metric">Critical IT <b>200 MW</b></span>', html)
         self.assertIn('<span class="feed-metric">Term <b>15 years</b></span>', html)
@@ -169,7 +190,7 @@ class FeedTests(AppCase):
         self.assertIn('<span class="zx-chip tier">Tier 3 · catalyst</span>', html)
         # an unsafe source link is dropped, never rendered as a link
         self.assertNotIn("javascript:", html)
-        self.assertNotIn("\n\n", html)
+        self.assertNotIn(BLANK_LINE, html)
         call = self.http.find("GET", PILOT_HUB + "/editions")[0]
         self.assertEqual(call.params, {"limit": 10})
         self.assertEqual(call.bearer, READ)
@@ -203,17 +224,19 @@ class FeedTests(AppCase):
         self.assertIn('<div class="edition-title" role="heading" aria-level="2">9 items across AI infrastructure (4) '
                       'and defense unmanned (5), led by Neocloud signs 200 MW &lt;lease&gt; with hyperscaler.</div>',
                       block)
-        self.assertIn('<div class="stat stat-module"><div class="stat-n">4</div><div class="stat-l">AI INFRASTRUCTURE</div>',
-                      block)
-        self.assertIn('<div class="stat stat-module"><div class="stat-n">5</div><div class="stat-l">DEFENSE UNMANNED</div>',
-                      block)
+        self.assertIn('<div class="stat"><div class="stat-n">9</div><div class="stat-l">ITEMS</div></div>', block)
+        self.assertIn('<span style="flex-grow:4;background:#A78BFA"></span><span style="flex-grow:5;background:#2DD4BF">'
+                      '</span>', block)
+        self.assertIn('<span><i style="background:#A78BFA"></i>AI-INFRA 4</span>'
+                      '<span><i style="background:#2DD4BF"></i>DEFENSE-UNMANNED 5</span>', block)
 
     def test_grading_note_only_in_a_collapsed_expander_at_the_bottom_of_its_edition(self):
         at = self.app()
         self.assert_clean(at)
-        for block in self.edition_blocks(at):
+        for block in self.edition_blocks(at):  # never in the hero or any edition header
             self.assertNotIn("note", block.lower())
             self.assertNotIn("Two items cleared the bar.", block)
+            self.assertNotIn("Edition 11 note", block)
         self.assertNotIn("edition-note", self.html(at))
         self.assertEqual([e.label for e in at.expander], ["Grading notes", "Grading notes"])
         self.assertEqual([e.proto.expanded for e in at.expander], [False, False])
@@ -261,12 +284,17 @@ class FeedTests(AppCase):
         for card in (first, second):
             self.assertNotIn("score", card.lower())
             self.assertNotIn("value-badge", card)
-        # no `modules`: the item's own module
-        self.assertIn('<div class="feed-tags"><span class="module-tag">AI INFRASTRUCTURE</span>'
+        violet = "color:#A78BFA;border-color:rgba(167,139,250,0.55);background:rgba(167,139,250,0.14)"
+        teal = "color:#2DD4BF;border-color:rgba(45,212,191,0.55);background:rgba(45,212,191,0.14)"
+        # no `modules`: the item's own module, as a violet pill (tinted fill, coloured border, coloured text)
+        self.assertIn(f'<div class="feed-tags"><span class="module-tag" style="{violet}">AI INFRASTRUCTURE</span>'
                       '<span class="zx-chip tier">Tier 3 · catalyst</span></div>', first)
-        # `modules` wins, in order; an unknown module id is shown with its dashes as spaces
-        self.assertIn('<div class="feed-tags"><span class="module-tag">DEFENSE UNMANNED</span>'
-                      '<span class="module-tag">AI INFRASTRUCTURE</span><span class="module-tag">SPACE LAUNCH</span>'
+        # `modules` wins, in order; an unknown module gets a stable colour from the small palette
+        other = fmt.module_color("space-launch")
+        self.assertIn(other, fmt.TAG_COLORS)
+        self.assertIn(f'<div class="feed-tags"><span class="module-tag" style="{teal}">DEFENSE UNMANNED</span>'
+                      f'<span class="module-tag" style="{violet}">AI INFRASTRUCTURE</span>'
+                      f'<span class="module-tag" style="{fmt.tag_style(other)}">SPACE LAUNCH</span>'
                       '<span class="zx-chip tier">Tier 3 · catalyst</span>', second)
 
     def test_search_filters_loaded_items(self):
@@ -278,7 +306,7 @@ class FeedTests(AppCase):
         self.assertIn('<div class="feed-item-headline">Army awards $48M counter-UAS order</div>', html)
         self.assertNotIn('<div class="feed-item-headline">Neocloud', html)  # its card is filtered out
         self.assertEqual(len(ITEM_CARD.findall(html)), 2)
-        # the band still describes the whole edition, and says how many items matched
+        # the header still describes the whole edition, and says how many items matched
         self.assertIn('<span>2 items</span><span aria-hidden="true">·</span><span>1 matching</span>', html)
         self.assertNotIn("LATEST", html)
         at.text_input(key="feed_search").set_value("defense unmanned").run()  # module display names are searchable

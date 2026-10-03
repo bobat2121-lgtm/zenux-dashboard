@@ -17,8 +17,8 @@ import streamlit as st
 from . import api, data, grading
 from .config import Workspace
 from .fmt import (as_int, as_list, chip, clip, dicts, domain_of, empty_state, esc, esc_lines, fmt_short, fmt_time,
-                  join_and, label_of, link, module_name, one_line, parse_time, pick, plural, relative_time, safe_url,
-                  section_label)
+                  join_and, label_of, link, module_color, module_name, one_line, parse_time, pick, plural, relative_time,
+                  safe_url, section_label, tag_style)
 
 PAGE_SIZE = 10
 MAX_PAGES = 20
@@ -164,8 +164,14 @@ def note_of(edition: dict) -> str:
 # ---------------------------------------------------------------------------------------------- html
 
 
+def module_tag(module_id: str) -> str:
+    """A module as a coloured pill: violet for ai-infra, teal for defense-unmanned, a stable palette colour otherwise."""
+    return (f'<span class="module-tag" style="{tag_style(module_color(module_id))}">'
+            f'{esc(module_name(module_id).upper())}</span>')
+
+
 def module_tags_html(item: dict) -> str:
-    return "".join(f'<span class="module-tag">{esc(module_name(m).upper())}</span>' for m in item_modules(item))
+    return "".join(module_tag(m) for m in item_modules(item))
 
 
 def item_html(item: dict) -> str:
@@ -200,23 +206,31 @@ def item_html(item: dict) -> str:
 
 
 def stats_html(edition: dict, items: list[dict]) -> str:
+    """The hero's right side: 2x2 tiles, then the module split bar and its legend."""
     scores = [as_int(i.get("score")) for i in items]
     reviewed = as_int(pick(edition, "reviewed", "candidates", "candidate_count", "stats.candidates", "stats.reviewed"))
     tiles = [
         ("ITEMS", len(items), ""),
         ("REVIEWED", reviewed if reviewed is not None else "—", ""),
-        ("LEAD 90+", sum(1 for s in scores if s is not None and s >= 90), ""),
-        ("DIGEST 70–89", sum(1 for s in scores if s is not None and 70 <= s < 90), ""),
-    ] + [(module_name(m).upper(), n, " stat-module") for m, n in module_counts(items)]
+        ("LEAD 90+", sum(1 for s in scores if s is not None and s >= 90), " stat-high"),
+        ("DIGEST 70–89", sum(1 for s in scores if s is not None and 70 <= s < 90), " stat-medium"),
+    ]
     tiles_html = "".join(
         f'<div class="stat{css}"><div class="stat-n">{esc(n)}</div><div class="stat-l">{esc(name)}</div></div>'
         for name, n, css in tiles
     )
-    return f'<div class="stat-grid">{tiles_html}</div>'
+    counts = module_counts(items)
+    bar = "".join(f'<span style="flex-grow:{n};background:{module_color(m)}"></span>' for m, n in counts)
+    legend = "".join(f'<span><i style="background:{module_color(m)}"></i>{esc(label_of(m).upper())} {n}</span>'
+                     for m, n in counts)
+    split = (f'<div class="theme-bar" aria-hidden="true">{bar}</div><div class="theme-legend">{legend}</div>'
+             if counts else "")
+    return f'<div class="edition-stats"><div class="stat-grid">{tiles_html}</div>{split}</div>'
 
 
-def band_html(edition: dict, tz: str, latest: bool = False, matched: int | None = None) -> str:
-    """The edition's green feature band: the summary as its title, the meta line, then the stats tiles."""
+def head_html(edition: dict, tz: str, latest: bool = False, matched: int | None = None) -> str:
+    """The edition header: the kicker (LATEST, edition, age, time, items), then the summary as the title. The latest
+    edition is the hero: its stats sit on the right. The grading note never appears here."""
     items = all_items(edition)
     when = edition_time(edition)
     eid = edition_id(edition)
@@ -224,22 +238,24 @@ def band_html(edition: dict, tz: str, latest: bool = False, matched: int | None 
     meta = [relative_time(when), fmt_time(when, tz), plural(len(items), "item")]
     if matched is not None:
         meta.append(f"{matched} matching")
-    meta_html = f'<span class="edition-label">{esc(label)}</span>' + "".join(
-        f'<span aria-hidden="true">·</span><span>{esc(part)}</span>' for part in meta)
-    return (
-        '<header class="edition-band">'
+    kicker = (
+        '<div class="edition-kicker">'
         + ('<span class="latest-badge">LATEST</span>' if latest else "")
-        + f'<div class="edition-title" role="heading" aria-level="2">{esc(summary_of(edition, items))}</div>'
-        + f'<div class="edition-meta">{meta_html}</div>'
-        + stats_html(edition, items)
-        + '</header>'
+        + f'<span class="edition-label">{esc(label)}</span>'
+        + "".join(f'<span aria-hidden="true">·</span><span>{esc(part)}</span>' for part in meta)
+        + '</div>'
     )
+    title = f'<div class="edition-title" role="heading" aria-level="2">{esc(summary_of(edition, items))}</div>'
+    main = f'<div class="edition-main">{kicker}{title}</div>'
+    if latest:
+        return f'<header class="edition-head has-stats">{main}{stats_html(edition, items)}</header>'
+    return f'<header class="edition-head">{main}</header>'
 
 
 def edition_html(edition: dict, tz: str, latest: bool = False, grading_on: bool = False) -> str:
     items = items_of(edition)
     searched = isinstance(edition.get(FULL_ITEMS), list)
-    head = band_html(edition, tz, latest=latest, matched=len(items) if searched else None)
+    head = head_html(edition, tz, latest=latest, matched=len(items) if searched else None)
     body = "".join(item_html(item) for item in items) or (
         '<div class="edition-empty">Nothing material in this window: the Grader published an empty edition.</div>')
     css = "feed-edition" + (" latest-edition" if latest else "") + (" owner-edition" if grading_on else "")
