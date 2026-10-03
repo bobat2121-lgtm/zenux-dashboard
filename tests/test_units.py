@@ -374,3 +374,35 @@ class UnquotedNumericPinTest(unittest.TestCase):
         self.assertEqual(usable_pin("12345678"), "12345678")
         self.assertEqual(usable_pin(True), "")
         self.assertEqual(usable_pin(None), "")
+
+
+class PinDiagnosticsTest(unittest.TestCase):
+    BASE = {"workspaces": [{"id": "pilot", "hub_url": "https://hub.example.workers.dev", "read_token": "r" * 20,
+                            "owner_token": "o" * 20,
+                            "modules": [{"id": "ai-infra", "url": "https://m.example.workers.dev", "run_token": "t" * 20}]}]}
+
+    def _problems(self, mutate):
+        import copy
+        from zenux_dashboard.config import parse_config
+        data = copy.deepcopy(self.BASE)
+        mutate(data)
+        return " | ".join(parse_config(data).problems)
+
+    def test_pin_under_module_is_named(self):
+        msg = self._problems(lambda d: d["workspaces"][0]["modules"][0].update(owner_pin="12345678"))
+        self.assertIn("inside module 'ai-infra'", msg)
+        self.assertNotIn("12345678", msg)
+
+    def test_misspelled_key_is_named(self):
+        msg = self._problems(lambda d: d["workspaces"][0].update({"Owner_PIN": "12345678"}))
+        self.assertIn("'Owner_PIN'", msg)
+        self.assertNotIn("12345678", msg)
+
+    def test_missing_token_and_pin_are_reported_separately(self):
+        msg = self._problems(lambda d: d["workspaces"][0].pop("owner_token"))
+        self.assertIn("owner_token missing", msg)
+        self.assertIn("owner_pin missing", msg)
+
+    def test_correct_pin_has_no_owner_problem(self):
+        msg = self._problems(lambda d: d["workspaces"][0].update(owner_pin="12345678"))
+        self.assertNotIn("owner_", msg)

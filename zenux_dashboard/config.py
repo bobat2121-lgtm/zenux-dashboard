@@ -150,6 +150,24 @@ def normalize_url(raw: Any) -> tuple[str, str | None]:
     return text.rstrip("/"), None
 
 
+_NEAR_PIN_KEY_RE = re.compile(r"^(?:owner[\s_-]*pin|pin)$", re.IGNORECASE)
+
+
+def _pin_hint(data: Mapping, entry: Mapping) -> str:
+    """Where a misplaced or misspelled PIN was found, by key and table only (never the value)."""
+    for index, (_, module) in enumerate(_entries(entry.get("modules"))):
+        if "owner_pin" in module:
+            name = _text(module.get("id")) or f"#{index + 1}"
+            return (f": an owner_pin was found inside module '{name}'; TOML puts every line under the nearest "
+                    f"[[...]] header above it, so move the owner_pin line above the first [[workspaces.modules]] "
+                    f"line (or to the very top of the secrets)")
+    for scope, table in (("the workspace block", entry), ("the top of the secrets", data)):
+        for key in table:
+            if isinstance(key, str) and key != "owner_pin" and _NEAR_PIN_KEY_RE.match(key.strip()):
+                return f": found the key '{key}' in {scope}; the key must be exactly owner_pin"
+    return ": add owner_pin = \"<your PIN>\" (in quotes) above the first [[workspaces.modules]] line"
+
+
 def _entries(raw: Any) -> list[tuple[str | None, Mapping]]:
     """[[workspaces]] (a list of tables) or [workspaces.<id>] (a table of tables)."""
     if isinstance(raw, Mapping):
@@ -216,8 +234,11 @@ def parse_config(secrets: Mapping[str, Any] | None) -> Config:
         if pin_placeholder:
             problems.append(f"workspace '{ws_id}': owner_pin is the example placeholder, which anyone can read "
                             "(owner writes disabled)")
-        if not owner_token or not (owner_pin or pin_placeholder):
-            problems.append(f"workspace '{ws_id}': owner_token or owner_pin missing (owner writes disabled)")
+        if not owner_token:
+            problems.append(f"workspace '{ws_id}': owner_token missing (owner writes disabled)")
+        if not (owner_pin or pin_placeholder):
+            problems.append(f"workspace '{ws_id}': owner_pin missing (owner writes disabled)"
+                            + _pin_hint(data, entry))
         if owner_pin and len(owner_pin) < MIN_PIN_LENGTH:
             problems.append(f"workspace '{ws_id}': owner_pin is shorter than {MIN_PIN_LENGTH} characters "
                             "(owner writes disabled)")
