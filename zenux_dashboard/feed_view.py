@@ -1,8 +1,11 @@
 """Feed: published Zenux editions, newest first (GET /editions?limit=10&before=).
 
-An edition item carries rank, event_id, score, tier, headline, factual text (at most 150 words), metrics (at
-most 5), sources (at most 4) and story_id. Fields are read tolerantly, so an older or newer hub shape still
-renders; anything unknown is left out rather than guessed.
+An edition carries the Grader's one-sentence summary, which is the edition's title. Older editions have none, so the
+dashboard builds a deterministic sentence from the items. The edition's grading note (evidence and grading warnings)
+appears only in a collapsed "Grading notes" expander at the bottom of the edition. An item carries rank, event_id,
+score, tier, headline, factual text (at most 150 words), metrics (at most 5), sources (at most 4), story_id, module
+and modules (every module the story draws on). The score feeds the edition's stats only; item cards show module tags.
+Fields are read tolerantly, so an older or newer hub shape still renders; anything unknown is left out, not guessed.
 """
 
 from __future__ import annotations
@@ -14,10 +17,13 @@ import streamlit as st
 from . import api, data, grading
 from .config import Workspace
 from .fmt import (as_int, as_list, chip, clip, dicts, domain_of, empty_state, esc, esc_lines, fmt_short, fmt_time,
-                  label_of, link, one_line, palette_for, parse_time, pick, plural, relative_time, safe_url, section_label)
+                  join_and, label_of, link, module_name, one_line, parse_time, pick, plural, relative_time, safe_url,
+                  section_label)
 
 PAGE_SIZE = 10
 MAX_PAGES = 20
+NOTES_LABEL = "Grading notes"
+FULL_ITEMS = "_all_items"  # set by search(): the edition's full item list, while `items` holds only the hits
 TIER_LABEL = {"1": "Tier 1 · covered", "2": "Tier 2 · read-through", "3": "Tier 3 · catalyst",
               "covered": "Tier 1 · covered", "read_through": "Tier 2 · read-through", "industry": "Tier 3 · catalyst",
               "catalyst": "Tier 3 · catalyst"}
@@ -48,19 +54,18 @@ def items_of(edition: dict) -> list[dict]:
     return sorted(dicts(edition.get("items")), key=lambda it: (as_int(it.get("rank")) is None, as_int(it.get("rank")) or 0))
 
 
+def all_items(edition: dict) -> list[dict]:
+    """Every item of the edition, also when a search narrowed `items` to the hits."""
+    full = edition.get(FULL_ITEMS)
+    return items_of({"items": full}) if isinstance(full, list) else items_of(edition)
+
+
 def edition_id(edition: dict) -> Any:
     return pick(edition, "id", "edition_id")
 
 
 def edition_time(edition: dict) -> Any:
     return pick(edition, "published_at", "created_at", "posted_at")
-
-
-def score_level(score: Any) -> str | None:
-    n = as_int(score)
-    if n is None:
-        return None
-    return "high" if n >= 90 else "medium" if n >= 70 else "low"
 
 
 def tier_label(tier: Any) -> str:
@@ -99,101 +104,146 @@ def metric_html(metric: Any) -> str:
     return f'<span class="feed-metric"><b>{esc(text)}</b></span>' if text else ""
 
 
-def item_group(item: dict) -> str:
-    return one_line(pick(item, "module", "module_id", "lane")) or tier_label(item.get("tier")) or ""
+def item_modules(item: dict) -> list[str]:
+    """Every module the item draws on: `modules` when the hub gives it, else [module]. Unique, in order."""
+    out: list[str] = []
+    for raw in as_list(item.get("modules")):
+        mid = one_line(pick(raw, "id", "module_id", "module") if isinstance(raw, dict) else raw)
+        if mid and mid not in out:
+            out.append(mid)
+    if not out:
+        mid = one_line(pick(item, "module", "module_id"))
+        out = [mid] if mid else []
+    return out
+
+
+def item_module(item: dict) -> str:
+    """The item's own module (its canonical event's), else the first of its modules."""
+    return one_line(pick(item, "module", "module_id")) or next(iter(item_modules(item)), "")
+
+
+def module_counts(items: list[dict]) -> list[tuple[str, int]]:
+    """[(module id, items)] counted by each item's own module, ordered by display name."""
+    counts: dict[str, int] = {}
+    for item in items:
+        mid = item_module(item)
+        if mid:
+            counts[mid] = counts.get(mid, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (module_name(kv[0]).casefold(), kv[0]))
+
+
+def fallback_summary(items: list[dict]) -> str:
+    """A deterministic one-sentence title for an edition without a Grader summary (older editions)."""
+    if not items:
+        return "An empty edition: nothing cleared the bar in this window."
+    counts = module_counts(items)
+    if len(counts) > 1:
+        where = " across " + join_and([f"{module_name(m)} ({n})" for m, n in counts])
+    elif counts:
+        where = " in " + module_name(counts[0][0])
+    else:
+        where = ""
+    lead = clip(pick(items[0], "headline", "title", default=""), 160).rstrip(" .;:,")
+    sentence = plural(len(items), "item") + where
+    if lead:
+        sentence += f": {lead}" if len(items) == 1 else f", led by {lead}"
+    return sentence if sentence.endswith(("?", "!", "…")) else sentence + "."
+
+
+def summary_of(edition: dict, items: list[dict]) -> str:
+    """The edition's title: the Grader's one-sentence summary, else the fallback sentence."""
+    return one_line(edition.get("summary")) or fallback_summary(items)
+
+
+def note_of(edition: dict) -> str:
+    """The edition's grading note (evidence and grading warnings), or ''."""
+    note = edition.get("note")
+    return str(note).strip() if one_line(note) else ""
 
 
 # ---------------------------------------------------------------------------------------------- html
 
 
-def item_html(item: dict, colors: dict[str, str]) -> str:
+def module_tags_html(item: dict) -> str:
+    return "".join(f'<span class="module-tag">{esc(module_name(m).upper())}</span>' for m in item_modules(item))
+
+
+def item_html(item: dict) -> str:
     rank = as_int(item.get("rank"))
     marker = str(rank).zfill(2) if rank is not None else "–"
     sources = sources_of(item)
-    meta = []
-    if sources:
-        meta.append(f'<span class="feed-worker">{esc(sources[0][1])}</span>')
-    group = item_group(item)
-    if group:
-        meta.append(f'<span class="feed-theme"><i style="background:{colors.get(group, "#b692f6")}"></i>{esc(label_of(group))}</span>')
-    tier = tier_label(item.get("tier"))
-    if tier and tier != label_of(group):
-        meta.append(chip(tier))
+    source_line = f'<div class="feed-source">{esc(sources[0][1])}</div>' if sources else ""
     headline = one_line(pick(item, "headline", "title"))
     text = pick(item, "text", "body", "summary", "factual_text", default="")
     metrics = "".join(metric_html(m) for m in as_list(item.get("metrics"))[:5])
     metrics_html = f'<div class="feed-metrics">{metrics}</div>' if metrics else ""
     source_links = "".join(link(url, f"{label} ↗") for url, label in sources)
-    level = score_level(item.get("score"))
-    badge = (f'<span class="value-badge level-{level}">score {esc(as_int(item.get("score")))}</span>' if level else "")
-    badge += grading.feedback_chips(item.get("feedback"))
+    tier = tier_label(item.get("tier"))
+    tags = (module_tags_html(item) + chip(tier, "tier") + grading.feedback_chips(item.get("feedback"))
+            + ("" if source_links else '<span class="feed-nolink">No source link captured</span>'))
     summary = (f'<div class="feed-item-headline">{esc(headline)}</div>' if headline
                else '<span class="feed-summary-label">Read the item</span>')
     return (
-        f'<article class="feed-item{" has-value" if level else ""}">'
+        '<article class="feed-item">'
         f'<div class="rank-marker">{esc(marker)}</div>'
         '<div class="feed-copy">'
-        f'<div class="feed-meta">{"".join(meta)}</div>'
+        f'{source_line}'
         '<details class="feed-details">'
         f'<summary class="feed-toggle">{summary}</summary>'
         f'<div class="feed-text">{esc_lines(text)}</div>'
         f'{metrics_html}'
         f'<div class="feed-sources">{source_links}</div>'
         '</details>'
-        f'<div class="feed-meta">{badge}{"" if source_links else "<span>No source link captured</span>"}</div>'
+        f'<div class="feed-tags">{tags}</div>'
         '</div></article>'
     )
 
 
-def stats_html(edition: dict, items: list[dict], colors: dict[str, str]) -> str:
+def stats_html(edition: dict, items: list[dict]) -> str:
     scores = [as_int(i.get("score")) for i in items]
     reviewed = as_int(pick(edition, "reviewed", "candidates", "candidate_count", "stats.candidates", "stats.reviewed"))
     tiles = [
         ("ITEMS", len(items), ""),
         ("REVIEWED", reviewed if reviewed is not None else "—", ""),
-        ("LEAD 90+", sum(1 for s in scores if s is not None and s >= 90), " stat-high"),
-        ("DIGEST 70–89", sum(1 for s in scores if s is not None and 70 <= s < 90), " stat-medium"),
-    ]
+        ("LEAD 90+", sum(1 for s in scores if s is not None and s >= 90), ""),
+        ("DIGEST 70–89", sum(1 for s in scores if s is not None and 70 <= s < 90), ""),
+    ] + [(module_name(m).upper(), n, " stat-module") for m, n in module_counts(items)]
     tiles_html = "".join(
         f'<div class="stat{css}"><div class="stat-n">{esc(n)}</div><div class="stat-l">{esc(name)}</div></div>'
         for name, n, css in tiles
     )
-    groups: dict[str, int] = {}
-    for item in items:
-        group = item_group(item)
-        if group:
-            groups[group] = groups.get(group, 0) + 1
-    bar = "".join(f'<span style="flex-grow:{n};background:{colors[g]}"></span>' for g, n in groups.items())
-    legend = "".join(f'<span><i style="background:{colors[g]}"></i>{esc(label_of(g).upper())} {n}</span>' for g, n in groups.items())
-    themes = f'<div class="theme-bar">{bar}</div><div class="theme-legend">{legend}</div>' if groups else ""
-    return f'<div class="edition-stats"><div class="stat-grid">{tiles_html}</div>{themes}</div>'
+    return f'<div class="stat-grid">{tiles_html}</div>'
+
+
+def band_html(edition: dict, tz: str, latest: bool = False, matched: int | None = None) -> str:
+    """The edition's green feature band: the summary as its title, the meta line, then the stats tiles."""
+    items = all_items(edition)
+    when = edition_time(edition)
+    eid = edition_id(edition)
+    label = one_line(pick(edition, "label", "slot", "trigger_label")) or (f"Edition #{eid}" if eid is not None else "Edition")
+    meta = [relative_time(when), fmt_time(when, tz), plural(len(items), "item")]
+    if matched is not None:
+        meta.append(f"{matched} matching")
+    meta_html = f'<span class="edition-label">{esc(label)}</span>' + "".join(
+        f'<span aria-hidden="true">·</span><span>{esc(part)}</span>' for part in meta)
+    return (
+        '<header class="edition-band">'
+        + ('<span class="latest-badge">LATEST</span>' if latest else "")
+        + f'<div class="edition-title" role="heading" aria-level="2">{esc(summary_of(edition, items))}</div>'
+        + f'<div class="edition-meta">{meta_html}</div>'
+        + stats_html(edition, items)
+        + '</header>'
+    )
 
 
 def edition_html(edition: dict, tz: str, latest: bool = False, grading_on: bool = False) -> str:
     items = items_of(edition)
-    colors = palette_for(item_group(i) for i in items if item_group(i))
-    when = edition_time(edition)
-    eid = edition_id(edition)
-    label = one_line(pick(edition, "label", "slot", "trigger_label")) or (f"Edition #{eid}" if eid is not None else "Edition")
-    kicker = (
-        '<div class="edition-kicker">'
-        + ('<span class="latest-badge">LATEST</span>' if latest else "")
-        + f'<span class="edition-label">{esc(label)}</span>'
-        f'<span>·</span><span>{esc(relative_time(when))}</span>'
-        f'<span>·</span><span>{esc(fmt_time(when, tz))}</span>'
-        f'<span>·</span><span>{esc(plural(len(items), "item"))}</span>'
-        '</div>'
-    )
-    headline = one_line(pick(edition, "headline", "title"))
-    note = one_line(edition.get("note"))
-    main = (kicker + (f'<div class="edition-headline">{esc(headline)}</div>' if headline else "")
-            + (f'<div class="edition-note">{esc(note)}</div>' if note else ""))
-    head = (f'<div class="edition-head has-stats"><div class="edition-main">{main}</div>{stats_html(edition, items, colors)}</div>'
-            if latest else f'<div class="edition-head">{main}</div>')
-    body = "".join(item_html(item, colors) for item in items) or (
+    searched = isinstance(edition.get(FULL_ITEMS), list)
+    head = band_html(edition, tz, latest=latest, matched=len(items) if searched else None)
+    body = "".join(item_html(item) for item in items) or (
         '<div class="edition-empty">Nothing material in this window: the Grader published an empty edition.</div>')
     css = "feed-edition" + (" latest-edition" if latest else "") + (" owner-edition" if grading_on else "")
-    return f'<section class="{css}">{head}{body}</section>'
+    return f'<section class="{css}">{head}<div class="edition-items">{body}</div></section>'
 
 
 # ---------------------------------------------------------------------------------------------- search
@@ -207,14 +257,16 @@ def search(editions: list[dict], query: str) -> list[dict]:
     for edition in editions:
         hits = []
         for item in items_of(edition):
+            modules = item_modules(item)
             hay = " ".join(one_line(v) for v in (
                 item.get("headline"), item.get("text"), item.get("body"), item.get("module"), item.get("tier"),
+                " ".join(modules), " ".join(module_name(m) for m in modules),
                 " ".join(label for _, label in sources_of(item)), " ".join(url for url, _ in sources_of(item)),
             )).casefold()
             if all(term in hay for term in terms):
                 hits.append(item)
         if hits:
-            out.append({**edition, "items": hits})
+            out.append({**edition, "items": hits, FULL_ITEMS: as_list(edition.get("items"))})
     return out
 
 
@@ -263,6 +315,30 @@ def grade_options(edition: dict) -> list[dict]:
     return options
 
 
+def render_notes(edition: dict) -> None:
+    """The edition's grading note, collapsed at the bottom of the edition (nothing when there is none)."""
+    note = note_of(edition)
+    if note:
+        with st.expander(NOTES_LABEL):
+            st.markdown(f'<div class="grading-notes">{esc_lines(note)}</div>', unsafe_allow_html=True)
+
+
+def render_edition(ws: Workspace, edition: dict, index: int, latest: bool, grading_on: bool) -> None:
+    """One edition card: the band and items, its grading notes, and (for the owner) its grade form."""
+    eid = edition_id(edition)
+    options = grade_options(edition) if grading_on and eid is not None else []
+    with st.container(key=f"zx_edition_{index}"):
+        if not options:
+            st.markdown(edition_html(edition, ws.timezone, latest=latest), unsafe_allow_html=True)
+            render_notes(edition)
+            return
+        with st.form(f"grade_edition_{ws.id}_{eid}", border=False):
+            st.markdown(edition_html(edition, ws.timezone, latest=latest, grading_on=True), unsafe_allow_html=True)
+            render_notes(edition)
+            grading.grade_form(ws, f"ed_{ws.id}_{eid}", options,
+                               f"Grade an item · {fmt_short(edition_time(edition), ws.timezone)}")
+
+
 def render(ws: Workspace) -> None:
     try:
         editions, more = load(ws)
@@ -282,22 +358,8 @@ def render(ws: Workspace) -> None:
         if not shown:
             st.markdown(empty_state("No matching stories. Try another company, topic or source."), unsafe_allow_html=True)
     grading_on = bool(st.session_state.get("grading_enabled"))
-    if grading_on:
-        for index, edition in enumerate(shown):
-            latest = not query and index == 0
-            eid = edition_id(edition)
-            options = grade_options(edition)
-            if eid is None or not options:
-                st.markdown(edition_html(edition, ws.timezone, latest=latest), unsafe_allow_html=True)
-                continue
-            with st.form(f"grade_edition_{ws.id}_{eid}", border=False):
-                st.markdown(edition_html(edition, ws.timezone, latest=latest, grading_on=True), unsafe_allow_html=True)
-                grading.grade_form(ws, f"ed_{ws.id}_{eid}", options,
-                                   f"Grade an item · {fmt_short(edition_time(edition), ws.timezone)}")
-    else:
-        html = "".join(edition_html(e, ws.timezone, latest=not query and i == 0) for i, e in enumerate(shown))
-        if html:
-            st.markdown(f'<main class="edition-stack" aria-label="Published editions">{html}</main>', unsafe_allow_html=True)
+    for index, edition in enumerate(shown):
+        render_edition(ws, edition, index, latest=not query and index == 0, grading_on=grading_on)
     if more and not query:
         if st.button("Load earlier editions", key=f"feed_more_{ws.id}"):
             st.session_state[f"feed_pages_{ws.id}"] = int(st.session_state.get(f"feed_pages_{ws.id}", 1)) + 1

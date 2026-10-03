@@ -1,11 +1,15 @@
-# ZENUX dashboard theme (ported from the legacy feed look: obsidian base, electric blue, copper accents).
+# ZENUX dashboard theme: light editorial look (brand green on white, light-gray bands). feed.css carries the rest.
 [theme]
-base = "dark"
-primaryColor = "#468CFF"
-backgroundColor = "#060709"
-secondaryBackgroundColor = "#0C0E12"
-textColor = "#F1F3F7"
+base = "light"
+primaryColor = "#006341"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F7F7F7"
+textColor = "#444444"
 font = "sans serif"
+linkColor = "#006341"
+borderColor = "#C4C4C4"
+baseRadius = "4px"
+buttonRadius = "4px"
 
 [browser]
 gatherUsageStats = false

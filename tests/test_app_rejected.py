@@ -25,7 +25,7 @@ class RejectedTests(AppCase):
         self.assertIn('<span class="rejected-chip score">score 31</span>', html)
         self.assertIn('<span class="rejected-chip ">below materiality</span>', html)
         self.assertIn("<strong>Grader rationale</strong> · Routine monthly update; no material change.", html)
-        self.assertIn('<span class="zx-chip score">your grade: watch 55</span>', html)
+        self.assertIn('<span class="zx-chip grade">your grade: watch 55</span>', html)
         call = self.http.find("GET", PILOT_HUB + "/rejected")[0]
         self.assertEqual((call.params, call.bearer), ({"days": 3}, READ))
 

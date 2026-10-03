@@ -252,12 +252,59 @@ class ViewShapeTests(unittest.TestCase):
         self.assertEqual(feed_view.sources_of(item), [("https://www.war.gov/News/Contracts/", "war.gov")])
         self.assertEqual(feed_view.tier_label(1), "Tier 1 · covered")
         self.assertEqual(feed_view.tier_label("read_through"), "Tier 2 · read-through")
-        self.assertEqual(feed_view.score_level(93), "high")
-        self.assertEqual(feed_view.score_level(70), "medium")
-        self.assertIsNone(feed_view.score_level(None))
         hits = feed_view.search(fx.editions(2)["editions"], "counter-uas army")
         self.assertEqual([len(e["items"]) for e in hits], [1, 1])
+        self.assertEqual([len(feed_view.all_items(e)) for e in hits], [2, 2])  # the band still counts every item
         self.assertIn('<b>200 MW</b>', feed_view.metric_html({"label": "Critical IT", "value": "200", "unit": "MW"}))
+
+    def test_module_names_and_tags(self):
+        self.assertEqual(fmt.module_name("ai-infra"), "AI infrastructure")
+        self.assertEqual(fmt.module_name("defense-unmanned"), "defense unmanned")
+        self.assertEqual(fmt.module_name("space-launch_ops"), "space launch ops")
+        self.assertEqual(fmt.join_and([]), "")
+        self.assertEqual(fmt.join_and(["a"]), "a")
+        self.assertEqual(fmt.join_and(["a", "b", "c"]), "a, b and c")
+        self.assertEqual(feed_view.item_modules({"module": "ai-infra"}), ["ai-infra"])
+        self.assertEqual(feed_view.item_modules({"module": "ai-infra", "modules": []}), ["ai-infra"])
+        self.assertEqual(feed_view.item_modules({"module": "ai-infra", "modules": ["defense-unmanned", "ai-infra",
+                                                                                   "defense-unmanned", None]}),
+                         ["defense-unmanned", "ai-infra"])
+        self.assertEqual(feed_view.item_modules({}), [])
+        self.assertEqual(feed_view.module_tags_html({"modules": ["ai-infra", "<x>"]}),
+                         '<span class="module-tag">AI INFRASTRUCTURE</span><span class="module-tag">&lt;X&gt;</span>')
+        self.assertNotIn("score", feed_view.item_html(fx.editions(1)["editions"][0]["items"][0]).lower())
+
+    def test_fallback_summary(self):
+        def item(rank, module, headline="Story"):
+            return {"rank": rank, "module": module, "headline": headline}
+
+        items = [item(1, "defense-unmanned", "Army orders a new autonomy command.")] + [
+            item(n, "ai-infra" if n <= 5 else "defense-unmanned") for n in range(2, 10)]
+        self.assertEqual(feed_view.fallback_summary(items),
+                         "9 items across AI infrastructure (4) and defense unmanned (5), led by Army orders a new "
+                         "autonomy command.")
+        three = [item(1, "space-launch", "Lead story"), item(2, "ai-infra"), item(3, "defense-unmanned")]
+        self.assertEqual(feed_view.fallback_summary(three),
+                         "3 items across AI infrastructure (1), defense unmanned (1) and space launch (1), led by "
+                         "Lead story.")
+        self.assertEqual(feed_view.fallback_summary([item(1, "ai-infra", "Lead"), item(2, "ai-infra")]),
+                         "2 items in AI infrastructure, led by Lead.")
+        self.assertEqual(feed_view.fallback_summary([item(1, "ai-infra", "Only one!")]),
+                         "1 item in AI infrastructure: Only one!")
+        self.assertEqual(feed_view.fallback_summary([{"rank": 1}]), "1 item.")
+        self.assertEqual(feed_view.fallback_summary([]), "An empty edition: nothing cleared the bar in this window.")
+        # the summary wins when the hub gives one; the fallback is deterministic
+        self.assertEqual(feed_view.summary_of({"summary": "  One sentence.  "}, items), "One sentence.")
+        self.assertEqual(feed_view.summary_of({"summary": None}, items), feed_view.fallback_summary(list(items)))
+        self.assertEqual(feed_view.note_of({"note": "  Rank 2 is paywalled.\n"}), "Rank 2 is paywalled.")
+        self.assertEqual(feed_view.note_of({"note": "   "}), "")
+
+    def test_status_pills_and_inline_png(self):
+        self.assertEqual(fmt.pill("missing"), '<span class="status-pill missing">missing</span>')
+        self.assertEqual(fmt.pill("failed"), '<span class="status-pill bad">failed</span>')
+        self.assertTrue(fmt.png_data_uri(str(helpers.DASHBOARD / "assets" / "zenux-mark.png"))
+                        .startswith("data:image/png;base64,iVBORw0KGgo"))
+        self.assertEqual(fmt.png_data_uri(str(helpers.DASHBOARD / "assets" / "no-such-file.png")), "")
 
     def test_rejected_rules_radar_shapes(self):
         self.assertEqual(len(rejected_view.rows_of(fx.rejected())), 3)

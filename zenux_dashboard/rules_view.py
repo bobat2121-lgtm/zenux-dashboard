@@ -140,7 +140,7 @@ def render_proposal_card(ws: Workspace, row: dict, is_precedent: bool) -> None:
     owner_text = pick(row, "owner_text", "text") if not is_precedent else None
     proposed = one_line(pick(proposal, "text")) or one_line(row.get("text"))
     name = str(rid) if is_precedent else f"draft #{rid}"
-    with st.container(border=True):
+    with st.container(border=True, key=f"zx_card_{'prec' if is_precedent else 'draft'}_{ws.id}_{rid}"):
         origin = one_line(pick(row, "origin", "source")) or ("refiner" if proposal else "owner")
         st.markdown(
             '<div class="loop-card-head">' + kind_chip(kind) + pill(status_of(row))
@@ -184,7 +184,7 @@ def as_written(row: dict) -> dict:
 def render_waiting_row(ws: Workspace, row: dict) -> None:
     rid = row.get("id")
     kind = kind_of(row)
-    with st.container(border=True):
+    with st.container(border=True, key=f"zx_card_wait_{ws.id}_{rid}"):
         text_col, button_col = st.columns([5, 2])
         text_col.markdown(
             '<div class="loop-card-head">' + kind_chip(kind) + pill(status_of(row, "queued"), "with the refiner")

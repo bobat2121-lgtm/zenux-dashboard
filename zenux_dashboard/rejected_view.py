@@ -80,7 +80,7 @@ def row_html(row: dict, tz: str) -> str:
         f'<div class="rejected-title">{esc(one_line(pick(row, "title", "headline")) or "(untitled event)")}</div>'
         f'<div class="rejected-meta">{esc(meta)}</div>'
         f'{chips_html(row)}{rationale_html}'
-        f'<div class="feed-meta" style="margin-top:.42rem">{source_link}{grading.feedback_chips(row.get("feedback"))}</div>'
+        f'<div class="rejected-links">{source_link}{grading.feedback_chips(row.get("feedback"))}</div>'
         '</div></article>'
     )
 

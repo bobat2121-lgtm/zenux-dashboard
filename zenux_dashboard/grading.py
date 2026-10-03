@@ -37,7 +37,7 @@ def feedback_chips(rows: Any) -> str:
     for f in dicts(rows)[-3:]:
         verdict = one_line(f.get("verdict")).replace("_", " ")
         score = f.get("score")
-        out.append(chip(f"your grade: {verdict}{f' {score}' if score is not None else ''}", "score"))
+        out.append(chip(f"your grade: {verdict}{f' {score}' if score is not None else ''}", "grade"))
     return "".join(out)
 
 
@@ -75,22 +75,24 @@ def grade_form(ws: Workspace, key: str, options: list[dict], title: str) -> None
     if not by_id:
         st.caption("Nothing here can be graded: no item carries an event id.")
         return
-    st.markdown(f'<div class="digest-grading-title">{esc(title)}</div>', unsafe_allow_html=True)
-    if owner.lock_state(ws) != owner.UNLOCKED:
-        st.caption(owner.lock_message(ws, owner.lock_state(ws)))
-    st.selectbox("Item", list(by_id), format_func=lambda k: by_id[k]["label"] if k in by_id else str(k), key=f"gitem_{key}")
-    st.radio("Grade", list(PRESETS), index=list(PRESETS).index(DEFAULT_PRESET), horizontal=True, key=f"ggrade_{key}",
-             help=SCALE_HELP)
-    exact_col, scope_col = st.columns([1, 2])
-    exact_col.number_input("Exact score (optional)", min_value=0, max_value=100, step=1, value=None, key=f"gscore_{key}",
-                           help=SCALE_HELP)
-    scope_col.radio("Save as", list(SAVE_AS), horizontal=True, key=f"gscope_{key}",
-                    help="Just a grade teaches the Grader. A worked example guides similar stories. "
-                         "A rule becomes a draft for the Zenux Rule refiner; you approve it on the Rules tab.")
-    st.text_area("Your ruling (optional for a grade)", key=f"gnote_{key}", height=80,
-                 placeholder="Say what the Grader should learn from this, in your own words.")
-    if st.form_submit_button("Submit grade", type="primary", key=f"gsubmit_{key}"):
-        submit(ws, key, by_id)
+    with st.container(key=f"zx_grade_{key}"):  # its own block, so the page can style it as a card
+        st.markdown(f'<div class="digest-grading-title">{esc(title)}</div>', unsafe_allow_html=True)
+        if owner.lock_state(ws) != owner.UNLOCKED:
+            st.caption(owner.lock_message(ws, owner.lock_state(ws)))
+        st.selectbox("Item", list(by_id), format_func=lambda k: by_id[k]["label"] if k in by_id else str(k),
+                     key=f"gitem_{key}")
+        st.radio("Grade", list(PRESETS), index=list(PRESETS).index(DEFAULT_PRESET), horizontal=True,
+                 key=f"ggrade_{key}", help=SCALE_HELP)
+        exact_col, scope_col = st.columns([1, 2])
+        exact_col.number_input("Exact score (optional)", min_value=0, max_value=100, step=1, value=None,
+                               key=f"gscore_{key}", help=SCALE_HELP)
+        scope_col.radio("Save as", list(SAVE_AS), horizontal=True, key=f"gscope_{key}",
+                        help="Just a grade teaches the Grader. A worked example guides similar stories. "
+                             "A rule becomes a draft for the Zenux Rule refiner; you approve it on the Rules tab.")
+        st.text_area("Your ruling (optional for a grade)", key=f"gnote_{key}", height=80,
+                     placeholder="Say what the Grader should learn from this, in your own words.")
+        if st.form_submit_button("Submit grade", type="primary", key=f"gsubmit_{key}"):
+            submit(ws, key, by_id)
 
 
 def submit(ws: Workspace, key: str, by_id: dict[str, dict]) -> bool:

@@ -7,16 +7,19 @@ whatever follows as Markdown.
 
 from __future__ import annotations
 
+import base64
 import html
 from datetime import datetime, timezone, tzinfo
 from email.utils import parsedate_to_datetime
-from typing import Any, Iterable, Mapping
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 
 UTC = timezone.utc
 MIN_TIME = datetime.min.replace(tzinfo=UTC)
 
-TAG_PALETTE = ["#b692f6", "#4fd1c5", "#f6c177", "#f38ba8", "#7ee787", "#c3e88d", "#ffab70", "#ffd166"]
+MODULE_NAMES = {"ai-infra": "AI infrastructure", "defense-unmanned": "defense unmanned"}
 
 PILL_CLASS = {
     "ok": "ok", "healthy": "ok", "done": "ok", "active": "ok", "approved": "ok", "published": "ok", "free": "ok",
@@ -26,6 +29,7 @@ PILL_CLASS = {
     "duplicate": "idle", "already_covered": "idle", "no_runs": "idle", "idle": "idle", "expired": "warn",
     "failed": "bad", "down": "bad", "error": "bad", "quarantined": "bad", "blocked": "bad", "unreachable": "bad",
     "rejected": "bad", "unauthorized": "bad", "dead_letter": "bad",
+    "missing": "missing",
 }
 
 
@@ -242,18 +246,18 @@ def chip(text: Any, css: str = "") -> str:
     return f'<span class="zx-chip {css}">{esc(text)}</span>' if one_line(text) else ""
 
 
-def rgba(hex_color: str, alpha: float) -> str:
-    h = hex_color.lstrip("#")
-    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+def module_name(module_id: Any) -> str:
+    """A module's display name: "ai-infra" -> "AI infrastructure"; an unknown id with its dashes as spaces."""
+    mid = one_line(module_id)
+    return MODULE_NAMES.get(mid.lower()) or mid.replace("-", " ").replace("_", " ")
 
 
-def palette_for(labels: Iterable[str]) -> dict[str, str]:
-    """A stable colour per distinct label, in first-seen order."""
-    out: dict[str, str] = {}
-    for label in labels:
-        if label not in out:
-            out[label] = TAG_PALETTE[len(out) % len(TAG_PALETTE)]
-    return out
+def join_and(parts: list[str]) -> str:
+    """["a"] -> "a", ["a", "b"] -> "a and b", ["a", "b", "c"] -> "a, b and c"."""
+    parts = [p for p in parts if p]
+    if len(parts) <= 1:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 def table(headers: list[str], rows: list[list[str]], css: str = "zx-table") -> str:
@@ -261,6 +265,15 @@ def table(headers: list[str], rows: list[list[str]], css: str = "zx-table") -> s
     head = "".join(f"<th>{esc(h)}</th>" for h in headers)
     body = "".join("<tr>" + "".join(f"<td>{cell}</td>" for cell in row) + "</tr>" for row in rows)
     return f'<div class="zx-table-wrap"><table class="{css}"><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>'
+
+
+@lru_cache(maxsize=8)
+def png_data_uri(path: str) -> str:
+    """A PNG file as a data: URI, read once per process (the page then needs no static-file serving); '' if unreadable."""
+    try:
+        return "data:image/png;base64," + base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    except OSError:
+        return ""
 
 
 def empty_state(message: str, detail: str | None = None) -> str:

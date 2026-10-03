@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+import base64
+import re
+import tomllib
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import fixtures as fx
-from helpers import (AppCase, BETA_HUB, BETA_READ, FakeResponse, OWNER, PILOT_HUB, PIN, READ, beta_secrets,
+import streamlit as st
+from helpers import (AppCase, BETA_HUB, BETA_READ, DASHBOARD, FakeResponse, OWNER, PILOT_HUB, PIN, READ, beta_secrets,
                      one_workspace, two_workspaces, wrong_pin)
+
+ITEM_CARD = re.compile(r'<article class="feed-item">.*?</article>')
+
+
+FOOTER = '<footer class="zx-footer">ZENUX · internal research tool · data from public sources</footer>'
 
 
 class ShellTests(AppCase):
@@ -15,15 +26,62 @@ class ShellTests(AppCase):
         at = self.app()
         self.assert_clean(at)
         html = self.html(at)
-        self.assertIn('aria-label="ZENUX"', html)
-        self.assertIn('ZENU<span class="brand-accent">X</span>', html)
+        self.assertIn('<header class="zx-masthead"><div class="brand" role="heading" aria-level="1" aria-label="ZENUX">',
+                      html)
+        self.assertIn('<span class="brand-core">ZENUX</span>', html)
+        self.assertIn('<span class="brand-sub">NEWS INTELLIGENCE</span>', html)
         self.assertIn('<span class="brand-workspace">PILOT</span>', html)
+        self.assertNotIn("brand-accent", html)  # the old two-colour wordmark is gone
         self.assertNotIn("PHYSICAL", html)
         view = at.radio(key="dashboard_view")
         self.assertEqual(list(view.options), ["Feed", "Rejected", "Rules", "Radar", "Diagnostics"])
         self.assertEqual(view.value, "Feed")
         # one workspace: no switcher
         self.assertEqual([s.key for s in at.selectbox if s.key == "workspace"], [])
+
+    def test_masthead_shows_the_logo_mark_inline(self):
+        self.http.on("GET", PILOT_HUB + "/editions", fx.editions())
+        at = self.app()
+        self.assert_clean(at)
+        masthead = next(str(m.value) for m in at.markdown if str(m.value).startswith('<header class="zx-masthead">'))
+        match = re.search(r'<span class="brand-lockup"><img class="brand-mark" src="data:image/png;base64,([A-Za-z0-9+/=]+)" '
+                          r'alt="ZENUX" width="42" height="42"><span class="brand-core">ZENUX</span></span>', masthead)
+        self.assertIsNotNone(match, "the mark sits immediately left of the wordmark")
+        self.assertEqual(base64.b64decode(match.group(1)), (DASHBOARD / "assets" / "zenux-favicon.png").read_bytes())
+
+    def test_page_icon_is_the_favicon_file(self):
+        self.http.on("GET", PILOT_HUB + "/editions", fx.editions())
+        with patch("streamlit.set_page_config", wraps=st.set_page_config) as spy:
+            at = self.app()
+        self.assert_clean(at)
+        icon = Path(spy.call_args.kwargs["page_icon"])
+        self.assertEqual(icon.resolve(), (DASHBOARD / "assets" / "zenux-favicon.png").resolve())
+        self.assertTrue(icon.is_file())
+        self.assertEqual(spy.call_args.kwargs["page_title"], "ZENUX")
+
+    def test_theme_is_light_and_green(self):
+        with open(DASHBOARD / ".streamlit" / "config.toml", "rb") as handle:
+            theme = tomllib.load(handle)["theme"]
+        self.assertEqual(
+            {k: theme[k] for k in ("base", "primaryColor", "backgroundColor", "secondaryBackgroundColor", "textColor",
+                                   "font")},
+            {"base": "light", "primaryColor": "#006341", "backgroundColor": "#FFFFFF",
+             "secondaryBackgroundColor": "#F7F7F7", "textColor": "#444444", "font": "sans serif"})
+        css = (DASHBOARD / "feed.css").read_text(encoding="utf-8")
+        self.assertTrue(css.lstrip().startswith("/*") and "@import url(\"https://fonts.googleapis.com/css2?family=Roboto"
+                                                         ":wght@400;500;700;900" in css.split("{", 1)[0])
+        for dark in ("#060709", "#0c0e12", "backdrop-filter"):  # the old dark theme is gone
+            self.assertNotIn(dark, css.lower())
+
+    def test_footer_on_every_page(self):
+        self.http.on("GET", PILOT_HUB + "/editions", fx.editions())
+        for view in ("Feed", "Rejected", "Rules", "Radar", "Diagnostics"):
+            with self.subTest(view=view):
+                at = self.app(view=view)
+                self.assert_clean(at)
+                self.assertTrue(self.html(at).endswith(FOOTER))
+        at = self.app({"zenux": {"note": "no workspaces here"}})
+        self.assertIn(FOOTER, self.html(at))
 
     def test_no_configuration(self):
         at = self.app({"zenux": {"note": "no workspaces here"}})
@@ -71,31 +129,44 @@ class FeedTests(AppCase):
         super().setUp()
         self.http.on("GET", PILOT_HUB + "/editions", fx.editions())
 
-    def test_editions_render_newest_first_with_the_legacy_card_design(self):
+    def edition_blocks(self, at) -> list[str]:
+        """The edition card HTML blocks (band and items), newest first."""
+        return [str(m.value) for m in at.markdown if str(m.value).startswith('<section class="feed-edition')]
+
+    def test_editions_render_newest_first_as_green_bands_over_item_cards(self):
         at = self.app()
         self.assert_clean(at)
         html = self.html(at)
         self.assertLess(html.index("Edition #12"), html.index("Edition #11"))
-        self.assertIn('<div class="edition-note">Two items cleared the bar.</div>', html)
         self.assertEqual(html.count('<span class="latest-badge">LATEST</span>'), 1)
-        self.assertIn('<section class="feed-edition latest-edition">', html)
+        self.assertIn('<section class="feed-edition latest-edition"><header class="edition-band">'
+                      '<span class="latest-badge">LATEST</span><div class="edition-title" role="heading" aria-level="2">',
+                      html)
+        self.assertIn('<div class="edition-meta"><span class="edition-label">Edition #12</span>'
+                      '<span aria-hidden="true">·</span><span>2h ago</span>', html)
+        self.assertIn('<span aria-hidden="true">·</span><span>2 items</span></div>', html)
         self.assertIn('<div class="rank-marker">01</div>', html)
         # escaped headline and text; the blank line in the text never reaches the HTML block
-        self.assertIn("Neocloud signs 200 MW &lt;lease&gt; with hyperscaler", html)
+        self.assertIn('<div class="feed-item-headline">Neocloud signs 200 MW &lt;lease&gt; with hyperscaler</div>', html)
         self.assertIn("critical IT capacity.<br>Energization is planned for 2027.", html)
-        # stats panel on the latest edition
-        self.assertIn('<div class="stat"><div class="stat-n">2</div><div class="stat-l">ITEMS</div></div>', html)
-        self.assertIn('<div class="stat"><div class="stat-n">41</div><div class="stat-l">REVIEWED</div></div>', html)
-        self.assertIn('<div class="stat stat-high"><div class="stat-n">1</div><div class="stat-l">LEAD 90+</div></div>', html)
-        self.assertIn('<span><i style="background:#b692f6"></i>AI-INFRA 1</span>', html)
-        # metrics, sources and score badges
+        # the source line above the headline, without a module dot
+        self.assertIn('<div class="feed-source">Company newsroom</div><details class="feed-details">', html)
+        self.assertNotIn("feed-theme", html)
+        # stats tiles inside the band, every edition, with per-module counts
+        for tile in ('<div class="stat"><div class="stat-n">2</div><div class="stat-l">ITEMS</div></div>',
+                     '<div class="stat"><div class="stat-n">41</div><div class="stat-l">REVIEWED</div></div>',
+                     '<div class="stat"><div class="stat-n">1</div><div class="stat-l">LEAD 90+</div></div>',
+                     '<div class="stat"><div class="stat-n">1</div><div class="stat-l">DIGEST 70–89</div></div>',
+                     '<div class="stat stat-module"><div class="stat-n">1</div><div class="stat-l">AI INFRASTRUCTURE</div></div>',
+                     '<div class="stat stat-module"><div class="stat-n">1</div><div class="stat-l">DEFENSE UNMANNED</div></div>'):
+            self.assertEqual(html.count(tile), 2, tile)
+        # metrics, sources, tags and the owner's earlier grade
         self.assertIn('<span class="feed-metric">Critical IT <b>200 MW</b></span>', html)
-        self.assertIn('href="https://example.com/neocloud-lease"', html)
-        self.assertIn('<span class="value-badge level-high">score 93</span>', html)
-        self.assertIn('<span class="value-badge level-medium">score 78</span>', html)
-        self.assertIn('<span class="zx-chip score">your grade: digest 80</span>', html)  # the owner's earlier grade
         self.assertIn('<span class="feed-metric">Term <b>15 years</b></span>', html)
-        self.assertIn("Tier 3 · catalyst", html)
+        self.assertIn('<a class="source-link" href="https://example.com/neocloud-lease" target="_blank" '
+                      'rel="noopener noreferrer">Company newsroom ↗</a>', html)
+        self.assertIn('<span class="zx-chip grade">your grade: digest 80</span>', html)
+        self.assertIn('<span class="zx-chip tier">Tier 3 · catalyst</span>', html)
         # an unsafe source link is dropped, never rendered as a link
         self.assertNotIn("javascript:", html)
         self.assertNotIn("\n\n", html)
@@ -104,15 +175,114 @@ class FeedTests(AppCase):
         self.assertEqual(call.bearer, READ)
         self.assert_no_secrets(at)
 
+    def test_header_title_is_the_edition_summary(self):
+        body = fx.editions()
+        body["editions"][0]["summary"] = "A 200 MW <neocloud> lease and a $48M counter-UAS order lead the morning."
+        self.http.on("GET", PILOT_HUB + "/editions", body)
+        at = self.app()
+        self.assert_clean(at)
+        latest, older = self.edition_blocks(at)
+        self.assertIn('<div class="edition-title" role="heading" aria-level="2">A 200 MW &lt;neocloud&gt; lease and a '
+                      '$48M counter-UAS order lead the morning.</div>', latest)
+        self.assertNotIn("led by", latest)
+        # the older edition has no summary: the fallback sentence
+        self.assertIn('<div class="edition-title" role="heading" aria-level="2">2 items across AI infrastructure (1) '
+                      'and defense unmanned (1), led by Neocloud signs 200 MW &lt;lease&gt; with hyperscaler.</div>',
+                      older)
+
+    def test_header_falls_back_to_a_sentence_built_from_the_items(self):
+        body = fx.editions(1)
+        items = body["editions"][0]["items"]
+        for n in range(3, 10):  # 9 items: 4 in ai-infra, 5 in defense-unmanned
+            items.append(dict(items[1], id=1200 + n, rank=n, headline=f"Item {n}",
+                              module="ai-infra" if n <= 5 else "defense-unmanned"))
+        self.http.on("GET", PILOT_HUB + "/editions", body)
+        at = self.app()
+        self.assert_clean(at)
+        (block,) = self.edition_blocks(at)
+        self.assertIn('<div class="edition-title" role="heading" aria-level="2">9 items across AI infrastructure (4) '
+                      'and defense unmanned (5), led by Neocloud signs 200 MW &lt;lease&gt; with hyperscaler.</div>',
+                      block)
+        self.assertIn('<div class="stat stat-module"><div class="stat-n">4</div><div class="stat-l">AI INFRASTRUCTURE</div>',
+                      block)
+        self.assertIn('<div class="stat stat-module"><div class="stat-n">5</div><div class="stat-l">DEFENSE UNMANNED</div>',
+                      block)
+
+    def test_grading_note_only_in_a_collapsed_expander_at_the_bottom_of_its_edition(self):
+        at = self.app()
+        self.assert_clean(at)
+        for block in self.edition_blocks(at):
+            self.assertNotIn("note", block.lower())
+            self.assertNotIn("Two items cleared the bar.", block)
+        self.assertNotIn("edition-note", self.html(at))
+        self.assertEqual([e.label for e in at.expander], ["Grading notes", "Grading notes"])
+        self.assertEqual([e.proto.expanded for e in at.expander], [False, False])
+        # page order: each edition card, then its own notes, then the next edition
+        order = []
+        for node in self.walk(at._tree):
+            if node.type == "expander":
+                inside = " ".join(str(m.value) for m in self.walk(node) if m.type == "markdown")
+                order.append(("notes", inside))
+            elif node.type == "markdown" and str(node.value).startswith('<section class="feed-edition'):
+                order.append(("edition", re.search(r"Edition #\d+", str(node.value)).group(0)))
+        self.assertEqual(order, [
+            ("edition", "Edition #12"), ("notes", '<div class="grading-notes">Two items cleared the bar.</div>'),
+            ("edition", "Edition #11"), ("notes", '<div class="grading-notes">Edition 11 note</div>'),
+        ])
+
+    def test_no_grading_notes_expander_without_a_note(self):
+        self.http.on("GET", PILOT_HUB + "/editions", fx.empty_edition())
+        at = self.app()
+        self.assert_clean(at)
+        self.assertEqual(list(at.expander), [])
+        self.assertIn("An empty edition: nothing cleared the bar in this window.", self.html(at))
+
+    def test_grading_notes_sit_between_the_items_and_the_grade_form(self):
+        at = self.app(pin=PIN, grading=True)
+        self.assert_clean(at)
+        form = next(n for n in self.walk(at._tree) if n.type == "form")
+        kinds = []
+        for node in self.walk(form):
+            if node.type == "expander":
+                kinds.append("notes")
+            elif node.type == "markdown" and 'class="feed-edition' in str(node.value):
+                kinds.append("edition")
+            elif node.type == "markdown" and "digest-grading-title" in str(node.value):
+                kinds.append("grade form")
+        self.assertEqual(kinds, ["edition", "notes", "grade form"])
+
+    def test_item_cards_show_module_tags_and_no_score_pill(self):
+        body = fx.editions(1)
+        body["editions"][0]["items"][1]["modules"] = ["defense-unmanned", "ai-infra", "space-launch"]
+        self.http.on("GET", PILOT_HUB + "/editions", body)
+        at = self.app()
+        self.assert_clean(at)
+        first, second = ITEM_CARD.findall(self.html(at))
+        for card in (first, second):
+            self.assertNotIn("score", card.lower())
+            self.assertNotIn("value-badge", card)
+        # no `modules`: the item's own module
+        self.assertIn('<div class="feed-tags"><span class="module-tag">AI INFRASTRUCTURE</span>'
+                      '<span class="zx-chip tier">Tier 3 · catalyst</span></div>', first)
+        # `modules` wins, in order; an unknown module id is shown with its dashes as spaces
+        self.assertIn('<div class="feed-tags"><span class="module-tag">DEFENSE UNMANNED</span>'
+                      '<span class="module-tag">AI INFRASTRUCTURE</span><span class="module-tag">SPACE LAUNCH</span>'
+                      '<span class="zx-chip tier">Tier 3 · catalyst</span>', second)
+
     def test_search_filters_loaded_items(self):
         at = self.app()
         at.text_input(key="feed_search").set_value("counter-uas").run()
         self.assert_clean(at)
         html = self.html(at)
         self.assertIn("2 search results", html)
-        self.assertIn("Army awards $48M counter-UAS order", html)
-        self.assertNotIn("Neocloud signs", html)
+        self.assertIn('<div class="feed-item-headline">Army awards $48M counter-UAS order</div>', html)
+        self.assertNotIn('<div class="feed-item-headline">Neocloud', html)  # its card is filtered out
+        self.assertEqual(len(ITEM_CARD.findall(html)), 2)
+        # the band still describes the whole edition, and says how many items matched
+        self.assertIn('<span>2 items</span><span aria-hidden="true">·</span><span>1 matching</span>', html)
         self.assertNotIn("LATEST", html)
+        at.text_input(key="feed_search").set_value("defense unmanned").run()  # module display names are searchable
+        self.assertEqual(len(ITEM_CARD.findall(self.html(at))), 2)
         at.text_input(key="feed_search").set_value("no such company").run()
         self.assertIn("No matching stories", self.html(at))
 

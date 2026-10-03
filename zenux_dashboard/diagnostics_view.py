@@ -610,7 +610,7 @@ def render_snapshot(conf: Config, current: Workspace | None) -> None:
 
 
 def config_rows(conf: Config) -> list[list[str]]:
-    yes = lambda ok: pill("ok", "set") if ok else pill("failed", "missing")  # noqa: E731
+    yes = lambda ok: pill("ok", "set") if ok else pill("missing")  # noqa: E731
     rows = []
     for ws in conf.workspaces:
         rows.append([f'<b>{esc(ws.id)}</b>', "hub", yes(bool(ws.hub_url)), yes(bool(ws.read_token)),

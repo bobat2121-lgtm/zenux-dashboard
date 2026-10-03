@@ -154,7 +154,7 @@ def render_card(ws: Workspace, row: dict) -> None:
     rid = row.get("id")
     proposal = proposal_of(row)
     summary = one_line(pick(proposal, "summary", "rationale", "why", "text"))
-    with st.container(border=True):
+    with st.container(border=True, key=f"zx_card_radar_{ws.id}_{rid}"):
         details = proposal_rows(proposal)
         st.markdown(
             '<div class="radar-body"><div class="loop-card-head">' + kind_chip(kind_of(row)) + pill(status_of(row))
@@ -193,7 +193,7 @@ def render_card(ws: Workspace, row: dict) -> None:
 
 def render_waiting_row(ws: Workspace, row: dict) -> None:
     rid = row.get("id")
-    with st.container(border=True):
+    with st.container(border=True, key=f"zx_card_scout_{ws.id}_{rid}"):
         text_col, button_col = st.columns([6, 1])
         text_col.markdown(
             '<div class="loop-card-head">' + kind_chip(kind_of(row)) + pill(status_of(row), "with the scout")

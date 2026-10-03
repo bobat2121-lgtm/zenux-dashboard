@@ -7,6 +7,7 @@ unreachable host (requests.ConnectionError). Tokens below are obvious test value
 from __future__ import annotations
 
 import copy
+import re
 import sys
 import unittest
 from dataclasses import dataclass, field
@@ -48,6 +49,7 @@ BETA_READ = "test-read-token-beta"
 BETA_OWNER = "test-owner-token-beta"
 BETA_PIN = "pin-8765-test"
 BETA_RUN = "test-run-token-beta-coverage"
+DATA_URI = re.compile(r"data:image/png;base64,[A-Za-z0-9+/=]+")
 
 
 def pilot_secrets() -> dict:
@@ -196,9 +198,22 @@ class AppCase(unittest.TestCase):
         return at.run() if run else at
 
     @staticmethod
-    def html(at: AppTest) -> str:
-        """Every markdown block but the stylesheet."""
+    def raw_html(at: AppTest) -> str:
+        """Every markdown block but the stylesheet, exactly as sent (the logo mark is an inline data: URI)."""
         return "\n".join(str(m.value) for m in at.markdown if not str(m.value).startswith("<style>"))
+
+    @classmethod
+    def html(cls, at: AppTest) -> str:
+        """raw_html with inline images shortened, so a failing assertion prints a readable page."""
+        return DATA_URI.sub("data:image/png;base64,...", cls.raw_html(at))
+
+    @staticmethod
+    def walk(node: Any):
+        """Every node of an AppTest element tree, in page order."""
+        yield node
+        children = getattr(node, "children", None) or {}
+        for key in sorted(children):
+            yield from AppCase.walk(children[key])
 
     @staticmethod
     def fresh() -> None:
