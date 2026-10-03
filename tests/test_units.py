@@ -365,3 +365,12 @@ class DiagnosticsShapeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnquotedNumericPinTest(unittest.TestCase):
+    def test_integer_pin_from_toml_is_accepted(self):
+        from zenux_dashboard.config import usable_pin
+        self.assertEqual(usable_pin(12345678), "12345678")
+        self.assertEqual(usable_pin("12345678"), "12345678")
+        self.assertEqual(usable_pin(True), "")
+        self.assertEqual(usable_pin(None), "")

@@ -118,7 +118,13 @@ def is_placeholder_pin(pin: Any) -> bool:
 
 
 def usable_pin(raw: Any) -> str:
-    """The PIN, or '' when it is unset or a published placeholder (the same rule as usablePin in the deploy tool)."""
+    """The PIN, or '' when it is unset or a published placeholder (the same rule as usablePin in the deploy tool).
+
+    An all-digit PIN written without quotes (owner_pin = 12345678) arrives from TOML as an integer; accept it as
+    its digits rather than silently treating the PIN as unset.
+    """
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        raw = str(raw)
     pin = _text(raw)
     return "" if is_placeholder_pin(pin) else pin
 

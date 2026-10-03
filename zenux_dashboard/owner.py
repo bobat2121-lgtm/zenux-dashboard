@@ -171,7 +171,9 @@ def lock_message(ws: Workspace | None, state: str) -> str:
     name = f"'{ws.id}'" if ws else "this workspace"
     if state == NOT_CONFIGURED:
         return (f"Owner actions are disabled for {name}: owner_token or owner_pin is not configured "
-                f"(the PIN needs {MIN_PIN_LENGTH} or more characters and cannot be the example placeholder).")
+                f"(the PIN needs {MIN_PIN_LENGTH} or more characters, written in quotes such as owner_pin = \"12345678\", "
+                f"inside the workspace block above its first [[workspaces.modules]] line or at the top of the secrets, "
+                f"and cannot be the example placeholder).")
     if state == WRONG_PIN:
         return (f"That PIN does not unlock workspace {name}. After {MAX_FAILURES} wrong PINs every PIN is refused "
                 "for a while, so wait a few minutes before trying again.")
