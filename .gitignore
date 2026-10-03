@@ -1,0 +1,6 @@
+# ZENUX dashboard: local environment and secrets never leave this machine.
+.venv/
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+.pytest_cache/

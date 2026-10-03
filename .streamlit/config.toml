@@ -1,0 +1,14 @@
+# ZENUX dashboard theme (ported from the legacy feed look: obsidian base, electric blue, copper accents).
+[theme]
+base = "dark"
+primaryColor = "#468CFF"
+backgroundColor = "#060709"
+secondaryBackgroundColor = "#0C0E12"
+textColor = "#F1F3F7"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
