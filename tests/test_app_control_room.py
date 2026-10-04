@@ -1,0 +1,662 @@
+"""AppTest: the Control room (builder only): today's diagnostics for every workspace, acknowledgements and the stage
+switch (toasts, undo, confirmation), the technical module view, backfill, coverage requests to review and the
+configuration notes."""
+
+from __future__ import annotations
+
+import unittest
+from typing import Any
+
+import fixtures as fx
+import fixtures_coverage as fc
+from helpers import (AppCase, BETA_COV, BETA_HUB, BETA_READ, BETA_RUN, BUILDER_PIN, Call, FakeResponse, OWNER,
+                     PILOT_AI, PILOT_DEF, PILOT_HUB, PIN, READ, RUN_AI, RUN_DEF, hub_defaults, one_workspace,
+                     two_workspaces)
+from zenux_dashboard import ui
+INSPECT_AI = PILOT_HUB + "/modules/ai-infra/inspect"
+INSPECT_DEF = PILOT_HUB + "/modules/defense-unmanned/inspect"
+STAGE = PILOT_HUB + "/admin/stage"
+CONFIRM = "dlg_save"  # the confirm button of ui.ask_confirm (dialog keys are dlg_*)
+
+
+def undo_of(at) -> Any:
+    try:
+        return at.session_state[ui.UNDO_KEY]
+    except KeyError:
+        return None
+
+
+def field(obj: Any, name: str) -> Any:
+    return getattr(obj, name, None) if not isinstance(obj, dict) else obj.get(name)
+
+
+def with_builder(secrets: dict) -> dict:
+    return {**secrets, "builder_pin": BUILDER_PIN}
+
+
+class ControlCase(AppCase):
+    def setUp(self):
+        super().setUp()
+        hub_defaults(self.http)
+        h = self.http
+        h.on("GET", PILOT_HUB + "/diagnostics", fx.diagnostics())
+        h.on("GET", PILOT_HUB + "/snapshot", fx.snapshot())
+        h.on("GET", PILOT_AI + "/health", fx.module_health("ai-infra"))
+        h.on("GET", PILOT_DEF + "/health", fx.module_health("defense-unmanned"))
+        h.on("GET", PILOT_HUB + "/sources", lambda call: {"sources": [
+            {"module_id": call.params["module"], "source_key": "dcd-news", "retired": None},
+            {"module_id": call.params["module"], "source_key": "edgar-8k", "retired": None},
+            {"module_id": call.params["module"], "source_key": "old-feed", "retired": "not_in_latest_run"}]})
+        h.on("GET", PILOT_AI + "/backfill", FakeResponse(404, {"error": "no_backfill_job"}))
+        h.on("GET", PILOT_DEF + "/backfill", FakeResponse(404, {"error": "no_backfill_job"}))
+        h.on("GET", PILOT_HUB + "/settings", fc.settings())
+        h.on("GET", PILOT_HUB + "/radar", fc.radar_requests())
+        h.on("GET", PILOT_HUB + "/modules", fc.modules())
+        h.on("GET", INSPECT_AI, fc.inspect_ai())
+        h.on("GET", INSPECT_DEF, fc.inspect_def())
+
+    def control(self, secrets: dict | None = None, **kwargs):
+        """The Control room, unlocked with the builder PIN (the pilot's owner PIN is the fallback for one workspace)."""
+        kwargs.setdefault("builder_pin", PIN if secrets is None else BUILDER_PIN)
+        return self.app(secrets, tab="control", **kwargs)
+
+    def beta_routes(self) -> None:
+        self.http.on("GET", BETA_HUB + "/diagnostics", fx.diagnostics("beta", failing=False) | {"modules": []})
+        self.http.on("GET", BETA_COV + "/health", fx.module_health("coverage"))
+        self.http.on("GET", BETA_COV + "/backfill", FakeResponse(404, {"error": "no_backfill_job"}))
+        self.http.on("GET", BETA_HUB + "/settings", fc.settings())
+        self.http.on("GET", BETA_HUB + "/radar", {"requests": []})
+
+
+class AccessTests(ControlCase):
+    def test_hidden_without_the_builder(self):
+        at = self.app(tab="control")
+        self.assert_clean(at)
+        self.assertNotIn("Control room", list(at.radio(key="zx_tab").options))
+        self.assertNotIn('<div class="health-card ', self.html(at))
+        self.assertEqual(self.http.find("GET", PILOT_AI + "/health"), [])  # no module is asked for its health
+
+    def test_two_workspaces_need_a_builder_pin(self):
+        at = self.app(two_workspaces(), tab="control", pin=PIN)  # the owner PIN alone opens no Control room
+        self.assert_clean(at)
+        self.assertNotIn("Control room", list(at.radio(key="zx_tab").options))
+        self.assertNotIn('<div class="health-card ', self.html(at))
+
+    def test_single_workspace_owner_pin_is_the_builder_fallback(self):
+        at = self.control()
+        self.assert_clean(at)
+        self.assertIn("Control room", list(at.radio(key="zx_tab").options))
+        self.assertEqual(self.html(at).count('<div class="health-card '), 1)
+        self.assertIn("Builder PIN: set (owner PIN fallback)", self.texts(at, "caption"))
+        self.assert_no_secrets(at)
+
+
+class BackfillTests(ControlCase):
+    def test_panel_lists_sources_from_module_health(self):
+        at = self.control()
+        self.assert_clean(at)
+        self.assertIn("Backfill", self.html(at))
+        self.assertEqual(at.selectbox(key="bf_ws").value, "pilot")
+        self.assertEqual(list(at.selectbox(key="bf_module_pilot").options), ["ai-infra", "defense-unmanned"])
+        self.assertEqual(at.number_input(key="bf_days").value, 14)
+        # the module's /health keys plus the current keys the hub has seen (a retired one is left out)
+        self.assertEqual(list(at.multiselect(key="bf_sources_pilot_ai-infra").options),
+                         ["ai-infra-rss", "ai-infra-sitemap", "dcd-news", "edgar-8k"])
+        self.assertEqual(self.http.find("GET", PILOT_HUB + "/sources")[0].params, {"module": "ai-infra"})
+        self.assertIn("No backfill has run for ai-infra yet.", self.texts(at, "caption"))
+        self.assertEqual(self.http.find("GET", PILOT_AI + "/backfill")[0].bearer, RUN_AI)
+        self.assert_no_secrets(at)
+
+    def test_backfill_sits_below_the_diagnostics(self):
+        html = self.html(self.control())
+        self.assertLess(html.index('<div class="health-card '), html.index("<span>Backfill</span>"))
+        self.assertLess(html.index("<span>Backfill</span>"), html.index("<span>Coverage requests to review</span>"))
+
+    def test_run_posts_the_job_then_polls_progress_until_done(self):
+        stage = {"n": 0}
+        jobs = [fx.job("queued", 0, 2, days=21), fx.job("running", 1, 1, days=21), fx.job("done", 2, 0, days=21)]
+        posted = []
+
+        def status(call):
+            return jobs[min(stage["n"], 2)] if posted else FakeResponse(404, {"error": "no_backfill_job"})
+
+        def start(call):
+            posted.append(call)
+            return FakeResponse(202, jobs[0])
+
+        self.http.on("GET", PILOT_AI + "/backfill", status)
+        self.http.on("POST", PILOT_AI + "/backfill", start)
+        at = self.control()
+        at.number_input(key="bf_days").set_value(21)
+        at.multiselect(key="bf_sources_pilot_ai-infra").set_value(["edgar-8k", "ai-infra-rss"])
+        at.button(key="bf_run").click().run()
+        self.assert_clean(at)
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(posted[0].bearer, RUN_AI)
+        self.assertEqual(posted[0].body, {"days": 21, "sources": ["ai-infra-rss", "edgar-8k"]})
+        self.assertTrue(any("Backfill bf-1 queued for pilot/ai-infra: 21 days, 2 source(s)" in s
+                            for s in self.texts(at, "success")))
+        html = self.html(at)
+        self.assertIn('<span class="status-pill warn">queued</span>', html)
+        self.assertIn("0 of 2 sources done", html)
+        self.assertTrue(at.session_state["bf_live_pilot_ai-infra"])
+        stage["n"] = 1  # the polling fragment's next tick
+        at.run()
+        self.assertIn("1 of 2 sources done", self.html(at))
+        self.assertTrue(at.session_state["bf_live_pilot_ai-infra"])
+        stage["n"] = 2  # the job finishes: polling stops
+        jobs[2]["totals"] = {"new": 37, "emitted": 37, "failed": 0}
+        at.run()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertIn("<span>37 new · 37 emitted</span>", html)
+        self.assertIn('<span class="status-pill ok">done</span>', html)
+        self.assertFalse(at.session_state["bf_live_pilot_ai-infra"])
+        self.assertEqual(len(posted), 1)
+
+    def test_an_active_job_found_on_load_starts_polling(self):
+        self.http.on("GET", PILOT_AI + "/backfill", fx.job("running", 2, 3))
+        at = self.control()
+        self.assert_clean(at)
+        self.assertTrue(at.session_state["bf_live_pilot_ai-infra"])
+        self.assertIn("2 of 5 sources done", self.html(at))
+        self.assertTrue(any(c.startswith("Remaining: edgar-8k, dcd-news, bisnow-dc") for c in self.texts(at, "caption")))
+
+    def test_run_while_a_job_is_in_flight_leaves_it_unchanged(self):
+        self.http.on("POST", PILOT_AI + "/backfill", FakeResponse(200, fx.job("running", 1, 2, job_id="bf-old")))
+        self.http.on("GET", PILOT_AI + "/backfill", fx.job("running", 1, 2, job_id="bf-old"))
+        at = self.control()
+        at.button(key="bf_run").click().run()
+        self.assert_clean(at)
+        self.assertTrue(any("A backfill is already in progress for pilot/ai-infra (job bf-old, 1 of 3 sources done)" in s
+                            for s in self.texts(at, "success")))
+
+    def test_failed_job_shows_its_last_error(self):
+        self.http.on("GET", PILOT_AI + "/backfill", fx.job("failed", 1, 2) | {"last_error": "chunk timed out"})
+        at = self.control()
+        self.assert_clean(at)
+        self.assertIn('<span class="status-pill bad">failed</span>', self.html(at))
+        self.assertIn("Last chunk error: chunk timed out", self.texts(at, "caption"))
+        self.assertFalse(at.session_state["bf_live_pilot_ai-infra"])
+
+    def test_run_refused_by_the_module(self):
+        self.http.on("POST", PILOT_AI + "/backfill", FakeResponse(409, {"error": "job_running"}))
+        at = self.control()
+        at.button(key="bf_run").click().run()
+        self.assert_clean(at)
+        self.assertIn("Backfill not started: HTTP 409: job_running", self.texts(at, "error"))
+
+    def test_the_builder_runs_another_workspace_with_its_run_token(self):
+        self.beta_routes()
+        self.http.on("POST", BETA_COV + "/backfill", FakeResponse(202, fx.job("queued", 0, 3, job_id="bf-beta", days=30)))
+        at = self.control(with_builder(two_workspaces()))
+        at.selectbox(key="bf_ws").set_value("beta").run()
+        self.assertEqual(list(at.selectbox(key="bf_module_beta").options), ["coverage"])
+        at.number_input(key="bf_days").set_value(30)
+        at.button(key="bf_run").click().run()
+        self.assert_clean(at)
+        post = self.http.find("POST", BETA_COV + "/backfill")[0]
+        self.assertEqual((post.body, post.bearer), ({"days": 30}, BETA_RUN))
+        self.assertTrue(any("queued for beta/coverage: 30 days, every source" in s for s in self.texts(at, "success")))
+
+    def test_backfill_disabled_without_a_run_token(self):
+        secrets = one_workspace()
+        secrets["workspaces"][0]["modules"][0].pop("run_token")
+        at = self.control(secrets, builder_pin=PIN)
+        self.assert_clean(at)
+        self.assertTrue(at.button(key="bf_run").disabled)
+        self.assertIn("Backfill is disabled for ai-infra: url or run_token is not configured.", self.texts(at, "caption"))
+        self.assertEqual(self.http.find("GET", PILOT_AI + "/backfill"), [])
+
+    def test_send_again_is_sent_only_when_ticked(self):
+        posted = []
+        self.http.on("POST", PILOT_AI + "/backfill", lambda call: posted.append(call.body) or FakeResponse(202, fx.job()))
+        at = self.control()
+        box = at.checkbox(key="bf_ignore_pilot_ai-infra")
+        self.assertEqual((box.label, box.value), ("Send again even if already sent (after lost deliveries)", False))
+        at.button(key="bf_run").click().run()
+        self.assertEqual(posted[-1], {"days": 14})
+        at.checkbox(key="bf_ignore_pilot_ai-infra").check()
+        at.button(key="bf_run").click().run()
+        self.assert_clean(at)
+        self.assertEqual(posted[-1], {"days": 14, "ignore_seen": True})
+
+    def test_module_health_unreachable_still_allows_typed_sources(self):
+        self.http.routes.pop(("GET", PILOT_AI + "/health"))
+        self.http.routes.pop(("GET", PILOT_HUB + "/sources"))
+        at = self.control()
+        self.assert_clean(at)
+        self.assertEqual(list(at.multiselect(key="bf_sources_pilot_ai-infra").options), [])
+        self.assertIn("Could not list sources from ai-infra/health: unreachable (ConnectionError)",
+                      self.texts(at, "caption"))
+
+
+class HealthPanelTests(ControlCase):
+    def test_every_workspace_is_shown_with_status_pills(self):
+        self.http.on("GET", BETA_COV + "/health", fx.module_health("coverage"))  # beta's hub stays unreachable
+        at = self.control(with_builder(two_workspaces()))
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertEqual(html.count('<div class="health-card '), 2)
+        self.assertIn('<span class="health-title">Pilot</span><span class="status-pill warn">needs attention</span>', html)
+        self.assertIn('<span class="health-title">Beta analyst</span><span class="status-pill bad">needs action</span>', html)
+        self.assertIn('<div class="health-reason warn">defense-unmanned/sam-opps is failing (HTTP 429, 3 runs)</div>', html)
+        self.assertIn("<strong>Hub unreachable</strong> · unreachable (ConnectionError)", html)
+        self.assertIn('<div class="tile "><div class="tile-n">21</div><div class="tile-l">Stories waiting</div>', html)
+        self.assertIn("fresh, 7 days · 57 in all · trend steady · 807 auto-rejected as stale", html)
+        self.assertIn('<div class="tile-n">held</div><div class="tile-l">Grader lease</div>', html)
+        self.assertIn('<div class="tile warn"><div class="tile-n">2</div><div class="tile-l">Dead letters</div>', html)
+        self.assertIn('<div class="tile warn"><div class="tile-n">1</div><div class="tile-l">Failing sources</div>', html)
+        self.assertIn('<div class="tile warn"><div class="tile-n">1</div><div class="tile-l">Silent sources</div>', html)
+        self.assertIn("#12 · 2 items", html)
+        self.assertIn('<td><span class="mono">ai-infra</span></td><td><span class="status-pill ok">ok</span></td>', html)
+        self.assertIn('<td>42</td><td>270</td>', html)
+        self.assertIn('<span class="mono">defense-unmanned</span></td><td><span class="status-pill warn">degraded</span>', html)
+        self.assertIn('<span class="mono">coverage</span></td><td><span class="status-pill ok">ok</span>', html)
+        self.assertIn("<td>defense-unmanned</td><td><span class=\"mono\">sam-opps</span></td>"
+                      "<td><span class=\"status-pill warn\">backoff</span></td><td>error</td><td>429</td><td>3</td>", html)
+        self.assertIn("silent_for_96h", html)
+        self.assertIn("defense-unmanned:x:1", html)
+        expanders = [e.label for e in at.expander]
+        for label in ("pilot · failing sources · 1", "pilot · silent sources · 1", "pilot · recent dead letters · 1"):
+            self.assertIn(label, expanders)
+        self.assertEqual(self.http.find("GET", PILOT_HUB + "/diagnostics")[0].bearer, READ)
+        self.assertEqual(self.http.find("GET", BETA_HUB + "/diagnostics")[0].bearer, BETA_READ)
+        self.assert_no_secrets(at)
+        self.assertNotIn(BUILDER_PIN, self.html(at) + "".join(self.texts(at, "caption")))
+
+    def test_module_worker_down_and_backfill_column(self):
+        self.http.routes.pop(("GET", PILOT_AI + "/health"))
+        self.http.on("GET", PILOT_DEF + "/health",
+                     fx.module_health("defense-unmanned", backfill={"id": "bf-9", "status": "running", "days": 7,
+                                                                    "done": 3, "remaining": 5}))
+        at = self.control()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertIn('<span class="status-pill bad">down</span> <span class="tile-d">unreachable (ConnectionError)</span>', html)
+        self.assertIn('<span class="status-pill warn">running</span> 3/8', html)
+
+    def test_all_healthy(self):
+        self.http.on("GET", PILOT_HUB + "/diagnostics", fx.diagnostics(failing=False) | {"status": "ok", "modules": [
+            {"module_id": "ai-infra", "status": "ok"}, {"module_id": "defense-unmanned", "status": "ok"}],
+            "dead_letters": 0, "review": {"backlog": 0, "lease": {"run_id": None, "held": False}}})
+        at = self.control()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertIn('<span class="health-title">Pilot</span><span class="status-pill ok">healthy</span>', html)
+        self.assertIn('<div class="health-card ok">', html)
+        self.assertNotIn('class="health-reasons"', html)
+        self.assertIn('<div class="tile-n">free</div><div class="tile-l">Grader lease</div>', html)
+        self.assertEqual([e.label for e in at.expander if "failing" in e.label], [])
+
+    def test_schema_7_card_tiles_routines_and_footer(self):
+        at = self.control()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertIn('<div class="tile "><div class="tile-n">31</div><div class="tile-l">Aged out unread (24 h)</div>'
+                      '<div class="tile-d">0 arrived fresh</div></div>', html)
+        self.assertIn('<div class="tile "><div class="tile-n">68% same band</div><div class="tile-l">Grader agreement '
+                      '(30 days)</div><div class="tile-d">n=22 · 95% within one band · 7 days: 67%</div></div>', html)
+        self.assertIn('<div class="tile "><div class="tile-n">0.0 GB of 10 GB</div><div class="tile-l">Database size</div>',
+                      html)
+        self.assertIn('<div class="health-subhead">Routines</div>', html)
+        self.assertIn("<td>Grader</td><td>7:30 AM · 12:30 PM · 4:30 PM ET</td>", html)
+        self.assertIn("Refused tokens today: review 2, read 0", html)
+        self.assertIn('<div class="health-foot"><span>Hub build abc123def456 · schema 7', html)
+        self.assertIn("Delivery check: a test record from ai-infra came through the queue in 3.1 s, 3h ago", html)
+        self.assertIn("<span>cleaned up 5h ago</span>", html)
+        self.assertIn("pilot · biggest disagreements · 1", [e.label for e in at.expander])
+        self.assertIn("<td>Army awards counter-UAS &lt;production&gt; order</td><td>lead</td><td>55 (watch)</td>", html)
+
+    def test_awaiting_signoff_is_listed_as_the_hub_sends_it(self):
+        diag = fx.diagnostics(failing=False)
+        diag["severity"] = {"level": "amber", "acknowledged": [], "reasons": [
+            {"level": "amber", "code": "awaiting_signoff",
+             "message": "This workspace is collecting. Briefings start after the analyst signs off."}]}
+        self.http.on("GET", PILOT_HUB + "/diagnostics", diag)
+        at = self.control()
+        self.assertIn('<div class="health-reason warn">This workspace is collecting. Briefings start after the analyst '
+                      'signs off.</div>', self.html(at))
+
+    def test_unreachable_configured_module_turns_a_green_hub_red(self):
+        self.http.on("GET", PILOT_HUB + "/diagnostics", fx.diagnostics(failing=False))
+        self.http.on("GET", PILOT_DEF + "/health", FakeResponse(401, {"error": "unauthorized"}))
+        at = self.control()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertIn('<span class="health-title">Pilot</span><span class="status-pill bad">needs action</span>', html)
+        self.assertIn("defense-unmanned refused the dashboard&#x27;s run token, so its health cannot be read", html)
+        self.assertEqual(self.http.find("GET", PILOT_DEF + "/health")[0].bearer, RUN_DEF)
+
+    def test_hub_errors_are_listed(self):
+        diag = fx.diagnostics()
+        diag["errors"] = {"last_hour": 1, "last_24h": 1, "recent": [
+            {"at": fx.iso(0.2), "kind": "queue", "route": None, "message": "D1_ERROR: database is locked"}]}
+        diag["severity"]["level"] = "red"
+        diag["severity"]["reasons"].insert(0, {"level": "red", "code": "hub_errors",
+                                               "message": "The hub recorded 1 error in the last hour"})
+        self.http.on("GET", PILOT_HUB + "/diagnostics", diag)
+        at = self.control()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertIn('<div class="health-reasons"><div class="health-reason bad">The hub recorded 1 error in the last '
+                      'hour</div><div class="health-reason warn">', html)
+        self.assertIn("pilot · recent hub errors · 1", [e.label for e in at.expander])
+
+    def test_refresh_now_reads_again(self):
+        at = self.control()
+        before = len(self.http.find("GET", PILOT_HUB + "/diagnostics"))
+        at.run()
+        self.assertEqual(len(self.http.find("GET", PILOT_HUB + "/diagnostics")), before)  # cached within the TTL
+        at.button(key="health_refresh").click().run()
+        self.assert_clean(at)
+        self.assertEqual(len(self.http.find("GET", PILOT_HUB + "/diagnostics")), before + 1)
+
+    def test_unauthorized_hub(self):
+        self.http.on("GET", PILOT_HUB + "/diagnostics", FakeResponse(401, {"error": "unauthorized"}))
+        at = self.control()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertIn("<strong>Hub refused the read token</strong> · HTTP 401: token refused", html)
+        self.assertIn('<div class="tile-n">none yet</div><div class="tile-l">Last edition</div>', html)
+
+
+class AcknowledgeTests(ControlCase):
+    ACK = PILOT_HUB + "/admin/sources/ack"
+    UNACK = PILOT_HUB + "/admin/sources/unack"
+
+    def test_acknowledge_posts_module_source_and_note_with_a_toast_and_undo(self):
+        acked = fx.diagnostics()
+        acked["modules"][1]["failing"][0]["acknowledged"] = {"acked_at": fx.iso(0), "note": "SAM rate limit, known"}
+        acked["severity"].update(level="green", reasons=[], acknowledged=[
+            {"module": "defense-unmanned", "source_key": "sam-opps", "kind": "failing", "fingerprint": "failing:error:429",
+             "acked_at": fx.iso(0), "note": "SAM rate limit, known"}])
+
+        def ack(call):
+            self.http.on("GET", PILOT_HUB + "/diagnostics", acked)  # the hub now reports it acknowledged
+            return {"module": "defense-unmanned", "source_key": "sam-opps", "kind": "failing",
+                    "fingerprint": "failing:error:429", "acked_at": fx.iso(0), "note": call.body.get("note")}
+
+        self.http.on("POST", self.ACK, ack)
+        self.http.on("POST", self.UNACK, {"removed": True})
+        at = self.control()
+        self.assertIn("pilot · failing sources · 1", [e.label for e in at.expander])
+        at.text_input(key="ack_note_pilot_defense-unmanned_sam-opps").set_value("SAM rate limit, known")
+        at.button(key="ack_pilot_defense-unmanned_sam-opps").click().run()
+        self.assert_clean(at)
+        post = self.http.find("POST", self.ACK)[0]
+        self.assertEqual((post.body, post.bearer), ({"module": "defense-unmanned", "source_key": "sam-opps",
+                                                     "note": "SAM rate limit, known"}, OWNER))
+        self.assertIn("Acknowledged defense-unmanned/sam-opps.", self.toasts(at))
+        html = self.html(at)  # read again: green, the source in its own list with a way back
+        self.assertIn('<span class="health-title">Pilot</span><span class="status-pill ok">healthy</span>', html)
+        labels = [e.label for e in at.expander]
+        self.assertNotIn("pilot · failing sources · 1", labels)
+        self.assertIn("pilot · acknowledged sources · 1", labels)
+        self.assertIn("<td>SAM rate limit, known</td>", html)
+        field(undo_of(at), "run")(OWNER)
+        unack = self.http.find("POST", self.UNACK)[0]
+        self.assertEqual((unack.body, unack.bearer), ({"module": "defense-unmanned", "source_key": "sam-opps"}, OWNER))
+        self.assert_no_secrets(at)
+
+    def test_acknowledge_a_source_that_already_recovered(self):
+        self.http.on("POST", self.ACK, FakeResponse(409, {
+            "error": "source_not_failing", "message": "defense-unmanned/sam-opps has no current problem to acknowledge"}))
+        at = self.control()
+        at.button(key="ack_pilot_defense-unmanned_sam-opps").click().run()
+        self.assert_clean(at)
+        self.assertEqual(self.http.find("POST", self.ACK)[0].body, {"module": "defense-unmanned", "source_key": "sam-opps"})
+        self.assertTrue(any("has no current problem to acknowledge" in e for e in self.texts(at, "caption")))
+        self.assertEqual(self.toasts(at), [])
+
+    def test_remove_acknowledgement_with_undo(self):
+        diag = fx.diagnostics(failing=False)
+        diag["severity"]["acknowledged"] = [{"module": "ai-infra", "source_key": "sify-news", "kind": "structural_empty",
+                                             "fingerprint": "structural_empty:empty:-", "acked_at": fx.iso(3),
+                                             "note": "known layout change"}]
+        self.http.on("GET", PILOT_HUB + "/diagnostics", diag)
+        self.http.on("POST", self.UNACK, {"removed": True})
+        self.http.on("POST", self.ACK, {"module": "ai-infra", "source_key": "sify-news"})
+        at = self.control()
+        self.assertIn("pilot · acknowledged sources · 1", [e.label for e in at.expander])
+        self.assertIn("<td>ai-infra</td><td><span class=\"mono\">sify-news</span></td><td>empty</td>", self.html(at))
+        at.button(key="unack_pilot_ai-infra_sify-news").click().run()
+        self.assert_clean(at)
+        post = self.http.find("POST", self.UNACK)[0]
+        self.assertEqual((post.body, post.bearer), ({"module": "ai-infra", "source_key": "sify-news"}, OWNER))
+        self.assertIn("Acknowledgement removed.", self.toasts(at))
+        field(undo_of(at), "run")(OWNER)
+        self.assertEqual(self.http.find("POST", self.ACK)[0].body,
+                         {"module": "ai-infra", "source_key": "sify-news", "note": "known layout change"})
+
+    def test_an_older_hub_offers_no_acknowledge_button(self):
+        self.http.on("GET", PILOT_HUB + "/diagnostics", fx.diagnostics(legacy=True))
+        at = self.control()
+        self.assert_clean(at)
+        self.assertIn("pilot · failing sources · 1", [e.label for e in at.expander])
+        self.assertEqual([b.key for b in at.button if str(b.key or "").startswith("ack_")], [])
+
+
+class StageTests(ControlCase):
+    def test_switch_to_staging_asks_first_with_undo(self):
+        self.http.on("POST", STAGE, lambda call: fc.stage_set(call.body["stage"]))
+        at = self.control()
+        self.assert_clean(at)
+        self.assertIn("Stage: live since Thu Oct 1", self.html(at))
+        self.assertEqual(at.button(key="cr_stage_pilot").label, "Switch to staging")
+        at.button(key="cr_stage_pilot").click().run()
+        self.assertEqual(self.http.posts(), [])  # a confirmation first
+        self.assertIn("publishes no briefings until the analyst signs off", self.visible_text(at))
+        at.button(key=CONFIRM).click().run()
+        self.assert_clean(at)
+        post = self.http.find("POST", STAGE)[0]
+        self.assertEqual((post.body, post.bearer), ({"stage": "staging"}, OWNER))
+        self.assertIn("Stage is now staging.", self.toasts(at))
+        field(undo_of(at), "run")(OWNER)
+        self.assertEqual(self.http.find("POST", STAGE)[-1].body, {"stage": "live"})
+
+    def test_go_live_from_staging(self):
+        self.http.on("GET", PILOT_HUB + "/settings", fc.settings(stage="staging"))
+        self.http.on("POST", STAGE, fc.stage_set("live"))
+        at = self.control()
+        self.assertIn("Stage: staging (collecting; no briefings until sign-off or Go live)", self.html(at))
+        self.assertEqual(at.button(key="cr_stage_pilot").label, "Go live")
+        at.button(key="cr_stage_pilot").click().run()
+        self.assertIn("Going live here records a sign-off by the builder.", self.visible_text(at))
+        at.button(key=CONFIRM).click().run()
+        self.assert_clean(at)
+        self.assertEqual(self.http.find("POST", STAGE)[0].body, {"stage": "live"})
+        self.assertIn("Stage is now live.", self.toasts(at))
+
+    def test_a_fresh_hub_without_a_stage_date(self):
+        settings = fc.settings()
+        settings["stage"]["since"] = None
+        self.http.on("GET", PILOT_HUB + "/settings", settings)
+        at = self.control()
+        self.assert_clean(at)
+        self.assertIn('<div class="refine-note">Stage: live</div>', self.html(at))
+
+    def test_cancel_sends_nothing_and_an_older_hub_has_no_switch(self):
+        at = self.control()
+        at.button(key="cr_stage_pilot").click().run()
+        at.button(key="dlg_cancel").click().run()
+        self.assertEqual(self.http.posts(), [])
+        self.fresh()
+        self.http.on("GET", PILOT_HUB + "/settings", FakeResponse(404, {"error": "not_found"}))
+        at = self.control()
+        self.assert_clean(at)
+        self.assertNotIn("cr_stage_pilot", [b.key for b in at.button])
+        self.assertTrue(any(c.startswith("Stage unknown") for c in self.texts(at, "caption")))
+
+
+class ModuleViewTests(ControlCase):
+    def test_pills_open_the_technical_view(self):
+        at = self.control()
+        pills = at.pills(key="cr_module_pilot")
+        self.assertEqual(list(pills.options), ["ai-infra", "defense-unmanned"])
+        self.assertIsNone(pills.value)
+        self.assertEqual(self.http.find("GET", INSPECT_AI), [])  # nothing is read until a module is chosen
+        self.assertEqual(self.http.find("GET", PILOT_HUB + "/snapshot"), [])
+        at.pills(key="cr_module_pilot").set_value("ai-infra").run()
+        self.assert_clean(at)
+        self.assertEqual(self.http.find("GET", INSPECT_AI)[0].bearer, READ)
+        html = self.html(at)
+        self.assertIn("Catalog 0.1.0-3f2a9c1b7d4e · pushed ", html)
+        self.assertIn(" · git abc123def456 · 8 sources (6 on) · 7 entities", html)
+        self.assertIn('<tr><td><span class="mono">power_grid</span></td><td>Power and grid</td><td>government</td>'
+                      "<td>1</td><td>4</td></tr>", html)
+        self.assertIn("ai-infra · sources · 8", [e.label for e in at.expander])
+        self.assertIn("ai-infra · entities · 7", [e.label for e in at.expander])
+        self.assertIn('<td><span class="mono">ercot-large-load</span> <a class="" href="https://example.com/feed"', html)
+        self.assertIn("<td>page-watch</td><td>Page watch</td><td>official</td><td>yes</td>"
+                      '<td><span class="status-pill bad">failing</span> <span class="tile-d">ok</span></td>', html)
+        self.assertIn("<td>900 / 3600</td><td>2</td><td>0.1%</td><td>muted</td>", html)  # gn-themes
+        self.assertIn('<td><span class="mono">coreweave</span></td><td>CoreWeave</td><td>core</td><td>ai_cloud</td>'
+                      "<td>public</td><td>NASDAQ:CRWV</td><td>own_feed, sec_filings</td>", html)
+        self.assertIn('<tr><td><span class="mono">old-key</span></td><td>41</td><td>yes</td></tr>', html)
+        self.assertNotIn("javascript:", html)
+        # the module snapshot below it
+        self.assertIn("<th>Lane</th><th>Last 24 hours</th><th>Last 7 days</th>", html)
+        self.assertIn("<tr><td>trade press</td><td>30</td><td>190</td></tr>", html)
+        self.assertEqual(html.count('<div class="event-row">'), 20)
+        self.assertIn("Event 0 &lt;b&gt;title&lt;/b&gt;", html)
+        call = self.http.find("GET", PILOT_HUB + "/snapshot")[0]
+        self.assertEqual((call.params, call.bearer), ({"module": "ai-infra", "limit": 20}, READ))
+
+    def test_catalog_missing_shows_the_sentence_and_the_snapshot_only(self):
+        self.http.on("GET", INSPECT_AI, FakeResponse(404, fc.catalog_missing("ai-infra")))
+        at = self.control(state={"cr_module_pilot": "ai-infra"})
+        self.assert_clean(at)
+        self.assertIn("Coverage details for ai-infra appear after the next deploy.", self.texts(at, "info"))
+        self.assertNotIn("ai-infra · sources · ", " ".join(e.label for e in at.expander))
+        self.assertEqual(self.html(at).count('<div class="event-row">'), 20)
+
+    def test_module_link_opens_the_view(self):
+        at = self.control(query={"tab": "control", "module": "defense-unmanned"})
+        self.assert_clean(at)
+        self.assertEqual(at.pills(key="cr_module_pilot").value, "defense-unmanned")
+        self.assertEqual(len(self.http.find("GET", INSPECT_DEF)), 1)
+
+    def test_snapshot_falls_back_to_diagnostics_counts(self):
+        self.http.on("GET", PILOT_HUB + "/snapshot",
+                     lambda call: {"events": []} if call.params.get("module") == "defense-unmanned" else fx.snapshot())
+        at = self.control(state={"cr_module_pilot": "defense-unmanned"})
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertIn("<tr><td>procurement</td><td>9</td><td>61</td></tr>", html)  # from /diagnostics
+        self.assertIn("No events from defense-unmanned yet.", html)
+
+    def test_snapshot_error(self):
+        self.http.on("GET", PILOT_HUB + "/snapshot", FakeResponse(404, {"error": "unknown_module"}))
+        at = self.control(state={"cr_module_pilot": "ai-infra"})
+        self.assert_clean(at)
+        self.assertIn("Could not load the snapshot for pilot/ai-infra.", self.html(at))
+        self.assertIn("HTTP 404: unknown_module", self.html(at))
+
+
+class ReviewTests(ControlCase):
+    def test_the_technical_proposal_and_every_list(self):
+        at = self.control()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertIn("Pilot: 1 to review · 1 with the Radar scout · 1 approved, waiting for setup · 2 applied or live · "
+                      "2 rejected", self.texts(at, "caption"))
+        self.assertIn("Add the PUCT docket filings feed to ai-infra.", html)  # as the Source finder wrote it
+        self.assertIn('<td>ai-infra</td><td><span class="mono">puct-large-load</span></td>'
+                      "<td>Texas PUC large-load docket</td><td>html-list</td><td>power_grid</td><td>official</td>", html)
+        self.assertIn('href="https://interchange.puc.texas.gov/"', html)
+        self.assertIn("1 registry change: Oncor Electric Delivery", html)
+        self.assertIn("Verified one fetch: 200, 40 filings listed.", html)
+        self.assertIn("Diagnosis: no_source (No source ZENUX reads covered it.)", html)
+        self.assertEqual(at.json[0].value.count("puct-large-load"), 1)
+        self.assertIn("node tools/zenux.js radar apply pilot 44", [c.value for c in at.code])
+        self.assertIn("pilot · approved, waiting for setup · 1", [e.label for e in at.expander])
+        self.assertIn("pilot · applied and live · 2", [e.label for e in at.expander])
+        self.assertIn('ai-infra/<span class="mono">ercot-large-load</span> ERCOT large-load interconnection reports: '
+                      '<span class="status-pill ok">live</span>', html)
+        self.assertIn("First items: 5 stories collected from it so far.", html)
+        self.assertIn("rule draft #77", html)
+        self.assertIn("Note: Paywalled: we cannot read it.", html)
+        self.assertEqual(self.http.find("GET", PILOT_HUB + "/radar")[0].bearer, READ)
+
+    def test_approve_with_a_note_bound_to_the_proposal_shown(self):
+        proposed_at = fc.radar_requests()["requests"][1]["proposed_at"]
+        self.http.on("POST", PILOT_HUB + "/radar/45/approve", {"id": 45, "status": "approved_pending_apply"})
+        at = self.control()
+        at.text_input(key="rv_note_pilot_45").set_value("Use a 120-minute cadence")
+        at.button(key="rv_approve_pilot_45").click().run()
+        self.assert_clean(at)
+        post = self.http.find("POST", PILOT_HUB + "/radar/45/approve")[0]
+        self.assertEqual((post.body, post.bearer),
+                         ({"note": "Use a 120-minute cadence", "proposed_at": proposed_at}, OWNER))
+        self.assertTrue(any(t.startswith("Approved request #45 for Pilot.") for t in self.toasts(at)))
+        self.assertEqual(len(self.http.find("GET", PILOT_HUB + "/radar")), 2)  # read again
+
+    def test_reject_asks_first(self):
+        self.http.on("POST", PILOT_HUB + "/radar/45/reject", {"id": 45, "status": "rejected"})
+        at = self.control()
+        at.text_input(key="rv_note_pilot_45").set_value("We already read the PUC")
+        at.button(key="rv_reject_pilot_45").click().run()
+        self.assertEqual(self.http.posts(), [])
+        self.assertIn("Your note: We already read the PUC", self.texts(at, "caption"))
+        at.button(key=CONFIRM).click().run()
+        self.assert_clean(at)
+        post = self.http.find("POST", PILOT_HUB + "/radar/45/reject")[0]
+        self.assertEqual((post.body, post.bearer), ({"note": "We already read the PUC"}, OWNER))
+        self.assertIn("Rejected request #45 for Pilot.", self.toasts(at))
+
+    def test_approval_is_bound_to_the_proposal_shown(self):
+        shown = fc.radar_requests()["requests"][1]["proposed_at"]
+        at = self.control()
+        newer = fx.iso(0.01)
+        updated = fc.radar_requests()
+        updated["requests"][1].update(proposed_at=newer, proposal={"summary": "A different Source finder proposal."})
+        self.http.on("GET", PILOT_HUB + "/radar", updated)
+        approved: list[dict] = []
+
+        def approve(call: Call):  # brain.js decideRadar with body.proposed_at
+            if "proposed_at" in (call.body or {}) and call.body["proposed_at"] != newer:
+                return FakeResponse(409, {"error": "proposal_changed", "message": "reload it and review it again"})
+            approved.append(call.body)
+            return {"id": 45, "status": "approved_pending_apply"}
+
+        self.http.on("POST", PILOT_HUB + "/radar/45/approve", approve)
+        at.button(key="rv_approve_pilot_45").click().run()
+        self.assert_clean(at)
+        self.assertEqual(approved, [])
+        self.assertEqual(self.http.find("POST", PILOT_HUB + "/radar/45/approve")[0].body, {"proposed_at": shown})
+        self.assertTrue(any("newer proposal for request #45 than the one shown, so nothing was approved" in w
+                            for w in self.texts(at, "warning")))
+        self.assertIn("A different Source finder proposal.", self.html(at))  # read again for review
+        at.button(key="rv_approve_pilot_45").click().run()
+        self.assertEqual(approved, [{"proposed_at": newer}])
+
+    def test_unreachable_requests_say_so(self):
+        self.http.on("GET", PILOT_HUB + "/radar", FakeResponse(200, no_json=True))
+        at = self.control()
+        self.assert_clean(at)
+        self.assertIn("Could not load coverage requests from Pilot.", self.html(at))
+        self.assertIn("HTTP 200: response is not JSON", self.html(at))
+
+
+class ConfigurationTests(ControlCase):
+    def test_presence_only_and_the_builder_pin_source(self):
+        at = self.control()
+        html = self.html(at)
+        self.assertIn("<th>Workspace / module</th>", html)
+        self.assertIn("<td>pilot/ai-infra</td><td>module</td>", html)
+        self.assertIn("Values come from st.secrets and are never shown here.", self.texts(at, "caption"))
+        self.assertIn("Builder PIN: set (owner PIN fallback)", self.texts(at, "caption"))
+        self.assert_no_secrets(at)
+        self.fresh()
+        self.beta_routes()
+        at = self.control(with_builder(two_workspaces()))
+        self.assert_clean(at)
+        self.assertIn("Builder PIN: set (builder_pin)", self.texts(at, "caption"))
+        rendered = self.html(at) + "".join(self.texts(at, "caption"))
+        self.assertNotIn(BUILDER_PIN, rendered)
+        self.assert_no_secrets(at)
+
+
+if __name__ == "__main__":
+    unittest.main()

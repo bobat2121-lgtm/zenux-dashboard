@@ -1,13 +1,21 @@
 """ZENUX: the Zenux news-intelligence dashboard (Streamlit).
 
-Five views over a workspace's hub: Feed (published editions), Rejected, Rules, Radar and Diagnostics (the owner's
-control room, spanning every configured workspace). Configuration comes only from st.secrets
-(dashboard/.streamlit/secrets.toml locally, App settings -> Secrets on Streamlit Community Cloud); see
-.streamlit/secrets.example.toml. Owner writes need the owner PIN, which unlocks the workspace's owner_token.
+Five tabs over a workspace's hub (docs/SPEC-PHASE03-UI.md): Briefing, Filtered out, My preferences and Coverage for
+the analyst, and the Control room for the builder (in the tab list only while the builder is unlocked; it spans every
+configured workspace). Configuration comes only from st.secrets (dashboard/.streamlit/secrets.toml locally, App
+settings -> Secrets on Streamlit Community Cloud); see .streamlit/secrets.example.toml. Changes need "Sign in to
+edit" (the workspace PIN, once per browser session), which unlocks the workspace's owner_token.
+
+Every run, top to bottom: page config and stylesheet; config, deep links (read once per session), the workspace,
+a PIN preset by a test, the tab (a pending switch applied, the Control room dropped while the builder is locked) and
+the queued toasts; the green top bar (masthead, tabs, workspace switcher, sign-in popover); the content band (the
+undo bar, then the tab); the footer; the pending dialog; the query string.
 
 This is a Zenux app. It is separate from the legacy PHYSAI news dashboard and never talks to it.
 """
 
+import importlib
+import logging
 import sys
 from pathlib import Path
 
@@ -18,10 +26,9 @@ if str(HERE) not in sys.path:
 import streamlit as st  # noqa: E402
 
 from zenux_dashboard import APP_TITLE  # noqa: E402
-from zenux_dashboard import (diagnostics_view, feed_view, grading, owner, radar_view, rejected_view,  # noqa: E402
-                             rules_view)
+from zenux_dashboard import labels, links, owner, ui  # noqa: E402
 from zenux_dashboard.config import Config, Workspace, load_config  # noqa: E402
-from zenux_dashboard.fmt import empty_state, esc, png_data_uri  # noqa: E402
+from zenux_dashboard.fmt import empty_state, esc, md_label, png_data_uri  # noqa: E402
 
 ASSETS = HERE / "assets"
 FAVICON = ASSETS / "zenux-favicon.png"  # the browser-tab icon (128 px)
@@ -30,9 +37,28 @@ MARK = ASSETS / "zenux-favicon.png"  # the logo mark beside the wordmark: the 12
 st.set_page_config(page_title=APP_TITLE, page_icon=FAVICON, layout="wide", initial_sidebar_state="collapsed")
 st.markdown("<style>" + (HERE / "feed.css").read_text(encoding="utf-8") + "</style>", unsafe_allow_html=True)
 
-VIEWS = ["Feed", "Rejected", "Rules", "Radar", "Diagnostics"]
-LIVE_REFRESH_SECONDS = 120
 FOOTER = "ZENUX · internal research tool · data from public sources"
+SIGNIN_KEY = "zx_signin"  # the sign-in popover (its open state)
+LOG = logging.getLogger("zenux_dashboard.app")
+
+# Every view module is imported at startup, even for tabs not shown, so every dialog is registered before
+# ui.render_dialog() runs. `actions` (the card actions) registers the dialogs the other views share.
+VIEW_MODULES = ("actions", "feed_view", "filtered_view", "preferences_view", "coverage_view", "control_view")
+TAB_VIEWS = {"briefing": "feed_view", "filtered": "filtered_view", "preferences": "preferences_view",
+             "coverage": "coverage_view", "control": "control_view"}
+
+
+def load_views() -> tuple[dict, dict]:
+    """(loaded modules, import errors) by module name. A view that cannot be imported shows a plain error on its tab
+    instead of taking every tab down."""
+    loaded, failed = {}, {}
+    for name in VIEW_MODULES:
+        try:
+            loaded[name] = importlib.import_module(f"zenux_dashboard.{name}")
+        except Exception as exc:  # noqa: BLE001 - shown on the tab, logged here
+            LOG.error("could not import zenux_dashboard.%s: %r", name, exc)
+            failed[name] = exc
+    return loaded, failed
 
 
 def masthead(ws: Workspace | None) -> None:
@@ -53,52 +79,129 @@ def footer() -> None:
     st.markdown(f'<footer class="zx-footer">{esc(FOOTER)}</footer>', unsafe_allow_html=True)
 
 
-def owner_panel(ws: Workspace) -> None:
-    with st.popover("Owner", width="stretch"):
-        st.text_input("Owner PIN", type="password", key=owner.PIN_KEY,
-                      help="Unlocks owner actions (grades, rules, radar, backfill) for this session only.")
-        state = owner.lock_state(ws)
-        if state == owner.UNLOCKED:
-            st.caption(f"Owner actions unlocked for {ws.id}.")
-        elif state != owner.NO_PIN:
-            st.caption(owner.lock_message(ws, state))
-        st.checkbox("Load grading controls", key="grading_enabled",
-                    help="Adds a grade form under each edition and on the Rejected tab.")
+# ---------------------------------------------------------------------------------------------- sign in to edit
 
 
-def render_view(view: str, conf: Config, ws: Workspace) -> None:
-    grading.show_flash()
-    if view == "Feed":
-        feed_view.render(ws)
-    elif view == "Rejected":
-        rejected_view.render(ws)
-    elif view == "Rules":
-        rules_view.render(ws)
-    elif view == "Radar":
-        radar_view.render(ws)
-    else:
-        diagnostics_view.render(conf, ws)
+def _unlock(workspace_id: str) -> None:
+    """The PIN field's on_change (Enter) and Unlock's on_click: check the typed PIN once, then clear the field (the PIN
+    is never kept in widget state). An empty field does nothing: after Enter (or leaving the field) checked the PIN,
+    the Unlock click that may follow in the same run finds the field cleared and keeps the first answer."""
+    pin = st.session_state.get(owner.ENTRY_KEY) or ""
+    st.session_state[owner.ENTRY_KEY] = ""
+    if not pin.strip():
+        return
+    if owner.unlock(load_config().workspace(workspace_id), pin) == owner.UNLOCKED:
+        st.session_state[SIGNIN_KEY] = False  # close the popover; a wrong PIN keeps it open with its message
 
 
-@st.fragment(run_every=LIVE_REFRESH_SECONDS)
-def render_live(view: str, workspace_id: str) -> None:
-    conf = load_config()
-    ws = conf.workspace(workspace_id)
-    if ws is not None:
-        render_view(view, conf, ws)
+def _builder_unlock() -> None:
+    """The Builder PIN field's on_change (Enter) and Open the Control room's on_click, as _unlock."""
+    pin = st.session_state.get(owner.BUILDER_ENTRY_KEY) or ""
+    st.session_state[owner.BUILDER_ENTRY_KEY] = ""
+    if not pin.strip():
+        return
+    if owner.builder_unlock(load_config(), pin) == owner.UNLOCKED:
+        st.session_state[SIGNIN_KEY] = False
+        links.set_tab(labels.BUILDER_TAB)
+
+
+def _lock() -> None:
+    owner.lock()
+    st.session_state[SIGNIN_KEY] = False
+    ui.notify("Locked. Editing is off until you unlock again.")
+    if links.current_tab() == labels.BUILDER_TAB:
+        links.set_tab(links.DEFAULT_TAB)
+
+
+def signin_popover(conf: Config, ws: Workspace, builder: bool) -> None:
+    """Sign in to edit (locked) / Signed in (unlocked), with the builder's part under a divider."""
+    signed_in = owner.can_edit(ws)
+    # on_change="rerun" makes the popover's open state a widget value, so Unlock, Open the Control room and Lock
+    # can close it from their callbacks (the page under it is then in view)
+    with st.popover("Signed in" if signed_in else "Sign in to edit", key=SIGNIN_KEY, width="stretch",
+                    on_change="rerun"):
+        if signed_in:
+            st.markdown(md_label(f"You can edit {ws.label} in this browser tab until you lock it, reload the page or "
+                                 "close the tab."))
+            st.button("Lock", key="zx_lock", on_click=_lock, icon=":material/lock:")
+        elif not ws.can_write:
+            st.caption(owner.lock_message(ws, owner.NOT_CONFIGURED))
+        else:
+            st.text_input("PIN", type="password", key=owner.ENTRY_KEY, placeholder="Your PIN", on_change=_unlock,
+                          args=(ws.id,))
+            st.button("Unlock", key="zx_unlock", type="primary", on_click=_unlock, args=(ws.id,))
+            st.caption("Unlocks editing in this browser tab until you reload or close it.")
+            if owner.last_result(ws) == owner.WRONG_PIN:
+                st.error(owner.lock_message(ws, owner.WRONG_PIN))
+        if conf.has_builder:
+            st.divider()
+            st.caption("Builder")
+            if builder:
+                st.caption("Control room open.")
+            else:
+                st.text_input("Builder PIN", type="password", key=owner.BUILDER_ENTRY_KEY, on_change=_builder_unlock)
+                st.button("Open the Control room", key="zx_builder_unlock", on_click=_builder_unlock)
+                if owner.last_result(builder=True) == owner.WRONG_PIN:
+                    st.error(owner.lock_message(None, owner.WRONG_PIN))
+
+
+# ---------------------------------------------------------------------------------------------- page
+
+
+def navigation(conf: Config, ws: Workspace, builder: bool) -> str:
+    """The tabs (a styled radio), the workspace switcher (2+ workspaces) and the sign-in popover."""
+    ids = conf.ids
+    options = list(labels.ANALYST_TABS) + ([labels.BUILDER_TAB] if builder else [])
+    columns = st.columns([4, 1.3, 1.1] if len(ids) > 1 else [4, 1.1], gap="small", vertical_alignment="center")
+    with columns[0]:
+        tab = st.radio("Dashboard view", options, horizontal=True, label_visibility="collapsed", key=links.TAB_KEY,
+                       format_func=labels.tab_label)
+    rest = columns[1:]
+    if len(ids) > 1:
+        with rest[0]:
+            st.selectbox("Workspace", ids, key="workspace", label_visibility="collapsed",
+                         format_func=lambda i: (conf.workspace(i) or ws).label)
+        rest = rest[1:]
+    with rest[0], st.container(key="zx_owner"):
+        signin_popover(conf, ws, builder)
+    return tab if tab in options else links.DEFAULT_TAB
+
+
+def render_tab(tab: str, conf: Config, ws: Workspace, views: dict, failed: dict) -> None:
+    """The tab's render, or a plain error box instead of a traceback."""
+    name = TAB_VIEWS.get(tab, TAB_VIEWS[links.DEFAULT_TAB])
+    module = views.get(name)
+    try:
+        if module is None:
+            raise failed.get(name) or ImportError(f"zenux_dashboard.{name} is not available")
+        if tab == labels.BUILDER_TAB:
+            module.render(conf, ws)
+        else:
+            module.render(ws)
+    except Exception as exc:  # noqa: BLE001 - a plain error box; st.rerun/st.stop are not Exceptions
+        ui.note_crash(exc)
+        ui.error_box("this page", exc, key="page")
 
 
 def main() -> None:
+    st.session_state.pop("zx_page_crash", None)
     conf = load_config()
+    links.read_once(conf)
     ids = conf.ids
     if ids and st.session_state.get("workspace") not in ids:
         st.session_state["workspace"] = ids[0]
     ws = conf.workspace(st.session_state.get("workspace")) if ids else None
-    view = VIEWS[0]
+    owner.adopt_entered_pin(conf, ws)
+    builder = owner.is_builder(conf)
+    tab, refused = links.resolve(builder)
+    if refused:
+        ui.notify(links.CONTROL_LOCKED)
+    views, failed = load_views()
+    ui.flush_toasts()
     with st.container(key="zx_topbar"):  # the full-width green bar: wordmark row, then the navigation row
         masthead(ws)
         if ws is not None:
-            view, ws = navigation(conf, ws)
+            tab = navigation(conf, ws, builder)
     if ws is None:
         with st.container(key="zx_view"):
             st.markdown(empty_state(
@@ -109,37 +212,16 @@ def main() -> None:
                 st.caption(problem)
         footer()
         return
-    with st.container(key="zx_view"):  # the light-gray content band
-        # Owner forms (Rules, Radar) and the control room have no page-wide timer, so unsaved input stays put;
-        # the control room refreshes its own health panel.
-        if view in ("Rules", "Radar", "Diagnostics"):
-            render_view(view, conf, ws)
-        else:
-            render_live(view, ws.id)
+    with st.container(key="zx_view"):  # the content band
+        try:
+            ui.undo_bar(ws)
+        except Exception as exc:  # noqa: BLE001
+            ui.note_crash(exc)
+            ui.error_box("this page", exc, key="undo")
+        render_tab(tab, conf, ws, views, failed)
     footer()
-
-
-def navigation(conf: Config, ws: Workspace) -> tuple[str, Workspace]:
-    """The view tabs (a styled radio), the workspace switcher and the Search and Owner popovers."""
-    ids = conf.ids
-    columns = st.columns([4, 1.3, 1, 1] if len(ids) > 1 else [4, 1, 1], gap="small", vertical_alignment="center")
-    with columns[0]:
-        view = st.radio("Dashboard view", VIEWS, horizontal=True, label_visibility="collapsed", key="dashboard_view")
-    rest = columns[1:]
-    if len(ids) > 1:
-        with rest[0]:
-            st.selectbox("Workspace", ids, key="workspace", label_visibility="collapsed",
-                         format_func=lambda i: (conf.workspace(i) or ws).label)
-        rest = rest[1:]
-        ws = conf.workspace(st.session_state.get("workspace")) or ws
-    with rest[0]:
-        if view == "Feed":
-            with st.container(key="zx_search"), st.popover("Search", width="stretch"):
-                st.text_input("Search published stories", placeholder="Company, topic or source", key="feed_search")
-    with rest[1]:
-        with st.container(key="zx_owner"):
-            owner_panel(ws)
-    return view, ws
+    ui.render_dialog()
+    links.sync(tab, ws.id)
 
 
 main()

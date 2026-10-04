@@ -1,49 +1,77 @@
 # ZENUX dashboard
 
-The Zenux news-intelligence dashboard, built with Streamlit. It is a Zenux app, separate from the legacy PHYSAI news dashboard, and never talks to the legacy system. Its look is a black base with white accents: a full-width brand-green top bar (the ZENUX mark and wordmark, then the five tabs), dark cards with hairline borders, bold white headlines, coloured tags (violet for ai-infra, teal for defense-unmanned, a stable palette colour for any other module), and a green footer. The theme is in `.streamlit/config.toml`; `feed.css` carries the rest.
+The Zenux news-intelligence dashboard, built with Streamlit. It is a Zenux app, separate from the legacy PHYSAI news dashboard, and never talks to the legacy system. Its look is a black base with white accents: a full-width brand-green top bar (the ZENUX mark and wordmark, then the tabs), dark cards with hairline borders, bold white headlines, coloured tags (violet for AI infrastructure, teal for defense unmanned, a stable palette colour for any other coverage area), and a green footer. The theme is in `.streamlit/config.toml`; `feed.css` carries the rest. No text on the page is smaller than 12 px.
+
+It is built for an analyst who has had a ten-minute overview: every label uses plain words (`zenux_dashboard/labels.py` is the one vocabulary), and the engine's terms (event ids, source keys, module ids, lanes, tiers, reason codes) appear only in the builder's Control room.
 
 ## Tabs
 
 | Tab | What it shows | Hub routes |
 | --- | --- | --- |
-| **Feed** | Published editions, newest first. Each edition opens with its line (edition, age, time, items) and its one-sentence summary as the title (for an older edition without one, a sentence built from its items, such as "9 items across AI infrastructure (4) and defense unmanned (5), led by ..."). The latest edition is the hero: a LATEST pill, and on the right 2x2 tiles (items, reviewed, lead 90+, digest 70-89) over a bar that splits its items by module, with a legend. Each item card shows its source, its headline and its module tags, and opens to its factual text, metrics and sources. The Grader's grading note sits in a collapsed **Grading notes** expander at the bottom of its edition. Use **Search** to filter the loaded items, and **Load earlier editions** to page back. | `GET /editions?limit=10&before=` |
-| **Rejected** | Graded events that did not make an edition: rejected, duplicate or already covered. Each shows its score, tier, reason code and the Grader's rationale. You can filter by window (1–14 days), module and decision. | `GET /rejected?days=N` |
-| **Rules** | The learned layer of the rubric. Write a rule or a worked example, approve or reject the Zenux Rule refiner's proposal (editing it first if you like), and retire active rules. | `GET /rules`, `POST /rules/drafts`, `POST /rules/:id/{approve,reject,retire}` |
-| **Radar** | Changes to what the workspace collects. Ask to track a source, report a missed story or ask for new coverage, then approve or reject the Zenux Radar scout's proposal. | `GET /radar`, `POST /radar/requests`, `POST /radar/:id/{approve,reject}` |
-| **Diagnostics** | The control room, across every configured workspace (see below). | `GET /diagnostics`, `GET /snapshot`, `GET /sources`, module `/health` and `/backfill` |
+| **Briefing** | A status line ("Healthy · last briefing 2h ago · next 12:30 PM ET"), then the published briefings, newest first, each named by its time ("Sun Oct 4 · morning briefing"). The newest opens with the hero (stories, stories screened, top stories, also notable). Each story shows its date and source, a TOP STORY badge at 90+, and **More like this**, **Less like this**, a **More** menu (wrong facts, rate it, mute the source, a company or the story, star a company) and **Why am I seeing this?**. Under each briefing: the watchlist and near-miss shelves, and the **Editor's notes**. A search box over your briefings of the last 90 days, and **Load earlier briefings**. | `GET /editions`, `/editions/<id>`, `/editions/latest`, `/editions/search`, `/status`; writes `POST /preferences`, `/feedback`, `/mutes`, `/stars`, `/promote` |
+| **Filtered out** | What was left out: **Near misses** (the default), All, Same story, Muted (with your mutes, Unmute and bring back) and Old news, each with its true count, with plain reasons, the story a repeat repeats, search over the whole window and the same card actions, plus **Should have been in**. | `GET /rejected?filter=&q=&module=&offset=`, `/mutes?all=1`, `/mutes/bring-back-preview`; writes as above |
+| **My preferences** | **Needs your OK** (suggested wordings, suggestions from your ratings and merges, each with its 14-day preview and the stories it moves), **Active** preferences with what they changed (pause, resume, edit, end date, remove), **What ZENUX looks for** with **Suggest a change** and **Sign off**, **Muted**, **Watchlist** and **How much** (the dial, with its preview). | `GET /preferences`, `/rules`, `/brief`, `/mutes`, `/mutes/bring-back-preview`, `/stars`, `/settings`, `/settings/volume/preview`; writes `POST /rules/<id>/<action>` (with `reopen` for Undo), `/brief/suggest`, `/signoff`, `/settings/volume` |
+| **Coverage** | Pick a coverage area, then its companies and sources in four columns (public companies, private and state-owned, industry sources, government and public record) with coverage icons, stats (stories this week, how many made your briefings this week and in 30 days), mute and star switches, and **Request coverage**. Below, your coverage requests and where each one stands (asked, proposal ready, approved, set up, live), with the first stories of a new source. | `GET /modules`, `/modules/<id>/inspect`, `/radar`, `/mutes/bring-back-preview`; writes `POST /mutes`, `/stars`, `/radar/requests` |
+| **Control room** | The builder's tab, only while the builder is unlocked; it spans every configured workspace. Today's diagnostics (severity, routines, agreement, backlog, acknowledgements), the technical view of a coverage area (lanes, connectors, keys, health per source), catch-up of past days, the technical review of coverage requests (approve or reject), the stage switch, and Configuration. | `GET /diagnostics`, `/snapshot`, `/sources`, `/modules`, `/modules/<id>/inspect`, `/radar`; writes `POST /admin/sources/{ack,unack}`, `/admin/stage`, `/radar/<id>/{approve,reject}`; module `/health` and `/backfill` |
 
-### Diagnostics, from top to bottom
+### What each control does
 
-1. **Backfill.** Pick a workspace, a module, optional sources and a number of days (1–30), then press **Run backfill**.
-   - The source list combines the sources the hub has seen from that module (`GET /sources?module=`) with any that the module's `/health` reports as failing or silent. You can also type a source key; the module refuses unknown ones.
-   - The dashboard sends `POST <module>/backfill` with `{days, sources?}`, using that module's `run_token`.
-   - While the job is queued or running, it polls `GET <module>/backfill` every 10 seconds and shows the progress. The module works through the sources on its scheduled runs.
-2. **Live health**, refreshed every 60 seconds. There is one card per workspace, and **Refresh now** forces a fresh read. Each card combines the hub's `/diagnostics` with every module's public `/health`. It shows:
-   - status pills
-   - the last edition, the review backlog and the Grader lease
-   - dead letters, and failing and silent sources
-   - a module table with each module's status, last run, events in the last 24 hours and 7 days, failing and silent counts, and backfill state
-   - expandable tables of failing sources, silent sources and recent dead letters
-3. **Module snapshot.** For each module: event counts by lane for the last 24 hours and 7 days, and its latest 20 events (`GET /snapshot?module=<id>&limit=20`).
-4. **Configuration.** Shows which URLs and tokens are set, plus any configuration notes. It never shows a value.
+**Briefing**
 
-## Owner actions and the PIN
+- **Status line** (top): how ZENUX is doing, when the last briefing came and when the next is due, from the hub's light status read (`GET /status`); when a briefing is late it says which one. **Refresh** re-reads everything. While the workspace is still collecting (staging) it says so and offers **Review and sign off**.
+- **Search** (always visible): searches headlines, story text and companies of your briefings of the last 90 days. Matching stories of the briefings loaded below show as full cards; matches in earlier briefings are listed under them (the hub searches, `GET /editions/search`), each with **Show it**, which opens that briefing at the story. **Load earlier briefings** loads more full briefings.
+- **More like this** / **Less like this**: a preference that is active at once. Choose *Just this story*, *Stories like this* or *Standing preference*, optionally say in a few words what it is about, and optionally end it on a date. The toast says from which briefing it applies; **Undo** removes it.
+- **More** menu: **Wrong facts** (the editor re-checks the story at the next briefing and corrects it or says why it stands; the card then shows "Flagged by you"), **Rate this story** (Top story, In the briefing, Near miss, Not relevant), **Mute outlet** (a news-search story names its outlet, "Yahoo Finance via News search: ...", and that outlet can be muted alone), **Mute source** (for a news-search story: **Mute every outlet in ...**), **Mute company** / **Unmute company**, **Star** / **Remove from watchlist**, **Not about <company>** (a starred company's look-alike name), **Mute this story**. Choosing an item closes the menu and opens its dialog. A preference already made from the story shows on the card ("You asked for less like this" with **Undo**); a second one asks to replace it.
+- **Mute** dialogs show what the mute would have hidden in the last 7 days before you confirm; the story is still collected. **Undo** unmutes and brings back what it hid. The menu offers every company the story is about (buyers and vendors too), not only its subject.
+- **Why am I seeing this?**: the plain reason and score, the editor's reasoning (in plain words), your preferences that applied (in your words, with a link to them in My preferences), your watchlist, your requests (and when you asked), the source and its group, and the companies.
+- **Shelves** under each briefing: stories about your watchlist companies and (when switched on under How much) the near misses, each with **Should have been in**. **Editor's notes** is collapsed at the bottom.
 
-Reads use each workspace's `read_token`. Writes need the owner PIN. Writes are:
+**Filtered out**
 
-- grades and feedback
-- rule drafts and decisions
-- radar requests and decisions
-- backfills
+- **Show**: *Near misses* (just under the bar in force that day, best first; the score chip shows the score and that bar), *All*, *Same story* (left out because the briefing already had it: "Same story as: <headline> · in your <briefing>", with **Show it**), *Muted* (your mutes with **Unmute** and, for removed ones, **Bring back the last 7 days**, then what they hid) and *Old news* (too old when it arrived, or old news reposted). Each choice carries its true count for the window.
+- **Search** and **Filters** (how many days back, which coverage area) are sent to the hub, so they cover every story of the window, not only a loaded page. The count line gives the true total ("Showing 50 of 1,240 stories"); **Show 50 more** reads further pages of 500 as you go.
+- Each row: the plain reason, the same card actions and **Should have been in** (sends the story back to the editor with your note). A story a later briefing published after all says **Later in your briefing**, with **Show it**. **Why was it left out?** names the preferences that applied in your words and the source's group.
+- **Unmute** first says how many stories it would bring back ("12 stories it hid in the last 7 days would go back to the editor"), with examples.
 
-Type the PIN under **Owner** (top right). The dashboard checks it against the workspace's `owner_pin` from the secrets. The comparison is constant-time: both values are hashed, then compared with `hmac.compare_digest`. A match unlocks that workspace's `owner_token`, which is then sent as the bearer token for hub writes. A backfill uses the module's `run_token` instead, behind the same PIN.
+**My preferences**
 
-- The PIN stays in your browser session's widget state. It is never logged, cached or sent anywhere.
-- A PIN unlocks only its own workspace.
-- A PIN needs 8 or more characters. A placeholder from `secrets.example.toml` or this README (`REPLACE_WITH_...`, `...`, `<your PIN>`) counts as no PIN, because anyone can read it. In both cases owner writes stay off, and the Diagnostics tab's **Configuration** notes say why.
-- Guessing is limited across the whole app, not per browser session. After 5 wrong PINs, every PIN for that workspace is refused for 1 minute, even the right one. Each further lockout doubles the wait, up to 1 hour, so a patient guesser gets about 5 tries an hour. The right PIN clears the count of misses, and misses are forgotten after a day without one. A wrong PIN also waits 1 second. A wrong PIN and a refused PIN show the same message, so the page never says whether a PIN typed during a lockout was right. A session that already unlocked stays unlocked. Workspaces that share a PIN share the limit.
-- To grade items on the Feed and Rejected tabs, tick **Load grading controls** under **Owner**.
-- An approval on the **Rules** or **Radar** tab names the proposal you saw (its `proposed_at`). If the Zenux Rule refiner or Radar scout proposed something newer after the page loaded, the hub refuses the approval (`409 proposal_changed`), nothing is approved, and the page reloads the list for you to review. **Approve as written** on a waiting draft sends your own words and kind, bound to "no proposal yet", so it can never activate wording you have not seen.
+- **Needs your OK**: wordings the wording assistant suggests for what you wrote, suggestions built from your ratings, and merges of overlapping preferences. Each shows its 14-day preview ("+3 / -9": stories it would have brought in and kept out) and **Which stories** (their headlines and sources). Edit the wording if you like, then **Approve** / **Use this wording** / **Merge them**, or **Not now** / **Keep mine** / **Keep them separate** (with **Undo**). A merge over a preference that has ended since offers only **Keep them separate**.
+- **Active**: **Add a preference** in your own words; each preference shows what it changed in 30 days and when it was last used, a hint when it has gone quiet or looks like a mute, and **Pause** / **Resume**, **Edit**, **End date** and **Remove** (asks first; **Undo** brings it back). Ended preferences can be brought back.
+- **What ZENUX looks for**: the one-pager the editor works from, in the dashboard's words (Top story, In the briefing, Near miss, Filtered out, Your coverage ...; the hub maps the rubric's own words), **Suggest a change** on each part, and **Sign off** (sends the versions you are looking at).
+- **Muted** and **Watchlist**: every mute and starred company, with Unmute, Bring back and Remove.
+- **How much**: *Only the big ones*, *Standard* or *Everything notable*, and the near-miss shelf; the preview says how many stories a briefing would hold. **Use this setting** saves it; **Undo** goes back.
+
+**Coverage**
+
+- **Coverage area**, then the header (what it covers and its counts), **Search** across all four columns, and **Filters** (*On your watchlist*, *Muted*, *Name only (gaps)*, *Not responding*). Groups open on click; a search opens the groups that match.
+- Company rows: coverage icons (own feed, SEC filings, federal contracts, news search, name only), stats, **Star** and **Details** (its feeds, mute or star it, **Request coverage**). Source rows: health, stats, **Mute** / **Unmute** and **Details**.
+- **Coverage requests**: ask for a source, a company or a topic, or report a missed story; each request shows its steps (asked, proposal ready, approved, set up, live) and the source finder's plain answer. **Withdraw** while it is still asked or proposed.
+
+**Control room** (builder): today's diagnostics with **Acknowledge** on failing sources, the stage switch, **Open a module** for the technical view of a coverage area, catch-up of past days, the technical review of coverage requests (**Approve**, **Reject**, the setup command), and Configuration.
+
+Mutes never stop collection: every mute says "Still collected, kept out of your briefing." A rating "is used to calibrate the next edition when it differs from the ZENUX editor's score", and nothing more is claimed. There are no alerts or notifications; a toast is only the page answering your own click.
+
+## Sign in to edit, and the builder
+
+Reads use each workspace's `read_token`; nothing to unlock. Every change (a preference, a mute, a star, a rating, a sign-off, a coverage request, an acknowledgement, a catch-up) needs **Sign in to edit** (top right):
+
+- Type the workspace's PIN once and press Enter or **Unlock**. The PIN is checked once, in constant time, against the workspace's `owner_pin` from the secrets; the field is cleared right away, and the session keeps only a keyed fingerprint (never the PIN), so a changed PIN in the secrets locks the session again. The popover then says **Signed in** and offers **Lock** (which also disables a pending **Undo**). A browser reload is a new session and asks again.
+- While locked, every change button is drawn but disabled, with the hint "Unlock to edit: use Sign in to edit at the top right." Nothing fails after you press it.
+- A PIN unlocks only its own workspace, and needs 8 or more characters. A placeholder from `secrets.example.toml` or this README (`REPLACE_WITH_...`, `...`, `<your PIN>`) counts as no PIN, because anyone can read it; editing then stays off and the Control room's **Configuration** notes say why.
+- Guessing is limited across the whole app, not per browser session. After 5 wrong PINs, every PIN is refused for 1 minute, even the right one; each further lockout doubles the wait, up to 1 hour. The right PIN clears the count, and misses are forgotten after a day without one. A wrong PIN waits 1 second. A wrong PIN and a refused PIN show the same message. Workspaces (and the builder) that share a PIN share the limit.
+- **The builder** opens the Control room under the divider in the same popover (**Builder PIN**, **Open the Control room**). The builder PIN is the top-level `builder_pin` (8+ characters). Without one, and only with exactly one workspace (the pilot, where the owner is the builder: one PIN unlocks both), the top-level `owner_pin`, else that workspace's `owner_pin`. With two or more workspaces `builder_pin` is required: no owner PIN opens the Control room, so an analyst who knows a shared PIN never reaches the other workspaces. A builder may change every configured workspace. These roles live in the dashboard only (the hub has one OWNER_TOKEN for every write); identity sign-in comes later.
+
+## Toasts, undo and confirmations
+
+- Every change answers with a toast that says what changed and when it takes effect, from the hub's `effective` answer: "Applies from the 12:30 PM briefing.", "Applies from tomorrow's 7:30 AM briefing.", or "Takes effect once you approve the wording in My preferences."
+- When the hub can reverse a change, a slim bar at the top of the page offers **Undo** (and **Dismiss**) until your next change, or for 10 minutes; setting a suggestion aside can be undone too. Changes with no reverse route (Should have been in, a rating, Wrong facts, a suggested change, sign-off) say so where it matters.
+- Destructive or consequential actions ask first in a dialog: removing a preference, unmuting, every mute (its dialog is also the preview of what it would hide), signing off, switching the stage, rejecting a coverage proposal, ending a preference on a date.
+- A failed read shows "Couldn't load ..." with a plain reason and **Try again**; the technical line is shown to the builder only, collapsed. A refused change says "Not saved: ..." in place (the dialog stays open) with the hub's own plain sentence ("This mute is not complete. The coverage area is missing."); the dashboard's guard against engine words stays as the last check, and puts its own words in place of a sentence that fails it.
+- Nothing reruns on a timer while you type. Briefing checks every two minutes for a newer briefing (`GET /editions/latest`, the id only) and offers **Show it**; the Control room refreshes its own health panel.
+
+## Deep links
+
+The query string mirrors where you are, so a reload or a shared link lands on the same tab and object: `tab` (`briefing`, `filtered`, `preferences`, `coverage`, `control`), `ws` (with two or more workspaces), `edition` and `item` (Briefing), `view` (`near`, `all`, `same`, `muted`, `old`), `section` (`ok`, `active`, `looks_for`, `muted`, `watchlist`, `how_much`) and `pref` (`R-0012`), `module` (a coverage area) and `request` (a coverage request). For example `?tab=briefing&edition=12&item=1203` or `?tab=filtered&view=muted`. Invalid values are ignored. A link to the Control room while the builder is locked opens Briefing with a note. Inside the page, navigation uses buttons (a link reload would start a new session and lose the unlock).
 
 ## Configuration (`st.secrets`)
 
@@ -51,6 +79,7 @@ Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and fill it 
 
 ```toml
 owner_pin = "..."                 # optional default PIN for every workspace
+builder_pin = "..."               # optional: opens the Control room (8+ characters)
 
 [[workspaces]]
 id = "pilot"
@@ -64,12 +93,12 @@ owner_pin = "..."                 # the PIN you type (8+ characters); overrides 
 [[workspaces.modules]]
 id = "ai-infra"
 url = "https://zenux-pilot-ai-infra.<account>.workers.dev"
-run_token = "..."                 # module RUN_TOKEN
+run_token = "..."                 # module RUN_TOKEN: catch-up and the detailed /health
 ```
 
-- Add one `[[workspaces]]` table per analyst workspace. The workspace switcher and the control room then include it.
-- URLs must use `https`. Plain `http` is accepted only for `localhost`, `127.0.0.1`, `[::1]` and `*.localhost`, for the local hub (`hub/dev-server.mjs`) or a `wrangler dev` Worker.
-- A missing token turns off only the features that need it. The Diagnostics tab lists what is missing.
+- Add one `[[workspaces]]` table per analyst workspace. The workspace switcher and the Control room then include it. With two or more, add `builder_pin`.
+- URLs must use `https`. Plain `http` is accepted only for `localhost`, `127.0.0.1`, `[::1]` and `*.localhost`.
+- A missing token turns off only the features that need it. The Control room's **Configuration** lists what is missing, and whether the builder PIN is set (never a value).
 - Generated Worker tokens live in `.local/<ws>/tokens.json`, which `deploy/workspace.mjs` writes and which is gitignored. Never commit them.
 
 ## Run locally
@@ -85,23 +114,42 @@ dashboard/.venv/Scripts/python -m streamlit run dashboard/streamlit_app.py
 
 Streamlit reads `dashboard/.streamlit/config.toml` (the theme) and `dashboard/.streamlit/secrets.toml` because they sit next to the main script. If no workspace is configured, the app says so and makes no requests.
 
+### Against a throwaway local hub (never production)
+
+To try changes without touching a deployed hub, run a scratch copy of `dashboard/` (without its `.streamlit/secrets.toml`) against an in-memory hub with throwaway tokens:
+
+```bash
+ZENUX_READ_TOKEN=<random> ZENUX_OWNER_TOKEN=<random> ZENUX_REVIEW_TOKEN=<random> ZENUX_HUB_TOKEN=<random> \
+  node brain/dev-hub.mjs pilot --seed --db <scratch>/hub.sqlite --port 8791
+```
+
+Then write `<scratch>/dashboard/.streamlit/secrets.toml` with `hub_url = "http://127.0.0.1:8791"`, those tokens, a throwaway `owner_pin`, and module URLs on the reserved `.invalid` domain, and run `dashboard/.venv/Scripts/python -m streamlit run <scratch>/dashboard/streamlit_app.py --server.port 8601`. Never point a scratch copy at `.local/<ws>/tokens.json`: those tokens are the deployed ones.
+
+To see real data, run the local hub on a **copy** of the pilot database, with every file it writes in the scratch folder (it generates fresh tokens into `--tokens`, upgrades the copy's schema and takes its backup at `--backup`, which otherwise defaults to `.local/<ws>/`):
+
+```bash
+cp .local/pilot/hub.sqlite .local/pilot/hub.sqlite-wal .local/pilot/hub.sqlite-shm <scratch>/   # the -wal/-shm files when present
+node hub/dev-server.mjs pilot --port 8796 --db <scratch>/hub.sqlite --backup <scratch>/hub.before.sqlite \
+  --tokens <scratch>/tokens.json --control <scratch>/dev-server.json
+```
+
+Push the coverage catalogs with `deploy/lib/catalog.mjs` `buildCatalog` and `POST /admin/catalog` (owner token from `<scratch>/tokens.json`), and stop the hub with `node hub/dev-server.mjs pilot --stop --control <scratch>/dev-server.json`.
+
 ## Tests
 
 ```bash
-dashboard/.venv/Scripts/python -m unittest discover -s dashboard/tests
+cd dashboard
+.venv/Scripts/python -m unittest discover -s tests
 ```
 
-The tests use `streamlit.testing.v1.AppTest` and a routed fake for `requests.get` and `requests.post`, so nothing touches the network. They cover:
+The tests use `streamlit.testing.v1.AppTest` and a routed fake for `requests.get` and `requests.post` (`tests/helpers.py`), so nothing touches the network, and they never read a secrets file (the harness points Streamlit's secrets path at a file that does not exist; tests pass their secrets through `AppTest.secrets`). `helpers.hub_defaults()` routes every hub read to the v8 bodies in `tests/fixtures.py`; each view keeps extra bodies in its own `fixtures_<area>.py`. Every analyst tab is checked by the jargon guard (`AppCase.assert_plain`: no engine word anywhere a reader can see) and for leaked secrets (`assert_no_secrets`).
 
-- every tab
-- the backfill flow (start, polling, finish, PIN gate, refusal)
-- the health panel with two workspaces
-- PIN gating, including a PIN for one workspace not unlocking another, the app-wide limit on wrong PINs, the wait after a wrong PIN, and placeholder and short PINs
-- approvals bound to the proposal shown (`409 proposal_changed`)
-- error and empty states
-- that no token or PIN reaches the page, a URL or a query string
-
-`python -m pytest dashboard/tests` also works if pytest is installed. It is deliberately not a requirement.
+- the shell (`test_app_shell.py`, with the views stubbed): tabs and who sees them, sign in to edit, builder access and its fallbacks, deep links, the page-level error box, the unchanged masthead, logo, page icon, theme, footer, configuration states and the workspace switcher
+- `test_ui.py`: toasts, the undo bar, dialogs, confirmations, locked buttons, plain errors, `effective_text` (with the DST change)
+- `test_status.py`: the status line (from `GET /status`) and the new-briefing banner (from `GET /editions/latest`)
+- `test_units.py` and `test_owner_pin.py`: config with the builder PIN, sign-in state, the PIN guard, every hub wrapper, labels, links, formatting and the 12 px floor
+- `test_app_errors.py`: each tab's error box, malformed payloads, secrets in URLs and on the page
+- each tab's own tests: `test_app_briefing.py`, `test_actions.py`, `test_app_filtered.py`, `test_app_preferences.py`, `test_app_brief.py`, `test_app_coverage.py`, `test_app_requests.py`, `test_app_control_room.py` and their `test_units_<area>.py`
 
 ## Deploy to Streamlit Community Cloud
 
@@ -117,80 +165,33 @@ The app must never be public while it holds secrets. Reads use the hub's `read_t
    - Community Cloud installs `dashboard/requirements.txt` (it looks in the main file's folder first).
    - The theme comes from `dashboard/.streamlit/config.toml`, and `feed.css` carries the rest of the look.
 4. Under **Settings**, then **Sharing**, make the app private and invite only the viewers who need it. Open the app in a private browser window to check that it asks you to sign in.
-5. Only now, under **Settings**, then **Secrets**, paste the contents of your `secrets.toml`, with an `owner_pin` of 8 or more characters. Community Cloud restarts the app with the values.
+5. Only now, under **Settings**, then **Secrets**, paste the contents of your `secrets.toml`, with an `owner_pin` of 8 or more characters (and a `builder_pin` once there are two workspaces). Community Cloud restarts the app with the values.
 
-To rotate a token or the PIN, edit the app's secrets. Community Cloud restarts the app with the new values. A restart also clears the PIN-guessing counters, so rotate the PIN if you suspect someone has been guessing.
+To rotate a token or a PIN, edit the app's secrets. Community Cloud restarts the app with the new values. A restart also clears the PIN-guessing counters, so rotate the PIN if you suspect someone has been guessing.
 
 ## Files
 
 | Path | Purpose |
 | --- | --- |
-| `streamlit_app.py` | Entry point: page config, masthead, navigation, Owner popover, view dispatch |
-| `feed.css` | The design system: Roboto, the black base, the brand-green bars, cards, the hero, coloured pills, tables |
+| `streamlit_app.py` | Entry point: page config, masthead, tabs, sign-in popover, the undo bar, view dispatch, dialogs, deep links |
+| `feed.css` | The design system: Roboto, the black base, the brand-green bars, cards, the hero, pills, the shell's status line, undo bar, error boxes and narrow-screen rules |
 | `assets/zenux-mark.png`, `assets/zenux-favicon.png` | The logo mark (inlined into the top bar) and the browser-tab icon |
-| `zenux_dashboard/config.py` | Parses and validates `st.secrets` into workspaces and modules |
-| `zenux_dashboard/api.py` | `requests` client for the hub and module Workers (bearer tokens in headers only) |
-| `zenux_dashboard/data.py` | Cached reads, plus the parallel health gather |
-| `zenux_dashboard/owner.py` | PIN gate (`hmac.compare_digest`) and the app-wide limit on wrong PINs |
+| `zenux_dashboard/config.py` | Parses and validates `st.secrets` into workspaces, modules and the builder PIN |
+| `zenux_dashboard/api.py` | `requests` client for the hub and module Workers: one wrapper per route, local validation, plain hub messages on `ApiError` |
+| `zenux_dashboard/data.py` | Cached reads (60 s; coverage areas 120 s; the coverage inspector and the brief 300 s), plus the parallel health gather |
+| `zenux_dashboard/owner.py` | Sign in to edit: the PIN guard (`hmac.compare_digest`), the session's unlock and the builder |
+| `zenux_dashboard/labels.py` | The one vocabulary: tab names, reasons, ratings, scopes, coverage words, briefing names, the jargon guard |
+| `zenux_dashboard/ui.py` | Toasts, the undo bar, dialogs and confirmations, `write()`, locked buttons, plain errors |
+| `zenux_dashboard/links.py`, `zenux_dashboard/status.py` | Deep links and in-app navigation; the status line and the new-briefing check |
 | `zenux_dashboard/fmt.py` | Time formatting, HTML escaping, safe links, pills and tables |
-| `zenux_dashboard/{feed,rejected,rules,radar,diagnostics}_view.py` | The five tabs |
-| `zenux_dashboard/grading.py` | Shared grade form (`POST /feedback`) |
+| `zenux_dashboard/feed_view.py`, `actions.py` | Briefing, and the card actions shared by every tab |
+| `zenux_dashboard/filtered_view.py` | Filtered out |
+| `zenux_dashboard/preferences_view.py`, `brief_view.py` | My preferences, and What ZENUX looks for with the sign-off |
+| `zenux_dashboard/coverage_view.py`, `radar_view.py` | Coverage, and coverage requests (the analyst's part and the builder's review) |
+| `zenux_dashboard/control_view.py` | The Control room |
 | `.streamlit/config.toml`, `.streamlit/secrets.example.toml` | Theme and the secrets template (committed) |
 | `tests/` | AppTest and unit tests |
 
-## Hub contract (hub/src/brain.js)
+## Hub contract
 
-The dashboard reads fields tolerantly: a missing field is left out of the display, never guessed. Below are the shapes it uses, as the hub returns them.
-
-Reads:
-
-- **`GET /editions?limit=10&before=<edition id>`**
-  - `{editions: [...], next_before, has_more}`
-  - each edition: `{id, run_id, published_at, item_count, candidate_count, backlog, note, summary, items}` (`summary` is null on editions published before it existed)
-  - each item: `{id, rank, event_id, score, tier, headline, text, module, modules, story_id, metrics: [{label, value, source_url?}], sources: [{url, title?}], feedback: [...]}` (`modules`: every module the story draws on; the card falls back to `[module]`)
-- **`GET /rejected?days=N`**: `{days, total, counts, items: [{event_id, decision, score, tier, reason_code, rationale, canonical_event_id, decided_at, title, url, module, source_key, lane, feedback}]}`
-- **`GET /rules`**
-  - `{precedents: [...], drafts: [...], counts}`
-  - each precedent: `{id: "R-NNNN" | "I-NNNN", kind, text, status, origin, activated_at}`
-  - each draft: `{id, kind, text, origin, context, status, proposal: {text, rationale, kind?}, proposed_at, precedent_id, decision_note}`
-- **`GET /radar`**
-  - `{requests: [{id, kind, text, url, module, status, proposal, proposed_at, decision_note}]}`
-  - `status` is one of `queued`, `proposed`, `approved_pending_apply` or `rejected`
-  - `proposal` is `{summary, sources: [module source configs], registry_changes: [...], notes}`
-- **`GET /diagnostics`**
-  - top level: `{status, modules: [...], dead_letters: {total, by_reason, recent}, review: {backlog, lease: {state, held, run_id, lease_expires_at}, last_run}, last_edition: {id, published_at, item_count}}`
-  - each module: `{module_id, status, stale, retired, last_run, events: {last_24h: {lane: n}, last_7d: {lane: n}}, failing, silent, dead_letters}`
-  - a module's `status` is one of `ok`, `partial`, `failed` or `no_runs`
-- **`GET /sources?module=<id>`**: the hub's per-source health rows. The backfill picker uses each row's `source_key` and skips rows marked `retired`.
-- **`GET /snapshot?module=<id>&limit=20`**: `{module, counts: {last_24h, last_7d}, events: [compact events]}`. Without `counts`, the dashboard falls back to that module's counts in `/diagnostics`.
-- **Module `GET /health`**: the module SDK shape, plus `backfill`. The backfill picker also reads an optional `sources` list.
-- **Module `GET /backfill`**: the current or last job, or 404 `no_backfill_job` when none exists.
-- **Module `POST /backfill`** `{days, sources?}`: answers 202 with a new job, or 200 with the job already in flight, which is left unchanged.
-
-Writes (bearer `OWNER_TOKEN` after the PIN):
-
-- **`POST /feedback`**
-  - body: `{item_id | edition_id + item_rank | event_id, verdict, score?, note?, scope}`
-  - `verdict` is one of `lead`, `digest`, `watch`, `reject` or `factual_error`; `scope` is `item`, `case` or `rule`
-  - answers `{id, draft_id}`. A rule or case grade also queues a draft for the Rule refiner.
-- **`POST /rules/drafts`**: `{text, kind}`
-- **`POST /rules/:id/approve`** `{text?, kind?, proposed_at}`, **`POST /rules/:id/reject`** `{note?}`, **`POST /rules/R-NNNN/retire`**
-  - `proposed_at` is the draft's `proposed_at` exactly as `GET /rules` returned it (`null` when no proposal was shown). The hub answers `409 proposal_changed` and activates nothing when the draft's proposal is different.
-  - **Approve as written** on a waiting draft sends `{text, kind, proposed_at: null}`: the owner's words and kind as shown.
-- **`POST /radar/requests`**: `{kind, text, url?, module?}`
-- **`POST /radar/:id/approve`** `{note?, proposed_at}` (bound the same way) and **`POST /radar/:id/reject`** `{note?}`
-
-## Try it against a local hub
-
-`hub/dev-server.mjs` serves the real hub Worker on `http://localhost:8787` over the locally collected events (`.local/<ws>/hub.sqlite`), with the workspace's tokens from `.local/<ws>/tokens.json`. It is never deployed.
-
-```bash
-node hub/dev-server.mjs pilot                       # leave it running; stop it with --stop or Ctrl+C
-node deploy/streamlit-secrets.mjs pilot --local     # writes the pilot block of .streamlit/secrets.toml
-dashboard/.venv/Scripts/python -m streamlit run dashboard/streamlit_app.py
-node hub/dev-server.mjs pilot --stop
-```
-
-`--local` sets `hub_url = "http://localhost:8787"` and the read and owner tokens from the same `tokens.json`. No module Worker runs locally, so module URLs are placeholders on the reserved `.invalid` domain (marked as such in the file). Module health and backfill show those modules as unreachable; the hub's own view of each module (last runs, failing and silent sources, event counts) still shows. Pass `--module-url <id>=<url>` for a module you do run locally, for example with `wrangler dev`. Owner writes stay locked until you add your `owner_pin`. Run `node deploy/streamlit-secrets.mjs pilot` without `--local` after deploying to point the block at the Workers.
-
-`brain/dev-hub.mjs` is a scratch alternative: an in-memory hub with synthetic events (`--seed`) and tokens taken from the environment.
+The dashboard reads fields tolerantly: a missing field is left out of the display, never guessed. The shapes are in `docs/SPEC-PHASE02.md` section 5 (schema v8), `docs/SPEC-PHASE05.md` (the WF5 reads and plain fields: `/status`, `/editions/<id>`, `/editions/latest`, `/editions/search`, `/mutes/bring-back-preview`, the views of `/rejected`, `plain_text`, `rationale_plain`, `proposal_plain`, `preview_items`, `briefing_7d` ...) and `docs/SPEC-PHASE01.md` 4.6 (diagnostics, the Control room's read); `docs/SPEC-PHASE03-UI.md` describes the screens and section 10 lists the API gaps and which are closed. Every hub refusal is `{error, message, ...}`: the dashboard shows `message` (one plain sentence) and keeps `error` and the HTTP status for the builder. Every write answer carries `effective` (`{applies_from, next_briefing_at, timezone}`), which the toasts turn into "Applies from the ... briefing." Approvals send the `proposed_at` of the proposal shown, and a sign-off sends the versions of the page shown, so nothing you have not seen is ever approved.

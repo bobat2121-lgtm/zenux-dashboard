@@ -10,15 +10,18 @@ from __future__ import annotations
 import base64
 import html
 import zlib
-from datetime import datetime, timezone, tzinfo
+import re
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from email.utils import parsedate_to_datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 
 UTC = timezone.utc
 MIN_TIME = datetime.min.replace(tzinfo=UTC)
+DEFAULT_GRADER_TIMES = ("07:30", "12:30", "16:30")  # the Grader's default local schedule (hub ROUTINE_SCHEDULE)
+SLOT_RE = re.compile(r"^\s*([01]?\d|2[0-3]):([0-5]\d)\s*$")
 
 MODULE_NAMES = {"ai-infra": "AI infrastructure", "defense-unmanned": "defense unmanned"}
 MODULE_COLORS = {"ai-infra": "#A78BFA", "defense-unmanned": "#2DD4BF"}  # violet, teal
@@ -35,6 +38,10 @@ PILL_CLASS = {
     "failed": "bad", "down": "bad", "error": "bad", "quarantined": "bad", "blocked": "bad", "unreachable": "bad",
     "rejected": "bad", "unauthorized": "bad", "dead_letter": "bad",
     "missing": "missing",
+    # workspace severity (hub /diagnostics severity.level), routine and prompt states
+    "green": "ok", "amber": "warn", "red": "bad",
+    "current": "ok", "due": "warn", "out_of_date": "warn",
+    "missed": "bad", "edition_missed": "bad", "overdue": "bad", "never_seen": "idle",
 }
 
 
@@ -178,6 +185,65 @@ def fmt_short(value: Any, tz_name: str | None = "UTC") -> str:
     return f"{local:%b} {local.day} · {local.hour % 12 or 12}:{local:%M %p}"
 
 
+def _local(value: Any, tz_name: str | None) -> datetime | None:
+    parsed = parse_time(value)
+    return None if parsed == MIN_TIME else parsed.astimezone(zone(tz_name))
+
+
+def clock_text(value: Any, tz_name: str | None) -> str:
+    """"12:30 PM" in local time, without the zone; "—" when unknown."""
+    local = _local(value, tz_name)
+    return "—" if local is None else f"{local.hour % 12 or 12}:{local:%M %p}"
+
+
+def fmt_clock(value: Any, tz_name: str | None) -> str:
+    """"12:30 PM ET"; "—" when unknown."""
+    local = _local(value, tz_name)
+    return "—" if local is None else f"{local.hour % 12 or 12}:{local:%M %p} {zone_label(tz_name, local)}"
+
+
+def fmt_day(value: Any, tz_name: str | None) -> str:
+    """"Sat Oct 4" in local time; "—" when unknown."""
+    local = _local(value, tz_name)
+    return "—" if local is None else f"{local:%a} {local:%b} {local.day}"
+
+
+def fmt_date(value: Any, tz_name: str | None) -> str:
+    """"Oct 4" in local time; "—" when unknown."""
+    local = _local(value, tz_name)
+    return "—" if local is None else f"{local:%b} {local.day}"
+
+
+def parse_slot(value: Any) -> tuple[int, int] | None:
+    """"07:30" -> (7, 30); None for anything else."""
+    m = SLOT_RE.match(value) if isinstance(value, str) else None
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def next_slot(times: Iterable[str], tz_name: str | None, now: datetime | None = None) -> datetime | None:
+    """The next local "HH:MM" of times strictly after now, as an aware UTC datetime (correct across DST: each day's
+    slot is placed with that day's offset). None when times holds no valid slot."""
+    try:
+        slots = [s for s in (parse_slot(t) for t in times) if s is not None]
+    except TypeError:
+        return None
+    if not slots:
+        return None
+    tz = zone(tz_name)
+    clock = parse_time(now or datetime.now(UTC))
+    today: date = clock.astimezone(tz).date()
+    best: datetime | None = None
+    for offset in range(0, 8):
+        day = today + timedelta(days=offset)
+        for hour, minute in slots:
+            at = datetime.combine(day, time(hour, minute), tzinfo=tz).astimezone(UTC)
+            if at > clock and (best is None or at < best):
+                best = at
+        if best is not None:
+            return best
+    return best
+
+
 def relative_time(value: Any, now: datetime | None = None) -> str:
     parsed = parse_time(value)
     if parsed == MIN_TIME:
@@ -205,6 +271,17 @@ def utc_now_iso() -> str:
 
 def esc(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
+
+
+_MD_SPECIAL_RE = re.compile(r"([\\`*_\[\]$~|<>])")
+
+
+def md_label(value: Any) -> str:
+    """Text for a place Streamlit renders as Markdown, not HTML (widget, expander, popover and dialog labels, help
+    tooltips, toasts, captions, st.info/warning/error): the Markdown control characters are backslash-escaped, so a
+    headline with two dollar amounts is not typeset as math and "*" or "_" do not turn into emphasis. Never use it
+    inside an unsafe_allow_html block (esc() is for those)."""
+    return _MD_SPECIAL_RE.sub(r"\\\1", "" if value is None else str(value))
 
 
 def esc_lines(value: Any) -> str:
@@ -241,9 +318,10 @@ def link(url: Any, text: Any, css: str = "source-link") -> str:
     return f'<a class="{css}" href="{esc(href)}" target="_blank" rel="noopener noreferrer">{esc(text)}</a>'
 
 
-def pill(status: Any, text: Any = None) -> str:
+def pill(status: Any, text: Any = None, css: str | None = None) -> str:
+    """A status pill: its colour from PILL_CLASS by status (or css: ok, warn, bad, idle), its text the status."""
     key = one_line(status).lower() or "unknown"
-    css = PILL_CLASS.get(key, "idle")
+    css = css or PILL_CLASS.get(key, "idle")
     return f'<span class="status-pill {css}">{esc(label_of(text if text is not None else key))}</span>'
 
 

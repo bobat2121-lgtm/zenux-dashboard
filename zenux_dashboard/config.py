@@ -3,6 +3,7 @@
 Shape (dashboard/.streamlit/secrets.toml locally, App settings -> Secrets on Streamlit Community Cloud):
 
     owner_pin = "..."            # optional default PIN for every workspace
+    builder_pin = "..."          # optional: opens the Control room (8+ characters)
 
     [[workspaces]]
     id = "pilot"
@@ -16,7 +17,7 @@ Shape (dashboard/.streamlit/secrets.toml locally, App settings -> Secrets on Str
     [[workspaces.modules]]
     id = "ai-infra"
     url = "https://zenux-pilot-ai-infra.<account>.workers.dev"
-    run_token = "..."            # module RUN_TOKEN: backfill
+    run_token = "..."            # module RUN_TOKEN: backfill and the module's detailed /health
 
 Problems are reported by workspace id and field name only. A secret value never appears in a message,
 and the secret fields are excluded from every dataclass repr.
@@ -24,6 +25,12 @@ and the secret fields are excluded from every dataclass repr.
 An owner_pin must be usable: a placeholder from the committed example or the docs (REPLACE_WITH_..., "...",
 "<your PIN>", "choose-a-pin"), which anyone can read, counts as unset (the top-level default then applies, as in
 deploy/streamlit-secrets.mjs), and a PIN shorter than MIN_PIN_LENGTH characters turns owner writes off.
+
+The builder PIN opens the Control room (docs/SPEC-PHASE03-UI.md 1.2). It is read the same way (placeholders count as
+unset, a short one is dropped). Without one, and only when exactly one workspace is configured (the pilot, where the
+owner is the builder), it falls back to the top-level owner_pin, then to that workspace's owner_pin. With two or more
+workspaces no owner PIN opens it (an analyst who knows a shared default PIN would get every workspace's owner token):
+the Control room stays hidden and the Configuration notes say why. `builder_pin_source` says which applied ("builder_pin" | "owner_pin" | "workspace" | ""), never the value.
 """
 
 from __future__ import annotations
@@ -89,6 +96,12 @@ class Workspace:
 class Config:
     workspaces: tuple[Workspace, ...] = ()
     problems: tuple[str, ...] = ()
+    builder_pin: str = field(default="", repr=False)
+    builder_pin_source: str = ""  # "builder_pin" | "owner_pin" | "workspace" | ""
+
+    @property
+    def has_builder(self) -> bool:
+        return bool(self.builder_pin)
 
     def workspace(self, workspace_id: str | None) -> Workspace | None:
         return next((w for w in self.workspaces if w.id == workspace_id), None)
@@ -195,7 +208,8 @@ def _parse_modules(ws_id: str, raw: Any, problems: list[str]) -> tuple[Module, .
             problems.append(f"workspace '{ws_id}' module '{module_id}': url {why}")
         run_token = _text(entry.get("run_token"))
         if not run_token:
-            problems.append(f"workspace '{ws_id}' module '{module_id}': run_token missing (backfill disabled)")
+            problems.append(f"workspace '{ws_id}' module '{module_id}': run_token missing (backfill disabled; "
+                            "its health shows the hub's view only)")
         modules.append(Module(id=module_id, url=url, run_token=run_token, title=_text(entry.get("title"))))
     return tuple(modules)
 
@@ -253,7 +267,30 @@ def parse_config(secrets: Mapping[str, Any] | None) -> Config:
             owner_pin=owner_pin,
             modules=_parse_modules(ws_id, entry.get("modules"), problems),
         ))
-    return Config(workspaces=tuple(workspaces), problems=tuple(problems))
+    builder_pin, builder_source = _builder_pin(data, default_pin, workspaces, problems)
+    return Config(workspaces=tuple(workspaces), problems=tuple(problems), builder_pin=builder_pin,
+                  builder_pin_source=builder_source)
+
+
+def _builder_pin(data: Mapping, default_pin: str, workspaces: list[Workspace], problems: list[str]) -> tuple[str, str]:
+    """(the builder PIN, where it came from). A builder_pin given but too short hides the Control room (no fallback)."""
+    pin = usable_pin(data.get("builder_pin"))
+    if pin:
+        if len(pin) < MIN_PIN_LENGTH:
+            problems.append(f"builder_pin is shorter than {MIN_PIN_LENGTH} characters (the Control room stays hidden)")
+            return "", ""
+        return pin, "builder_pin"
+    # The owner PIN opens the Control room only in the pilot, where the owner is the builder: with two or more
+    # workspaces an analyst who knows the shared default PIN would otherwise get every workspace's owner token.
+    if len(workspaces) == 1:
+        if default_pin and len(default_pin) >= MIN_PIN_LENGTH:
+            return default_pin, "owner_pin"
+        if workspaces[0].owner_pin:
+            return workspaces[0].owner_pin, "workspace"
+    if len(workspaces) > 1:
+        problems.append('builder_pin missing: the Control room stays hidden; with two or more workspaces no owner PIN '
+                        'opens it (add builder_pin = "..." at the top of the secrets)')
+    return "", ""
 
 
 def read_secrets() -> Mapping[str, Any]:

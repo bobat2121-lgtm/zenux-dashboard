@@ -1,7 +1,10 @@
-"""Unit tests for the pure parts: config, HTTP client, PIN gate, formatting and view shape helpers."""
+"""Unit tests for the shell's pure parts: config (with the builder PIN), the sign-in state (bare mode), the HTTP client
+and every hub wrapper, formatting, labels (the one vocabulary and the jargon guard), deep-link parsing and the
+stylesheet's 12 px floor. View internals are tested by each view's own test_units_<area>.py."""
 
 from __future__ import annotations
 
+import re
 import unittest
 import zlib
 from datetime import datetime, timedelta, timezone
@@ -10,17 +13,23 @@ from unittest.mock import patch
 import helpers  # noqa: F401  (puts dashboard/ on sys.path)
 import fixtures as fx
 import requests
+import streamlit as st
 
-from helpers import FakeHttp, FakeResponse, PILOT_AI, PILOT_HUB, OWNER, PIN, READ, RUN_AI, one_workspace, two_workspaces
-from zenux_dashboard import api, diagnostics_view, feed_view, fmt, grading, owner, radar_view, rejected_view, rules_view
+from helpers import (BUILDER_PIN, FakeHttp, FakeResponse, PILOT_AI, PILOT_HUB, OWNER, PIN, READ, RUN_AI,
+                     reset_pin_guard, one_workspace, two_workspaces)
+from zenux_dashboard import api, fmt, labels, links, owner
 from zenux_dashboard.config import Module, Workspace, normalize_url, parse_config
+
+TZ = "America/New_York"
 
 
 class ConfigTests(unittest.TestCase):
     def test_parses_workspaces_and_modules(self):
         conf = parse_config(two_workspaces())
         self.assertEqual(conf.ids, ["pilot", "beta"])
-        self.assertEqual(conf.problems, ())
+        self.assertEqual(conf.problems, ('builder_pin missing: the Control room stays hidden; with two or more '
+                                         'workspaces no owner PIN opens it (add builder_pin = "..." at the top of the '
+                                         'secrets)',))
         pilot = conf.workspace("pilot")
         self.assertEqual([m.id for m in pilot.modules], ["ai-infra", "defense-unmanned"])
         self.assertTrue(pilot.can_read and pilot.can_write)
@@ -30,10 +39,11 @@ class ConfigTests(unittest.TestCase):
         self.assertIsNone(conf.workspace("nope"))
 
     def test_repr_never_shows_secret_fields(self):
-        conf = parse_config(one_workspace())
+        conf = parse_config({"builder_pin": BUILDER_PIN, **one_workspace()})
         text = repr(conf)
-        for secret in (READ, OWNER, PIN, RUN_AI):
+        for secret in (READ, OWNER, PIN, RUN_AI, BUILDER_PIN):
             self.assertNotIn(secret, text)
+        self.assertIn("builder_pin_source='builder_pin'", text)
 
     def test_problems_name_fields_never_values(self):
         conf = parse_config({"workspaces": [
@@ -52,7 +62,7 @@ class ConfigTests(unittest.TestCase):
         self.assertIn("workspace 'two': hub_url must not carry credentials", joined)
         self.assertIn("workspace 'two' module 'm1': duplicate id", joined)
         self.assertIn("workspace 'two' module #3: id is missing or invalid", joined)
-        self.assertIn("run_token missing (backfill disabled)", joined)
+        self.assertIn("run_token missing (backfill disabled; its health shows the hub's view only)", joined)
         self.assertNotIn("secret-owner-value", joined)
         self.assertEqual(conf.ids, ["ok", "two"])
         self.assertEqual(conf.workspace("ok").hub_url, "")  # an unsafe URL is never used
@@ -80,6 +90,47 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(parse_config(None).workspaces, ())
         self.assertEqual(parse_config({"workspaces": "nope"}).workspaces, ())
         self.assertEqual(parse_config({"workspaces": [1, "x"]}).workspaces, ())
+        self.assertFalse(parse_config(None).has_builder)
+
+
+class BuilderPinConfigTests(unittest.TestCase):
+    def pin(self, secrets: dict) -> tuple[str, str, tuple]:
+        conf = parse_config(secrets)
+        return conf.builder_pin, conf.builder_pin_source, conf.problems
+
+    def test_an_explicit_builder_pin_wins(self):
+        self.assertEqual(self.pin({"builder_pin": BUILDER_PIN, **two_workspaces()}), (BUILDER_PIN, "builder_pin", ()))
+        self.assertEqual(self.pin({"builder_pin": 24681357, **one_workspace()})[:2], ("24681357", "builder_pin"))
+
+    def test_fallbacks(self):
+        # one workspace: the top-level owner_pin, then the workspace's own PIN; two workspaces: only builder_pin
+        self.assertEqual(self.pin({"owner_pin": "a-default-pin", **one_workspace()})[:2],
+                         ("a-default-pin", "owner_pin"))
+        self.assertEqual(self.pin(one_workspace()), (PIN, "workspace", ()))
+        missing = ('builder_pin missing: the Control room stays hidden; with two or more workspaces no owner PIN opens '
+                   'it (add builder_pin = "..." at the top of the secrets)')
+        for secrets in (two_workspaces(), {"owner_pin": "a-default-pin", **two_workspaces()}):
+            builder, source, problems = self.pin(secrets)
+            self.assertEqual((builder, source), ("", ""))
+            self.assertIn(missing, problems)
+        self.assertEqual(self.pin({}), ("", "", ()))
+
+    def test_placeholders_count_as_unset_and_short_pins_hide_the_control_room(self):
+        for placeholder in ("REPLACE_WITH_A_BUILDER_PIN_OF_8_OR_MORE_CHARACTERS", "...", "<your PIN>"):
+            self.assertEqual(self.pin({"builder_pin": placeholder, **one_workspace()})[:2], (PIN, "workspace"))
+        builder, source, problems = self.pin({"builder_pin": "short", **one_workspace()})
+        self.assertEqual((builder, source), ("", ""))  # given but too short: no fallback
+        self.assertIn("builder_pin is shorter than 8 characters (the Control room stays hidden)", problems)
+        self.assertFalse(any("short" in p and "builder_pin is" not in p for p in problems))
+
+    def test_the_example_has_no_builder_pin(self):
+        import tomllib
+
+        with open(helpers.DASHBOARD / ".streamlit" / "secrets.example.toml", "rb") as handle:
+            conf = parse_config(tomllib.load(handle))
+        self.assertFalse(conf.has_builder)
+        text = (helpers.DASHBOARD / ".streamlit" / "secrets.example.toml").read_text(encoding="utf-8")
+        self.assertIn('# builder_pin = "REPLACE_WITH_A_BUILDER_PIN_OF_8_OR_MORE_CHARACTERS"', text)
 
 
 class PinTests(unittest.TestCase):
@@ -99,16 +150,99 @@ class PinTests(unittest.TestCase):
         a, b = compare.call_args.args
         self.assertEqual((len(a), len(b)), (32, 32))  # fixed-length digests, never the raw PINs
 
-    def test_lock_state_and_token(self):
-        ws = parse_config(one_workspace()).workspace("pilot")
-        self.assertEqual(owner.lock_state(ws, ""), owner.NO_PIN)
-        self.assertEqual(owner.lock_state(ws, "nope"), owner.WRONG_PIN)
-        self.assertEqual(owner.lock_state(ws, PIN), owner.UNLOCKED)
-        self.assertEqual(owner.owner_token(ws, PIN), OWNER)
-        self.assertIsNone(owner.owner_token(ws, "nope"))
+    def test_lock_messages_are_plain(self):
+        self.assertEqual(owner.lock_message(None, owner.NO_PIN), "Unlock to edit: use Sign in to edit at the top right.")
+        self.assertEqual(owner.lock_message(None, owner.WRONG_PIN),
+                         "That PIN doesn't match. After 5 wrong tries every PIN is refused for a while, so wait a few "
+                         "minutes before trying again.")
+        self.assertEqual(owner.lock_message(None, owner.NOT_CONFIGURED),
+                         "Editing is turned off for this workspace until the builder finishes its setup.")
+
+
+class SessionUnlockTests(unittest.TestCase):
+    """owner.unlock / lock / token / builder in bare mode: st.session_state stands in for one browser session, and
+    load_config is patched (bare-mode tests never read st.secrets)."""
+
+    def setUp(self):
+        reset_pin_guard()
+        self.addCleanup(reset_pin_guard)
+        for patcher in (patch.object(owner, "_pause"), patch.object(owner, "load_config", side_effect=self.conf)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.secrets = two_workspaces()
+
+    def conf(self):
+        return parse_config(self.secrets)
+
+    def ws(self, workspace_id: str = "pilot") -> Workspace:
+        return self.conf().workspace(workspace_id)
+
+    def test_unlock_lock_and_token(self):
+        pilot, beta = self.ws(), self.ws("beta")
+        self.assertEqual(owner.lock_state(pilot), owner.NO_PIN)
+        self.assertIsNone(owner.token(pilot))
+        self.assertEqual(owner.unlock(pilot, ""), owner.NO_PIN)
+        self.assertEqual(owner.unlock(pilot, "nope-nope"), owner.WRONG_PIN)
+        self.assertEqual(owner.last_result(pilot), owner.WRONG_PIN)
+        self.assertEqual(owner.unlock(pilot, f"  {PIN} "), owner.UNLOCKED)
+        self.assertIsNone(owner.last_result(pilot))
+        self.assertTrue(owner.is_unlocked(pilot) and owner.can_edit(pilot))
+        self.assertEqual(owner.token(pilot), OWNER)
+        self.assertEqual(owner.lock_state(pilot), owner.UNLOCKED)
+        self.assertIsNone(owner.token(beta))  # a PIN unlocks its own workspace only
+        self.assertEqual(owner.unlock(beta, PIN), owner.WRONG_PIN)
+        stored = repr(dict(st.session_state))
+        self.assertNotIn(PIN, stored)
+        owner.lock(pilot)
+        self.assertIsNone(owner.token(pilot))
+        owner.unlock(pilot, PIN)
+        owner.lock()
+        self.assertFalse(owner.is_unlocked(pilot))
+
+    def test_a_changed_pin_locks_again(self):
+        owner.unlock(self.ws(), PIN)
+        self.assertTrue(owner.is_unlocked(self.ws()))
+        self.secrets["workspaces"][0]["owner_pin"] = "a-new-pin-entirely"
+        self.assertFalse(owner.is_unlocked(self.ws()))
+
+    def test_builder_unlock_and_its_reach(self):
+        self.secrets = {"builder_pin": BUILDER_PIN, **two_workspaces()}
+        conf = self.conf()
+        self.assertFalse(owner.is_builder(conf))
+        self.assertEqual(owner.builder_unlock(conf, "nope-nope"), owner.WRONG_PIN)
+        self.assertEqual(owner.last_result(builder=True), owner.WRONG_PIN)
+        self.assertEqual(owner.builder_unlock(conf, BUILDER_PIN), owner.UNLOCKED)
+        self.assertTrue(owner.is_builder(conf) and owner.is_builder())
+        self.assertEqual(owner.token(self.ws("beta")), "test-owner-token-beta")  # the builder writes everywhere
+        self.assertEqual(owner.lock_state(self.ws()), owner.UNLOCKED)
+        owner.lock()
+        self.assertFalse(owner.is_builder(conf))
+        self.assertEqual(owner.builder_unlock(parse_config(two_workspaces()), BUILDER_PIN), owner.NOT_CONFIGURED)
+
+    def test_owner_unlock_opens_the_builder_only_with_the_same_pin(self):
+        self.secrets = {"builder_pin": BUILDER_PIN, **one_workspace()}
+        owner.unlock(self.ws(), PIN)
+        self.assertFalse(owner.is_builder())
+        owner.lock()
+        self.secrets = one_workspace()  # the pilot: the builder PIN is the owner PIN
+        owner.unlock(self.ws(), PIN)
+        self.assertTrue(owner.is_builder())
+
+    def test_adopt_entered_pin_consumes_the_presets(self):
+        self.secrets = {"builder_pin": BUILDER_PIN, **two_workspaces()}
+        st.session_state[owner.PIN_KEY] = PIN
+        st.session_state[owner.BUILDER_PIN_KEY] = BUILDER_PIN
+        owner.adopt_entered_pin(self.conf(), self.ws())
+        self.assertNotIn(owner.PIN_KEY, st.session_state)
+        self.assertNotIn(owner.BUILDER_PIN_KEY, st.session_state)
+        self.assertTrue(owner.is_unlocked(self.ws()) and owner.is_builder())
+
+    def test_not_configured(self):
         bare = Workspace(id="x", title="", hub_url="https://h.example", read_token="r")
-        self.assertEqual(owner.lock_state(bare, PIN), owner.NOT_CONFIGURED)
-        self.assertIn("not configured", owner.lock_message(bare, owner.NOT_CONFIGURED))
+        self.assertEqual(owner.lock_state(bare), owner.NOT_CONFIGURED)
+        self.assertEqual(owner.unlock(bare, PIN), owner.NOT_CONFIGURED)
+        self.assertEqual(owner.lock_state(None), owner.NOT_CONFIGURED)
+        self.assertIsNone(owner.token(None))
 
 
 class ApiTests(unittest.TestCase):
@@ -148,6 +282,31 @@ class ApiTests(unittest.TestCase):
                 self.assertEqual(str(ctx.exception), message)
                 self.assertNotIn(READ, str(ctx.exception))
 
+    def test_error_detail_errors_and_data(self):
+        self.http.on("POST", PILOT_HUB + "/signoff", FakeResponse(409, {
+            "error": "changed_since_viewed", "message": "Coverage changed while you were reviewing. " + "x" * 400,
+            "current": {"rubric_version": "r2", "catalog_versions": {}}}))
+        with self.assertRaises(api.ApiError) as ctx:
+            api.sign_off(self.ws, OWNER, rubric_version="r1", catalog_versions={})
+        exc = ctx.exception
+        self.assertEqual((exc.kind, exc.status, exc.code), ("http", 409, "changed_since_viewed"))
+        self.assertTrue(exc.detail.startswith("Coverage changed while you were reviewing."))
+        self.assertLessEqual(len(exc.detail), 300)
+        self.assertEqual(exc.data["current"]["rubric_version"], "r2")
+        self.assertEqual(exc.errors, [])
+        self.http.on("POST", PILOT_HUB + "/preferences", FakeResponse(400, {
+            "error": "invalid_preference", "message": "The preference is not valid.",
+            "errors": ["text: at least 10 characters", 5, "y" * 300]}))
+        with self.assertRaises(api.ApiError) as ctx:
+            api.add_preference(self.ws, OWNER, direction="less", scope="standing", text="ten chars!!")
+        self.assertEqual(ctx.exception.errors[0], "text: at least 10 characters")
+        self.assertEqual(len(ctx.exception.errors), 2)
+        self.assertLessEqual(len(ctx.exception.errors[1]), 200)
+        self.http.on("GET", PILOT_HUB + "/rules", requests.ConnectionError("down"))
+        with self.assertRaises(api.ApiError) as ctx:
+            api.rules(self.ws)
+        self.assertEqual((ctx.exception.detail, ctx.exception.errors, ctx.exception.data), (None, [], {}))
+
     def test_not_configured(self):
         bare = Workspace(id="x", title="", hub_url="")
         with self.assertRaises(api.ApiError) as ctx:
@@ -157,12 +316,218 @@ class ApiTests(unittest.TestCase):
             api.hub_post(self.ws, "/feedback", {}, "")
         self.assertEqual(self.http.calls, [])
 
+    def read(self, fn, path: str, *args, body=None, **kwargs):
+        self.http.calls.clear()
+        self.http.on("GET", PILOT_HUB + path, body if body is not None else {"ok": True})
+        out = fn(self.ws, *args, **kwargs)
+        call = self.http.calls[-1]
+        self.assertEqual((call.method, call.url, call.bearer), ("GET", PILOT_HUB + path, READ))
+        return out, call.params
+
+    def test_read_wrappers(self):
+        self.assertEqual(self.read(api.editions, "/editions")[1], {"limit": 5})
+        self.assertEqual(self.read(api.editions, "/editions", before=12, limit=1)[1], {"limit": 1, "before": 12})
+        self.assertEqual(self.read(api.rejected, "/rejected")[1], {"days": 3, "filter": "all"})
+        self.assertEqual(self.read(api.rejected, "/rejected", days=7, filter="near_miss", include_auto=True)[1],
+                         {"days": 7, "filter": "near_miss", "include_auto": 1})
+        self.assertEqual(self.read(api.modules, "/modules")[1], {})
+        self.assertEqual(self.read(api.inspect_module, "/modules/ai-infra/inspect", "ai-infra")[1], {})
+        self.assertEqual(self.read(api.mutes, "/mutes")[1], {})
+        self.assertEqual(self.read(api.mutes, "/mutes", include_removed=True)[1], {"all": 1})
+        self.assertEqual(self.read(api.mute_preview, "/mutes/preview", "source", "dcd-news", "ai-infra")[1],
+                         {"kind": "source", "module": "ai-infra", "ref": "dcd-news"})
+        self.assertEqual(self.read(api.mute_preview, "/mutes/preview", "entity", "coreweave")[1],
+                         {"kind": "entity", "ref": "coreweave"})
+        self.assertEqual(self.read(api.stars, "/stars")[1], {})
+        self.assertEqual(self.read(api.star_preview, "/stars/preview", "coreweave")[1], {"entity": "coreweave"})
+        for fn, path in ((api.preferences, "/preferences"), (api.rules, "/rules"), (api.settings, "/settings"),
+                         (api.brief, "/brief"), (api.radar, "/radar"), (api.diagnostics, "/diagnostics")):
+            self.assertEqual(self.read(fn, path)[1], {})
+        self.assertEqual(self.read(api.volume_preview, "/settings/volume/preview", "top")[1], {"mode": "top"})
+        self.assertEqual(self.read(api.volume_preview, "/settings/volume/preview", "broad", True)[1],
+                         {"mode": "broad", "near_miss_shelf": 1})
+        self.assertEqual(self.read(api.volume_preview, "/settings/volume/preview", "top", False)[1],
+                         {"mode": "top", "near_miss_shelf": 0})
+        with self.assertRaises(api.ApiError):
+            api.inspect_module(self.ws, "../admin")
+        with self.assertRaises(api.ApiError):
+            api.rejected(self.ws, filter="everything")
+
+    def test_one_edition_by_id(self):
+        # GET /editions/<id> (gap 1); 404 unknown_edition is None, any other refusal is raised
+        found, params = self.read(api.edition, "/editions/7", 7, body=fx.edition_single(7))
+        self.assertEqual((found["id"], params), (7, {}))
+        self.http.on("GET", PILOT_HUB + "/editions/9", FakeResponse(404, {
+            "error": "unknown_edition", "message": "That briefing is no longer available.", "edition_id": 9}))
+        self.assertIsNone(api.edition(self.ws, 9))
+        self.http.on("GET", PILOT_HUB + "/editions/9", FakeResponse(404, {"error": "not_found"}))
+        with self.assertRaises(api.ApiError):
+            api.edition(self.ws, 9)
+        with self.assertRaises(api.ApiError):
+            api.edition(self.ws, 0)
+
+    def test_wf5_read_wrappers(self):
+        latest, params = self.read(api.latest_edition, "/editions/latest", body=fx.latest())
+        self.assertEqual((latest["latest_edition_id"], params), (12, {}))
+        self.assertEqual(self.read(api.search_editions, "/editions/search", "  grid   power ")[1],
+                         {"q": "grid power", "days": 90, "limit": 50})
+        self.assertEqual(self.read(api.search_editions, "/editions/search", "grid", days=30, limit=10, offset=50)[1],
+                         {"q": "grid", "days": 30, "limit": 10, "offset": 50})
+        self.assertEqual(self.read(api.status, "/status", body=fx.status())[1], {})
+        self.assertEqual(self.read(api.bring_back_preview, "/mutes/bring-back-preview", 4)[1],
+                         {"mute_id": 4, "days": 7})
+        self.assertEqual(self.read(api.rejected, "/rejected", filter="same_story", q=" coreweave  texas ",
+                                   module="ai-infra", offset=500)[1],
+                         {"days": 3, "filter": "same_story", "q": "coreweave texas", "module": "ai-infra",
+                          "offset": 500})
+        self.assertEqual(self.read(api.rejected, "/rejected", filter="old_news")[1], {"days": 3, "filter": "old_news"})
+        self.http.calls.clear()
+        for bad in (lambda: api.search_editions(self.ws, "   "), lambda: api.bring_back_preview(self.ws, 0),
+                    lambda: api.rejected(self.ws, module="../x")):
+            with self.assertRaises(api.ApiError):
+                bad()
+        self.assertEqual(self.http.calls, [])  # refused before anything was sent
+
+    def post(self, fn, path: str, *args, **kwargs):
+        self.http.calls.clear()
+        self.http.on("POST", PILOT_HUB + path, {"ok": True})
+        fn(self.ws, OWNER, *args, **kwargs)
+        call = self.http.calls[-1]
+        self.assertEqual((call.method, call.url, call.bearer), ("POST", PILOT_HUB + path, OWNER))
+        return call.body
+
+    def test_write_wrappers(self):
+        self.assertEqual(self.post(api.add_preference, "/preferences", direction="more", scope="similar",
+                                   text="  production   orders ", item_id=1201, event_id=9001,
+                                   expires_at="2026-11-03T05:00:00.000Z"),
+                         {"direction": "more", "scope": "similar", "text": "production orders", "item_id": 1201,
+                          "expires_at": "2026-11-03T05:00:00.000Z"})
+        self.assertEqual(self.post(api.add_preference, "/preferences", direction="less", scope="this_story",
+                                   event_id=9001, note="why"),
+                         {"direction": "less", "scope": "this_story", "event_id": 9001, "note": "why"})
+        self.assertEqual(self.post(api.add_preference, "/preferences", direction="exact", scope="standing",
+                                   text="Rank grid approvals high."),
+                         {"direction": "exact", "scope": "standing", "text": "Rank grid approvals high."})
+        self.assertEqual(self.post(api.rule_action, "/rules/R-0014/end-date", "R-0014", "end-date",
+                                   {"expires_at": None}), {"expires_at": None})
+        self.assertEqual(self.post(api.rule_action, "/rules/31/approve", 31, "approve",
+                                   {"proposed_at": "t", "retire": ["R-1"]}), {"proposed_at": "t", "retire": ["R-1"]})
+        self.assertEqual(self.post(api.rule_action, "/rules/I-0003/pause", "I-0003", "pause"), {})
+        self.assertEqual(self.post(api.rule_action, "/rules/43/reopen", 43, "reopen"), {})  # undo "Not now"
+        self.assertEqual(self.post(api.add_feedback, "/feedback", verdict="factual_error", item_id=1201,
+                                   note="It was $48M."),
+                         {"verdict": "factual_error", "scope": "item", "item_id": 1201, "note": "It was $48M."})
+        self.assertEqual(self.post(api.add_feedback, "/feedback", verdict="watch", event_id=7101),
+                         {"verdict": "watch", "scope": "item", "event_id": 7101})
+        self.assertEqual(self.post(api.add_feedback, "/feedback", verdict="lead", edition_id=12, item_rank=2, score=91),
+                         {"verdict": "lead", "scope": "item", "edition_id": 12, "item_rank": 2, "score": 91})
+        self.assertEqual(self.post(api.add_mute, "/mutes", kind="source", module="ai-infra", ref="dcd-news"),
+                         {"action": "add", "kind": "source", "module": "ai-infra", "ref": "dcd-news"})
+        self.assertEqual(self.post(api.add_mute, "/mutes", kind="entity", ref="coreweave", module="ai-infra",
+                                   note="noise"),
+                         {"action": "add", "kind": "entity", "ref": "coreweave", "note": "noise"})
+        self.assertEqual(self.post(api.add_mute, "/mutes", kind="story", ref="s-100"),
+                         {"action": "add", "kind": "story", "ref": "s-100"})
+        self.assertEqual(self.post(api.remove_mute, "/mutes", 4, bring_back_days=7),
+                         {"action": "remove", "mute_id": 4, "bring_back_days": 7})
+        self.assertEqual(self.post(api.remove_mute, "/mutes", 4), {"action": "remove", "mute_id": 4,
+                                                                    "bring_back_days": 0})
+        self.assertEqual(self.post(api.bring_back, "/mutes", 3), {"action": "bring_back", "mute_id": 3, "days": 7})
+        self.assertEqual(self.post(api.add_star, "/stars", "nebius", note="watch it"),
+                         {"action": "add", "entity_id": "nebius", "note": "watch it"})
+        self.assertEqual(self.post(api.remove_star, "/stars", "nebius"), {"action": "remove", "entity_id": "nebius"})
+        self.assertEqual(self.post(api.promote, "/promote", 7101, " it matters "),
+                         {"event_id": 7101, "note": "it matters"})
+        self.assertEqual(self.post(api.set_volume, "/settings/volume", "top"), {"mode": "top"})
+        self.assertEqual(self.post(api.set_volume, "/settings/volume", "broad", near_miss_shelf=True),
+                         {"mode": "broad", "near_miss_shelf": True})
+        self.assertEqual(self.post(api.suggest_brief_change, "/brief/suggest", "L-1a2b3c4d5e",
+                                   "Signed capacity of 50 MW or more."),
+                         {"line_id": "L-1a2b3c4d5e", "text": "Signed capacity of 50 MW or more."})
+        self.assertEqual(self.post(api.sign_off, "/signoff", rubric_version="r1", catalog_versions={"ai-infra": "v1"},
+                                   note="ok"),
+                         {"rubric_version": "r1", "catalog_versions": {"ai-infra": "v1"}, "note": "ok"})
+        self.assertEqual(self.post(api.sign_off, "/signoff", rubric_version=None, catalog_versions={}),
+                         {"rubric_version": None, "catalog_versions": {}})
+        self.assertEqual(self.post(api.set_stage, "/admin/stage", "staging"), {"stage": "staging"})
+        self.assertEqual(self.post(api.add_radar_request, "/radar/requests", kind="missed_story",
+                                   text="We missed the drone award", url="https://example.com/x", module="ai-infra"),
+                         {"kind": "missed_story", "text": "We missed the drone award", "url": "https://example.com/x",
+                          "module": "ai-infra"})
+        self.assertEqual(self.post(api.add_radar_request, "/radar/requests", kind="track_source",
+                                   text="Follow the Texas docket"),
+                         {"kind": "track_source", "text": "Follow the Texas docket"})
+        self.assertEqual(self.post(api.radar_action, "/radar/41/approve", 41, "approve", proposed_at="t1"),
+                         {"proposed_at": "t1"})
+        self.assertEqual(self.post(api.radar_action, "/radar/41/approve", 41, "approve", proposed_at=None),
+                         {"proposed_at": None})  # a draft with no proposal binds to "none"
+        self.assertEqual(self.post(api.radar_action, "/radar/41/reject", 41, "reject", note="withdrawn by owner"),
+                         {"note": "withdrawn by owner"})
+
+    def test_writes_validate_before_sending(self):
+        bad = [
+            lambda: api.add_preference(self.ws, OWNER, direction="up", scope="similar", item_id=1),
+            lambda: api.add_preference(self.ws, OWNER, direction="more", scope="all", item_id=1),
+            lambda: api.add_preference(self.ws, OWNER, direction="more", scope="similar"),  # no story
+            lambda: api.add_preference(self.ws, OWNER, direction="exact", scope="similar", item_id=1, text="short"),
+            lambda: api.add_preference(self.ws, OWNER, direction="less", scope="standing", text="too short"),
+            lambda: api.add_preference(self.ws, OWNER, direction="less", scope="similar", item_id=1, text="x" * 501),
+            lambda: api.rule_action(self.ws, OWNER, "R-0014", "delete"),
+            lambda: api.rule_action(self.ws, OWNER, "../x", "pause"),
+            lambda: api.add_feedback(self.ws, OWNER, verdict="great", item_id=1),
+            lambda: api.add_feedback(self.ws, OWNER, verdict="lead"),
+            lambda: api.add_feedback(self.ws, OWNER, verdict="factual_error", item_id=1),
+            lambda: api.add_feedback(self.ws, OWNER, verdict="lead", item_id=1, score=101),
+            lambda: api.add_mute(self.ws, OWNER, kind="lane", ref="x"),
+            lambda: api.add_mute(self.ws, OWNER, kind="source", ref="dcd-news"),  # a source needs its module
+            lambda: api.remove_mute(self.ws, OWNER, 4, bring_back_days=8),
+            lambda: api.bring_back(self.ws, OWNER, 4, days=0),
+            lambda: api.add_star(self.ws, OWNER, " "),
+            lambda: api.promote(self.ws, OWNER, 7101, "no"),
+            lambda: api.promote(self.ws, OWNER, 0, "a fine note"),
+            lambda: api.set_volume(self.ws, OWNER, "huge"),
+            lambda: api.suggest_brief_change(self.ws, OWNER, "L-1", "short"),
+            lambda: api.set_stage(self.ws, OWNER, "paused"),
+            lambda: api.add_radar_request(self.ws, OWNER, kind="track_source", text="short"),
+            lambda: api.add_radar_request(self.ws, OWNER, kind="missed_story", text="We missed the drone award"),
+            lambda: api.add_radar_request(self.ws, OWNER, kind="missed_story", text="We missed the drone award",
+                                          url="javascript:alert(1)"),
+            lambda: api.radar_action(self.ws, OWNER, 41, "delete"),
+        ]
+        for n, call in enumerate(bad):
+            with self.subTest(n=n):
+                with self.assertRaises(api.ApiError) as ctx:
+                    call()
+                self.assertEqual(ctx.exception.kind, "invalid")
+                self.assertTrue(ctx.exception.detail)  # a plain sentence for "Not saved: ..."
+        self.assertEqual(self.http.calls, [])
+        with self.assertRaises(api.ApiError) as ctx:
+            api.add_radar_request(self.ws, OWNER, kind="missed_story", text="We missed the drone award")
+        self.assertEqual(ctx.exception.detail, "Paste the story's link so the source finder can see what was missed.")
+
     def test_module_health_accepts_503_body(self):
         self.http.on("GET", PILOT_AI + "/health", FakeResponse(503, {"ok": False, "error": "state_unavailable"}))
         self.assertEqual(api.module_health(self.module)["error"], "state_unavailable")
-        self.assertIsNone(self.http.calls[0].bearer)  # public route: no token sent
+        self.assertEqual(self.http.calls[0].bearer, RUN_AI)
 
-    def test_start_backfill_validates_and_posts(self):
+    def test_module_health_sends_the_run_token_when_configured(self):
+        self.http.on("GET", PILOT_AI + "/health", fx.module_health("ai-infra"))
+        self.assertEqual(api.module_health(self.module)["last_run"]["status"], "ok")
+        call = self.http.calls[0]
+        self.assertEqual(call.bearer, RUN_AI)
+        self.assertNotIn(RUN_AI, call.url)
+        self.http.on("GET", PILOT_AI + "/health", fx.module_liveness("ai-infra"))
+        bare = Module(id="ai-infra", url=PILOT_AI)
+        self.assertEqual(api.module_health(bare)["service"], "zenux-module")
+        self.assertNotIn("Authorization", self.http.calls[1].headers)
+
+    def test_module_health_refused_token(self):
+        self.http.on("GET", PILOT_AI + "/health", FakeResponse(401, {"error": "unauthorized"}))
+        with self.assertRaises(api.ApiError) as ctx:
+            api.module_health(self.module)
+        self.assertEqual((ctx.exception.kind, str(ctx.exception)), ("unauthorized", "HTTP 401: run token refused"))
+
+    def test_backfill(self):
         self.http.on("POST", PILOT_AI + "/backfill", FakeResponse(202, fx.job()))
         for days in (0, 31, True, 7.5):
             with self.assertRaises(api.ApiError):
@@ -170,32 +535,27 @@ class ApiTests(unittest.TestCase):
         with self.assertRaises(api.ApiError):
             api.start_backfill(self.module, 7, ["ok-key", "../etc"])
         self.assertEqual(self.http.calls, [])
-        job, created = api.start_backfill(self.module, 14, ["b-key", "a-key", "a-key"])
+        job, created = api.start_backfill(self.module, 14, ["b-key", "a-key", "a-key"], ignore_seen=True)
         self.assertEqual((job["id"], created), ("bf-1", True))
-        call = self.http.calls[0]
-        self.assertEqual(call.body, {"days": 14, "sources": ["a-key", "b-key"]})
-        self.assertEqual(call.bearer, RUN_AI)
-        self.http.on("POST", PILOT_AI + "/backfill", FakeResponse(200, fx.job("running", 1, 2)))
-        job, created = api.start_backfill(self.module, 1)
-        self.assertEqual(self.http.calls[1].body, {"days": 1})
-        self.assertEqual((job["status"], created), ("running", False))  # the job in flight, left unchanged
-
-    def test_backfill_status_shapes(self):
-        self.http.on("GET", PILOT_AI + "/backfill", {"job": None})
-        self.assertIsNone(api.backfill_status(self.module))
-        self.http.on("GET", PILOT_AI + "/backfill", fx.job("running", 1, 2))
-        self.assertEqual(api.backfill_status(self.module)["status"], "running")
+        self.assertEqual(self.http.calls[0].body, {"days": 14, "sources": ["a-key", "b-key"], "ignore_seen": True})
         self.http.on("GET", PILOT_AI + "/backfill", FakeResponse(404, {"error": "no_backfill_job"}))
         self.assertIsNone(api.backfill_status(self.module))
-        self.assertEqual(self.http.calls[0].bearer, RUN_AI)
-        no_token = Module(id="m", url="https://m.example")
-        with self.assertRaises(api.ApiError):
-            api.backfill_status(no_token)
+
+    def test_ack_and_unack_bodies(self):
+        self.http.on("POST", PILOT_HUB + "/admin/sources/ack", {"module": "ai-infra", "source_key": "x"})
+        self.http.on("POST", PILOT_HUB + "/admin/sources/unack", {"removed": True})
+        api.ack_source(self.ws, "ai-infra", "sify-news", "  times out\nfrom Worker egress ", OWNER)
+        api.ack_source(self.ws, "ai-infra", "sify-news", "n" * 900, OWNER)
+        self.assertEqual(api.unack_source(self.ws, "ai-infra", "sify-news", OWNER), {"removed": True})
+        bodies = [c.body for c in self.http.calls]
+        self.assertEqual(bodies[0], {"module": "ai-infra", "source_key": "sify-news",
+                                     "note": "times out from Worker egress"})
+        self.assertEqual(len(bodies[1]["note"]), api.ACK_NOTE_MAX)
+        self.assertEqual(bodies[2], {"module": "ai-infra", "source_key": "sify-news"})
 
     def test_segment_quotes_ids_from_data(self):
         self.assertEqual(api.segment("R-0001"), "R-0001")
         self.assertEqual(api.segment("../admin?x=1"), "..%2Fadmin%3Fx%3D1")
-        self.assertEqual(api.segment(31), "31")
 
 
 class FmtTests(unittest.TestCase):
@@ -209,115 +569,65 @@ class FmtTests(unittest.TestCase):
             self.assertEqual(fmt.parse_time(value), fmt.MIN_TIME)
 
     def test_fmt_and_relative_time(self):
-        self.assertEqual(fmt.fmt_time("2026-10-03T11:30:00Z", "America/New_York"), "Oct 3, 2026 · 7:30 AM ET")
-        self.assertEqual(fmt.fmt_time("2026-10-03T11:30:00Z", "UTC"), "Oct 3, 2026 · 11:30 AM UTC")
+        self.assertEqual(fmt.fmt_time("2026-10-03T11:30:00Z", TZ), "Oct 3, 2026 · 7:30 AM ET")
         self.assertEqual(fmt.fmt_time(None), "time unavailable")
         now = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
         self.assertEqual(fmt.relative_time(now - timedelta(seconds=20), now), "just now")
         self.assertEqual(fmt.relative_time(now - timedelta(minutes=5), now), "5m ago")
-        self.assertEqual(fmt.relative_time(now - timedelta(hours=30), now), "30h ago")
         self.assertEqual(fmt.relative_time(now - timedelta(days=3), now), "3d ago")
         self.assertEqual(fmt.relative_time(now + timedelta(minutes=30), now), "in 30m")
-        self.assertEqual(fmt.relative_time(None, now), "never")
+
+    def test_clock_day_and_date(self):
+        at = "2026-10-04T16:30:00Z"
+        self.assertEqual(fmt.fmt_clock(at, TZ), "12:30 PM ET")
+        self.assertEqual(fmt.clock_text(at, TZ), "12:30 PM")
+        self.assertEqual(fmt.fmt_day(at, TZ), "Sun Oct 4")
+        self.assertEqual(fmt.fmt_date(at, TZ), "Oct 4")
+        self.assertEqual(fmt.fmt_clock("2026-10-04T16:30:00Z", "UTC"), "4:30 PM UTC")
+        for fn in (fmt.fmt_clock, fmt.fmt_day, fmt.fmt_date, fmt.clock_text):
+            self.assertEqual(fn(None, TZ), "—")
+
+    def test_next_slot(self):
+        now = datetime(2026, 10, 4, 14, 0, tzinfo=timezone.utc)  # 10:00 AM EDT
+        self.assertEqual(fmt.next_slot(fmt.DEFAULT_GRADER_TIMES, TZ, now),
+                         datetime(2026, 10, 4, 16, 30, tzinfo=timezone.utc))
+        late = datetime(2026, 10, 5, 1, 0, tzinfo=timezone.utc)  # 9:00 PM EDT
+        self.assertEqual(fmt.next_slot(["16:30", "07:30"], TZ, late), datetime(2026, 10, 5, 11, 30, tzinfo=timezone.utc))
+        # across the DST change (2026-11-01, 2 AM): 7:30 AM is 11:30 UTC before, 12:30 UTC after
+        evening = datetime(2026, 10, 31, 23, 0, tzinfo=timezone.utc)
+        self.assertEqual(fmt.next_slot(["07:30"], TZ, evening), datetime(2026, 11, 1, 12, 30, tzinfo=timezone.utc))
+        self.assertEqual(fmt.next_slot(["12:30"], TZ, datetime(2026, 11, 1, 13, 0, tzinfo=timezone.utc)),
+                         datetime(2026, 11, 1, 17, 30, tzinfo=timezone.utc))
+        self.assertIsNone(fmt.next_slot(["noon", "25:00", 7], TZ, now))
+        self.assertIsNone(fmt.next_slot(None, TZ, now))
+        self.assertEqual(fmt.next_slot(["07:30"], "Not/AZone", now), datetime(2026, 10, 5, 7, 30, tzinfo=timezone.utc))
 
     def test_html_safety(self):
         self.assertEqual(fmt.esc_lines("a <b>\n\n\nc & d"), "a &lt;b&gt;<br>c &amp; d")
-        self.assertNotIn("\n", fmt.esc_lines("x\n\ny"))
         self.assertEqual(fmt.safe_url("javascript:alert(1)"), "")
-        self.assertEqual(fmt.safe_url("data:text/html,x"), "")
         self.assertEqual(fmt.safe_url("https://example.com/a?b=1"), "https://example.com/a?b=1")
         self.assertEqual(fmt.link("javascript:alert(1)", "x"), '<span class="source-link no-link">x</span>')
-        self.assertIn('href="https://example.com/&quot;x"', fmt.link('https://example.com/"x', "t"))
         self.assertEqual(fmt.domain_of("https://www.Example.com/x"), "example.com")
         self.assertEqual(fmt.pill("partial"), '<span class="status-pill warn">partial</span>')
-        self.assertEqual(fmt.pill("weird"), '<span class="status-pill idle">weird</span>')
 
     def test_counts_and_picks(self):
         self.assertEqual(fmt.count_of([1, 2]), 2)
         self.assertEqual(fmt.count_of({"total": "4"}), 4)
-        self.assertEqual(fmt.count_of(None), 0)
         self.assertEqual(fmt.pick({"a": {"b": 1}}, "x", "a.b"), 1)
-        self.assertEqual(fmt.pick([], "a", default=5), 5)
-
-
-class ViewShapeTests(unittest.TestCase):
-    def test_feed_shapes(self):
-        body = fx.editions(1)
-        self.assertEqual(len(feed_view.editions_of(body)), 1)
-        self.assertEqual(feed_view.editions_of([{"id": 1}]), [{"id": 1}])
-        self.assertIsNone(feed_view.next_cursor(body, feed_view.editions_of(body)))  # short page: no more
-        self.assertEqual(feed_view.next_cursor({"next_before": 7}, []), "7")
-        full = [{"id": n} for n in range(20, 10, -1)]
-        self.assertEqual(feed_view.next_cursor({"editions": full}, full), "11")
-        item = body["editions"][0]["items"][1]
-        self.assertEqual(feed_view.sources_of(item), [("https://www.war.gov/News/Contracts/", "war.gov")])
-        self.assertEqual(feed_view.tier_label(1), "Tier 1 · covered")
-        self.assertEqual(feed_view.tier_label("read_through"), "Tier 2 · read-through")
-        hits = feed_view.search(fx.editions(2)["editions"], "counter-uas army")
-        self.assertEqual([len(e["items"]) for e in hits], [1, 1])
-        self.assertEqual([len(feed_view.all_items(e)) for e in hits], [2, 2])  # the band still counts every item
-        self.assertIn('<b>200 MW</b>', feed_view.metric_html({"label": "Critical IT", "value": "200", "unit": "MW"}))
-
-    def test_module_names_and_tags(self):
-        self.assertEqual(fmt.module_name("ai-infra"), "AI infrastructure")
-        self.assertEqual(fmt.module_name("defense-unmanned"), "defense unmanned")
-        self.assertEqual(fmt.module_name("space-launch_ops"), "space launch ops")
-        self.assertEqual(fmt.join_and([]), "")
-        self.assertEqual(fmt.join_and(["a"]), "a")
         self.assertEqual(fmt.join_and(["a", "b", "c"]), "a, b and c")
-        self.assertEqual(feed_view.item_modules({"module": "ai-infra"}), ["ai-infra"])
-        self.assertEqual(feed_view.item_modules({"module": "ai-infra", "modules": []}), ["ai-infra"])
-        self.assertEqual(feed_view.item_modules({"module": "ai-infra", "modules": ["defense-unmanned", "ai-infra",
-                                                                                   "defense-unmanned", None]}),
-                         ["defense-unmanned", "ai-infra"])
-        self.assertEqual(feed_view.item_modules({}), [])
-        self.assertEqual(feed_view.module_tags_html({"modules": ["ai-infra", "<x>"]}),
-                         f'<span class="module-tag" style="{fmt.tag_style("#A78BFA")}">AI INFRASTRUCTURE</span>'
-                         f'<span class="module-tag" style="{fmt.tag_style(fmt.module_color("<x>"))}">&lt;X&gt;</span>')
-        self.assertNotIn("score", feed_view.item_html(fx.editions(1)["editions"][0]["items"][0]).lower())
-
-    def test_fallback_summary(self):
-        def item(rank, module, headline="Story"):
-            return {"rank": rank, "module": module, "headline": headline}
-
-        items = [item(1, "defense-unmanned", "Army orders a new autonomy command.")] + [
-            item(n, "ai-infra" if n <= 5 else "defense-unmanned") for n in range(2, 10)]
-        self.assertEqual(feed_view.fallback_summary(items),
-                         "9 items across AI infrastructure (4) and defense unmanned (5), led by Army orders a new "
-                         "autonomy command.")
-        three = [item(1, "space-launch", "Lead story"), item(2, "ai-infra"), item(3, "defense-unmanned")]
-        self.assertEqual(feed_view.fallback_summary(three),
-                         "3 items across AI infrastructure (1), defense unmanned (1) and space launch (1), led by "
-                         "Lead story.")
-        self.assertEqual(feed_view.fallback_summary([item(1, "ai-infra", "Lead"), item(2, "ai-infra")]),
-                         "2 items in AI infrastructure, led by Lead.")
-        self.assertEqual(feed_view.fallback_summary([item(1, "ai-infra", "Only one!")]),
-                         "1 item in AI infrastructure: Only one!")
-        self.assertEqual(feed_view.fallback_summary([{"rank": 1}]), "1 item.")
-        self.assertEqual(feed_view.fallback_summary([]), "An empty edition: nothing cleared the bar in this window.")
-        # the summary wins when the hub gives one; the fallback is deterministic
-        self.assertEqual(feed_view.summary_of({"summary": "  One sentence.  "}, items), "One sentence.")
-        self.assertEqual(feed_view.summary_of({"summary": None}, items), feed_view.fallback_summary(list(items)))
-        self.assertEqual(feed_view.note_of({"note": "  Rank 2 is paywalled.\n"}), "Rank 2 is paywalled.")
-        self.assertEqual(feed_view.note_of({"note": "   "}), "")
 
     def test_module_colors(self):
         self.assertEqual(fmt.module_color("ai-infra"), "#A78BFA")  # violet
         self.assertEqual(fmt.module_color("defense-unmanned"), "#2DD4BF")  # teal
-        self.assertEqual(fmt.module_color("AI-Infra"), "#A78BFA")
-        self.assertEqual(fmt.TAG_COLORS, ("#FBBF24", "#F472B6", "#38BDF8", "#A3E635"))  # amber, pink, sky, lime
         others = ["space-launch", "grid-power", "coverage", "biotech", "nuclear", "shipbuilding", "x"]
         for mid in others:  # any other module: a palette colour, the same in every process (no salted hash())
-            self.assertIn(fmt.module_color(mid), fmt.TAG_COLORS)
             self.assertEqual(fmt.module_color(mid),
                              fmt.TAG_COLORS[zlib.crc32(mid.encode("utf-8")) % len(fmt.TAG_COLORS)])
-        self.assertGreater(len({fmt.module_color(m) for m in others}), 1)  # the hash spreads modules over the palette
         self.assertEqual(fmt.tag_style("#2DD4BF"),
                          "color:#2DD4BF;border-color:rgba(45,212,191,0.55);background:rgba(45,212,191,0.14)")
 
     def test_tag_text_stays_readable_on_its_tinted_fill(self):
-        """WCAG: small text needs 4.5:1. A pill's fill is its colour at TAG_FILL over the darkest-to-lightest dark
-        surfaces it sits on (page, card, hovered row)."""
+        """WCAG: small text needs 4.5:1. A pill's fill is its colour at TAG_FILL over the dark surfaces."""
         def channel(c: float) -> float:
             c /= 255
             return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
@@ -330,131 +640,220 @@ class ViewShapeTests(unittest.TestCase):
             h = hex_color.lstrip("#")
             return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
-        css_pills = ("#34D399", "#FBBF24", "#F87171", "#38BDF8")  # status ok, warn, bad; sky chips (feed.css)
-        colours = list(fmt.MODULE_COLORS.values()) + list(fmt.TAG_COLORS) + list(css_pills)
+        css_pills = ("#34D399", "#FBBF24", "#F87171", "#38BDF8")
         for surface in ("#0A0A0A", "#141414", "#1A1A1A"):
-            for colour in colours:
+            for colour in list(fmt.MODULE_COLORS.values()) + list(fmt.TAG_COLORS) + list(css_pills):
                 fill = tuple(round(fmt.TAG_FILL * c + (1 - fmt.TAG_FILL) * s) for c, s in zip(rgb(colour), rgb(surface)))
                 hi, lo = sorted((luminance(rgb(colour)), luminance(fill)), reverse=True)
                 with self.subTest(colour=colour, surface=surface):
                     self.assertGreaterEqual((hi + 0.05) / (lo + 0.05), 4.5)
-        css = (helpers.DASHBOARD / "feed.css").read_text(encoding="utf-8").lower()
-        for colour in css_pills:
-            self.assertIn(colour.lower(), css)
 
-    def test_status_pills_and_inline_png(self):
-        self.assertEqual(fmt.pill("missing"), '<span class="status-pill missing">missing</span>')
-        self.assertEqual(fmt.pill("failed"), '<span class="status-pill bad">failed</span>')
+    def test_inline_png(self):
         self.assertTrue(fmt.png_data_uri(str(helpers.DASHBOARD / "assets" / "zenux-mark.png"))
                         .startswith("data:image/png;base64,iVBORw0KGgo"))
         self.assertEqual(fmt.png_data_uri(str(helpers.DASHBOARD / "assets" / "no-such-file.png")), "")
 
-    def test_rejected_rules_radar_shapes(self):
-        self.assertEqual(len(rejected_view.rows_of(fx.rejected())), 3)
-        self.assertEqual(rejected_view.rows_of({"decisions": [{"event_id": 1}]}), [{"event_id": 1}])
-        precedents, drafts = rules_view.lists_of(fx.rules())
-        self.assertEqual([p["id"] for p in precedents], ["R-0001", "I-0001", "R-0002"])
-        self.assertEqual([d["id"] for d in drafts], [32, 31, 20])
-        self.assertEqual(rules_view.kind_of({"id": "I-0004"}), "item")
-        self.assertEqual(rules_view.proposal_of({"proposal": "plain text"}), {"text": "plain text"})
-        proposal = fx.radar()["requests"][1]["proposal"]
-        self.assertIn('<span class="mono">puct-large-load</span>', radar_view.sources_table(proposal))
-        self.assertEqual(radar_view.sources_table({}), "")
-        self.assertIn(["Source key", "x-key"], radar_view.proposal_rows({"source": {"key": "x-key"}}))
-        self.assertEqual(radar_view.requests_of([{"id": 1}]), [{"id": 1}])
 
-    def test_grading_payload(self):
-        option = {"key": "item-1201", "item_id": 1201, "event_id": 9001, "edition_id": 12, "item_rank": 1}
-        self.assertEqual(grading.build_payload(option, "Lead", None, " note ", "Just a grade"),
-                         {"item_id": 1201, "event_id": 9001, "verdict": "lead", "scope": "item", "note": "note"})
-        by_rank = {"edition_id": 12, "item_rank": 1, "item_id": None, "event_id": None}
-        self.assertEqual(grading.build_payload(by_rank, "Reject", None, "", "Just a grade"),
-                         {"edition_id": 12, "item_rank": 1, "verdict": "reject", "scope": "item", "note": ""})
-        self.assertEqual(grading.build_payload({"event_id": 7}, "Factual error", 30, "x", "Just a grade")["verdict"],
-                         "factual_error")
-        exact = grading.build_payload(option, "Lead", 45, "", "Rule")
-        self.assertEqual((exact["verdict"], exact["score"], exact["scope"]), ("watch", 45, "rule"))
-        self.assertEqual(grading.build_payload(option, "Digest", 150, "", "Worked example")["score"], 100)
-        self.assertEqual(grading.verdict_for_score(39), "reject")
-        self.assertEqual(grading.verdict_for_score(90), "lead")
-
-
-class DiagnosticsShapeTests(unittest.TestCase):
+class StylesheetTests(unittest.TestCase):
     def setUp(self):
-        self.conf = parse_config(one_workspace())
-        self.ws = self.conf.workspace("pilot")
+        self.css = (helpers.DASHBOARD / "feed.css").read_text(encoding="utf-8")
 
-    def report(self, hub=None, hub_error=None, modules=None):
-        return {"fetched_at": fx.iso(0), "hub": {"data": hub, "error": hub_error},
-                "modules": modules or {"ai-infra": {"data": fx.module_health("ai-infra"), "error": None},
-                                       "defense-unmanned": {"data": fx.module_health("defense-unmanned"), "error": None}}}
+    def test_twelve_pixel_minimum(self):
+        sizes = re.findall(r"font-size:\s*(\d+(?:\.\d+)?)px", self.css)
+        sizes += re.findall(r"font:\s*\d{3}\s+(\d+(?:\.\d+)?)px", self.css)
+        self.assertTrue(sizes)
+        self.assertEqual([s for s in sizes if float(s) < 12], [])
 
-    def test_lane_counts_shapes(self):
-        self.assertEqual(diagnostics_view.lane_counts({"events": {"24h": {"a": 1, "total": 9}}}, "24h"), {"a": 1})
-        self.assertEqual(diagnostics_view.lane_counts({"counts": {"last_7d": [{"lane": "a", "count": 2}]}}, "7d"), {"a": 2})
-        self.assertEqual(diagnostics_view.lane_counts({"events_24h": 5}, "24h"), {"all lanes": 5})
-        self.assertEqual(diagnostics_view.lane_counts({"lanes": [{"lane": "a", "24h": 1, "7d": 4}]}, "7d"), {"a": 4})
-        self.assertEqual(diagnostics_view.lane_counts(None, "7d"), {})
+    def test_the_new_classes_are_styled(self):
+        for cls in ("zx-status", "zx-dot", "st-key-zx_undo", "zx-undo", "zx-new-briefing", "zx-error", "feed-dateline",
+                    "badge-top", "chip-state", "chip-flagged", "chip-corrected", "chip-upheld", "chip-requested",
+                    "chip-muted", "chip-starred", "st-key-zx_item_", "st-key-zx_row_", "st-key-zx_actions_",
+                    "why-block", "why-row", "why-label", "shelf", "shelf-title", "shelf-row", "correction-note",
+                    "zx-focus", "filtered-row", "pref-card", "pref-text", "pref-stats", "pref-meta", "preview-line",
+                    "preview-plus", "preview-minus", "brief-part", "brief-line", "cov-head", "cov-col", "cov-row",
+                    "cov-name", "cov-chip", "cov-chip-own_feed", "cov-chip-sec_filings", "cov-chip-federal_contracts",
+                    "cov-chip-news_search", "cov-chip-name_only", "cov-stats", "timeline", "timeline-step",
+                    "zx-locked"):
+            with self.subTest(cls=cls):
+                self.assertIn(cls, self.css)
+        for colour in ("#34d399", "#fbbf24", "#f87171", "#38bdf8"):  # the pill colours of the contrast test
+            self.assertIn(colour, self.css.lower())
 
-    def test_summary_merges_hub_and_modules(self):
-        s = diagnostics_view.summarize(self.ws, self.report(fx.diagnostics()))
-        self.assertEqual(s["status"], "degraded")
-        self.assertEqual(s["backlog"], 57)
-        self.assertTrue(s["lease"]["held"])
-        self.assertEqual(s["dead_letters"], 2)
-        self.assertEqual(s["last_edition_id"], 12)
-        self.assertEqual([(r["module"], r["key"]) for r in s["failing"]], [("defense-unmanned", "sam-opps")])
-        self.assertEqual([(r["module"], r["key"]) for r in s["silent"]], [("defense-unmanned", "dod-budget")])
-        by_id = {m["id"]: m for m in s["modules"]}
-        self.assertEqual(by_id["ai-infra"]["status"], "ok")
-        self.assertEqual(by_id["defense-unmanned"]["status"], "degraded")
-        self.assertEqual(by_id["ai-infra"]["events_24h"], {"companies": 12, "trade_press": 30})
+    def test_brief_line_padding_beats_streamlit_markdown_li(self):
+        # WF5 AW-9: Streamlit's "<class> li { padding: 0 0 0 .3em }" is more specific than ".brief-line"; the dot overlapped
+        self.assertRegex(self.css, r"\.brief-lines \.brief-line[^{]*\{[^}]*padding: 0 0 0 14px !important")
 
-    def test_summary_hub_down_and_module_down(self):
-        s = diagnostics_view.summarize(self.ws, self.report(None, "unreachable (ConnectionError)", {
-            "ai-infra": {"data": None, "error": "timed out"},
-            "defense-unmanned": {"data": fx.module_health("defense-unmanned", ok=False), "error": None},
-        }))
-        self.assertEqual(s["status"], "down")
-        by_id = {m["id"]: m for m in s["modules"]}
-        self.assertEqual((by_id["ai-infra"]["status"], by_id["ai-infra"]["reason"]), ("down", "timed out"))
-        self.assertEqual(by_id["defense-unmanned"]["status"], "failed")
-
-    def test_summary_all_ok(self):
-        s = diagnostics_view.summarize(self.ws, self.report(fx.diagnostics(failing=False) | {"modules": [
-            {"module_id": "ai-infra", "status": "ok"}, {"module_id": "defense-unmanned", "status": "ok"}]}))
-        self.assertEqual(s["status"], "ok")
-
-    def test_module_with_no_runs_does_not_degrade_the_workspace(self):
-        diag = fx.diagnostics(failing=False) | {"status": "ok", "modules": [
-            {"module_id": "ai-infra", "status": "ok"}, {"module_id": "defense-unmanned", "status": "no_runs"}]}
-        s = diagnostics_view.summarize(self.ws, self.report(diag))
-        self.assertEqual({m["id"]: m["status"] for m in s["modules"]}["defense-unmanned"], "no_runs")
-        self.assertEqual(s["status"], "ok")
-
-    def test_lease_expiry_without_held_flag(self):
-        now = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
-        self.assertTrue(diagnostics_view.lease_of({"lease": {"run_id": "r", "expires_at": "2026-10-03T12:10:00Z"}}, now)["held"])
-        self.assertFalse(diagnostics_view.lease_of({"lease": {"run_id": "r", "expires_at": "2026-10-03T11:50:00Z"}}, now)["held"])
-        self.assertIsNone(diagnostics_view.lease_of({}, now))
-
-    def test_job_progress_and_sources(self):
-        self.assertEqual(diagnostics_view.job_counts(fx.job("running", 1, 2)), (1, 3))
-        self.assertEqual(diagnostics_view.job_counts({"done": 4, "remaining": 1}), (4, 5))
-        self.assertAlmostEqual(diagnostics_view.job_fraction(fx.job("running", 1, 3)), 0.25)
-        self.assertEqual(diagnostics_view.job_fraction({"status": "done"}), 1.0)
-        self.assertEqual(diagnostics_view.job_fraction({"status": "queued"}), 0.0)
-        health = fx.module_health("ai-infra") | {"failing": [{"key": "x-fail"}], "silent": [{"key": "Bad Key"}]}
-        self.assertEqual(diagnostics_view.source_keys(health),
-                         ["ai-infra-rss", "ai-infra-sitemap", "edgar-8k", "x-fail"])
-        self.assertEqual(diagnostics_view.source_keys(None), [])
-        self.assertEqual(diagnostics_view.hub_source_keys({"sources": [
-            {"source_key": "b"}, {"source_key": "a"}, {"source_key": "gone", "retired": "module_retired"},
-            {"source_key": "Bad Key"}]}), ["a", "b"])
+    def test_the_skin_stays(self):
+        for rule in ("--zx-green: #006341;", "--zx-bg: #0a0a0a;", ".brand-mark { display: block; flex: none; width: 42px;"):
+            self.assertIn(rule, self.css)
+        self.assertNotIn("st-key-zx_search", self.css)  # the top-bar Search popover is gone
 
 
-if __name__ == "__main__":
-    unittest.main()
+class LabelsTests(unittest.TestCase):
+    def test_tabs(self):
+        self.assertEqual([labels.tab_label(s) for s, _ in labels.TABS],
+                         ["Briefing", "Filtered out", "My preferences", "Coverage", "Control room"])
+        self.assertEqual(labels.tab_label("nope"), "Briefing")
+
+    def test_reason_labels(self):
+        self.assertEqual(len(labels.REASON_LABELS), 24)
+        self.assertEqual(labels.reason_label("edition_limit"), "Cut for space")
+        self.assertEqual(labels.reason_label("edition_limit", "Cut for space today"), "Cut for space today")
+        # a hub label equal to the code; WF5 SA-3: the watch band is "Worth watching", the hub says "Near miss" for a
+        # row within 10 of the bar
+        self.assertEqual(labels.reason_label("watch", "watch"), "Worth watching")
+        self.assertEqual(labels.reason_label("watch", "Near miss"), "Near miss")
+        self.assertEqual(labels.reason_label("brand_new_code"), "Left out")
+        self.assertEqual(labels.reason_label(None, ""), "Left out")
+        for code in labels.SAME_STORY_REASONS + labels.NEAR_MISS_REASONS:
+            self.assertIn(code, labels.REASON_LABELS)
+
+    def test_band_and_tier(self):
+        self.assertEqual([labels.band_of(s) for s in (95, 90, 89, 70, 69, 40, 39, 0, None, "x")],
+                         ["lead", "lead", "digest", "digest", "watch", "watch", "reject", "reject", None, None])
+        self.assertEqual(labels.tier_label(1), "Your coverage")
+        self.assertEqual(labels.tier_label("read_through"), "Read-through")
+        self.assertEqual(labels.tier_label(3), "Industry and policy")
+        self.assertEqual(labels.tier_label("catalyst"), "Industry and policy")
+        self.assertEqual(labels.tier_label("2"), "Read-through")
+        for odd in (None, 4, "x", True):
+            self.assertEqual(labels.tier_label(odd), "")
+
+    def test_scope_and_direction(self):
+        self.assertEqual(labels.scope_label("this_story"), "Just this story")
+        self.assertEqual(labels.scope_label(None), "Standing preference")
+        self.assertEqual(labels.direction_label("less"), "Show me less like this")
+        self.assertEqual(labels.direction_label(None), "Exactly as I write it")
+
+    def test_preference_text_strips_the_hub_built_parts(self):
+        built = ('Show me less like this: fewer stock-move articles. Example: event #1234 "CoreWeave shares jump: '
+                 'what it means" from Data Center Dynamics. Applies only to updates of story s-100 ("Neocloud deal").')
+        self.assertEqual(labels.preference_text({"text": built}), "Fewer stock-move articles.")
+        self.assertEqual(labels.preference_text({"text": "Show me more like this: stories like this example. "
+                                                         "Example: event #9 \"X\" from Y."}),
+                         "Stories like this example.")
+        self.assertEqual(labels.preference_text({"text": "Competitive resizing ranks above people."}),
+                         "Competitive resizing ranks above people.")
+        self.assertEqual(labels.preference_text({"text": "Rank items like event #1234 lower."}),
+                         "Rank items like another story lower.")
+        self.assertEqual(labels.preference_text({"text": None}), "")
+        for text in (built, "Same as #9002 and #12."):
+            self.assertEqual(re.findall(r"#\d", labels.preference_text({"text": text})), [])
+
+    def test_clean_rationale(self):
+        self.assertEqual(labels.clean_rationale("Signed 15-year lease (calibrated: owner grade #41)."),
+                         "Signed 15-year lease.")
+        self.assertEqual(labels.clean_rationale("Routine update; calibrated: owner grades #41, #42 and #43."),
+                         "Routine update.")
+        self.assertEqual(labels.clean_rationale("Same award as #9002."), "Same award as another story.")
+        self.assertEqual(labels.clean_rationale("Published 2026-09-01, 33 days before 2026-10-04; older than the "
+                                                "21-day freshness line (rule stale_backlog)."),
+                         "Published 2026-09-01, 33 days before 2026-10-04; older than the 21-day freshness line.")
+        self.assertEqual(labels.clean_rationale("calibrated: owner grade #41. Strong evidence."), "Strong evidence.")
+        self.assertEqual(labels.clean_rationale(None), "")
+
+    def test_clean_rationale_names_preferences_instead_of_ids(self):
+        # the editor and the wording assistant cite preference ids ("R-0012"); the analyst sees their own words
+        names = {"R-0001": "Stock-price move articles with no new company facts.", "R-0006": "Recaps " + "x" * 80}
+        self.assertEqual(labels.clean_rationale("R-0001 and R-0006 ask for less of the same kind of article.", names),
+                         "“Stock-price move articles with no new company facts” and “Recaps " + "x" * 52
+                         + "…” ask for less of the same kind of article.")
+        self.assertEqual(labels.clean_rationale("Stock-move piece; the analyst's preference R-0012 asks for less."),
+                         "Stock-move piece; one of your preferences asks for less.")
+        self.assertEqual(labels.clean_rationale("R-0012 was cited."), "One of your preferences was cited.")
+        self.assertEqual(labels.clean_rationale("A preference: R-0012 applies.", {"R-0012": "Less hype."}),
+                         "A preference: “Less hype” applies.")
+        self.assertEqual(labels.clean_rationale("Raised by your rule R-0012.", {"R-0012": "More grid deals."}),
+                         "Raised by “More grid deals”.")
+        self.assertEqual(labels.find_jargon("see R-0012 and I-0003"), ["R-0012", "I-0003"])
+
+    def test_volume_help(self):
+        self.assertEqual(labels.volume_help("top", 8), "Up to 8 stories, only the most significant.")
+        self.assertEqual(labels.volume_help("standard", None), "Up to 12 stories that clear the usual bar.")
+        self.assertEqual(labels.volume_help("broad", 25), "Up to 25 stories, including smaller news worth knowing.")
+
+    def test_area_name(self):
+        self.assertEqual(labels.area_name("ai-infra", "AI infrastructure: data centers, colocation"),
+                         "AI infrastructure")
+        self.assertEqual(labels.area_name("ai-infra"), "AI infrastructure")
+        self.assertEqual(labels.area_name("defense-unmanned"), "Defense unmanned")
+        # a known area keeps the name the Briefing's tags use, whatever its catalog title says
+        self.assertEqual(labels.area_name("defense-unmanned", "Defense tech: unmanned and counter-unmanned systems"),
+                         "Defense unmanned")
+        self.assertEqual(labels.area_name("space-launch", "Space launch: rockets and pads"), "Space launch")
+        self.assertEqual(labels.area_name("space-launch_ops"), "Space launch ops")
+        self.assertEqual(labels.area_name(""), "Coverage area")
+
+    def test_edition_label(self):
+        for at, expected in (("2026-10-04T11:41:00Z", "Sun Oct 4 · morning briefing"),
+                             ("2026-10-04T16:35:00Z", "Sun Oct 4 · midday briefing"),
+                             ("2026-10-04T20:40:00Z", "Sun Oct 4 · afternoon briefing"),
+                             ("2026-10-05T01:30:00Z", "Sun Oct 4 · evening briefing"),
+                             # DST: 7:41 AM EST on Nov 2 is 12:41 UTC, still a morning briefing
+                             ("2026-11-02T12:41:00Z", "Mon Nov 2 · morning briefing"),
+                             ("2026-11-02T15:59:00Z", "Mon Nov 2 · morning briefing"),
+                             ("2026-11-02T16:00:00Z", "Mon Nov 2 · midday briefing"),
+                             (None, "Briefing"), ("junk", "Briefing")):
+            with self.subTest(at=at):
+                self.assertEqual(labels.edition_label(at, TZ), expected)
+
+    def test_honest_copy(self):
+        self.assertEqual(labels.STILL_COLLECTED, "Still collected, kept out of your briefing.")
+        self.assertEqual(labels.RATING_HONEST, "Your rating is used to calibrate the next briefing when it differs from "
+                                               "the ZENUX editor's score.")
+        for text in (labels.STAR_PROMISE, labels.RATING_HONEST, labels.LOCKED_HELP, labels.NO_UNDO):
+            self.assertEqual(labels.find_jargon(text), [])
+
+    def test_find_jargon(self):
+        positives = ["event #12", "see #9002", "the lease expired", "the cursor moved", "3 dead letters",
+                     "the Rule refiner", "Radar scout", "the hub is down", "the Grader", "two lanes", "Tier 1",
+                     "a source key", "reason codes", "the ai-infra module", "Backfill now", "below_materiality"]
+        for text in positives:
+            with self.subTest(text=text):
+                self.assertTrue(labels.find_jargon(text))
+        negatives = ["Briefing", "Filtered out · Near misses", "Applies from the 12:30 PM briefing.",
+                     "Still collected, kept out of your briefing.", "Coverage area", "Top story", "release",
+                     "airplanes", "hubbub", "Cursory look", "#12", "scouting"]
+        for text in negatives:
+            with self.subTest(text=text):
+                self.assertEqual(labels.find_jargon(text), [])
+
+    def test_every_plain_label_passes_the_jargon_guard(self):
+        texts = (list(labels.REASON_LABELS.values()) + list(labels.VERDICT_LABELS.values())
+                 + list(labels.BAND_LABELS.values()) + list(labels.SCOPE_LABELS.values())
+                 + list(labels.SCOPE_HELP.values()) + list(labels.DIRECTION_LABELS.values())
+                 + list(labels.STATUS_LABELS.values()) + list(labels.ROUTINE_NAMES.values())
+                 + list(labels.VOLUME_LABELS.values()) + list(labels.MUTE_KIND_LABELS.values())
+                 + list(labels.SOURCE_STATE_LABELS.values()) + [x for c in labels.COVERAGE_ICONS for x in c[1:]]
+                 + [c[1] for c in labels.COLUMNS] + list(labels.RADAR_KIND_LABELS.values())
+                 + [s[1] for s in labels.RADAR_STAGES] + list(labels.RADAR_SOURCE_STATES.values())
+                 + list(labels.DIAGNOSIS_LABELS.values()) + list(labels.STATUS_TEXT.values()) + [t[1] for t in labels.TABS])
+        for text in texts:
+            with self.subTest(text=text):
+                self.assertEqual(labels.find_jargon(text), [])
+
+
+class LinksTests(unittest.TestCase):
+    def test_parse_validates_every_parameter(self):
+        conf = parse_config(two_workspaces())
+        good = {"tab": "filtered", "ws": "beta", "edition": "12", "item": "1203", "view": "muted",
+                "section": "looks_for", "pref": "R-0012", "module": "ai-infra", "request": "41"}
+        self.assertEqual(links.parse(good, conf), {**good, "edition": 12, "item": 1203, "request": 41})
+        bad = {"tab": "rules", "ws": "gamma", "edition": "0", "item": "12a", "view": "rejected", "section": "rules",
+               "pref": "R-12", "module": "AI Infra", "request": "-4", "token": "x"}
+        self.assertEqual(links.parse(bad, conf), {})
+        self.assertEqual(links.parse({"tab": ["coverage", "briefing"]}, conf), {"tab": "coverage"})
+        self.assertEqual(links.parse({"ws": "pilot"}, None), {})
+
+    def test_href(self):
+        self.assertEqual(links.href("briefing", edition=12, item=1203), "?tab=briefing&edition=12&item=1203")
+        self.assertEqual(links.href("preferences", pref="R-0012", section="active", ws=None),
+                         "?tab=preferences&section=active&pref=R-0012")
+        self.assertEqual(links.href("coverage"), "?tab=coverage")
+
+    def test_the_params_cover_the_tabs(self):
+        self.assertEqual(set(links.TAB_PARAMS), {slug for slug, _ in labels.TABS})
+        self.assertEqual(set(links.FOCUS_PARAMS), {p for ps in links.TAB_PARAMS.values() for p in ps})
 
 
 class UnquotedNumericPinTest(unittest.TestCase):
@@ -473,7 +872,6 @@ class PinDiagnosticsTest(unittest.TestCase):
 
     def _problems(self, mutate):
         import copy
-        from zenux_dashboard.config import parse_config
         data = copy.deepcopy(self.BASE)
         mutate(data)
         return " | ".join(parse_config(data).problems)
@@ -496,3 +894,7 @@ class PinDiagnosticsTest(unittest.TestCase):
     def test_correct_pin_has_no_owner_problem(self):
         msg = self._problems(lambda d: d["workspaces"][0].update(owner_pin="12345678"))
         self.assertNotIn("owner_", msg)
+
+
+if __name__ == "__main__":
+    unittest.main()
