@@ -262,6 +262,18 @@ def relative_time(value: Any, now: datetime | None = None) -> str:
     return f"in {span}" if future else f"{span} ago"
 
 
+def every_text(minutes: int | None) -> str:
+    """'every 6 h', 'every 90 min', 'every 2 days': how often a source is checked (the Control room's slowed sources
+    and source repairs)."""
+    if not minutes:
+        return "less often"
+    if minutes % 1440 == 0:
+        return "every day" if minutes == 1440 else f"every {minutes // 1440} days"
+    if minutes % 60 == 0:
+        return f"every {minutes // 60} h"
+    return f"every {minutes} min"
+
+
 def utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 

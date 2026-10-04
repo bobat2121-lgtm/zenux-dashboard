@@ -341,7 +341,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.read(api.stars, "/stars")[1], {})
         self.assertEqual(self.read(api.star_preview, "/stars/preview", "coreweave")[1], {"entity": "coreweave"})
         for fn, path in ((api.preferences, "/preferences"), (api.rules, "/rules"), (api.settings, "/settings"),
-                         (api.brief, "/brief"), (api.radar, "/radar"), (api.diagnostics, "/diagnostics")):
+                         (api.brief, "/brief"), (api.radar, "/radar"), (api.repairs, "/repairs"),
+                         (api.diagnostics, "/diagnostics")):
             self.assertEqual(self.read(fn, path)[1], {})
         self.assertEqual(self.read(api.volume_preview, "/settings/volume/preview", "top")[1], {"mode": "top"})
         self.assertEqual(self.read(api.volume_preview, "/settings/volume/preview", "broad", True)[1],
@@ -463,6 +464,11 @@ class ApiTests(unittest.TestCase):
                          {"proposed_at": None})  # a draft with no proposal binds to "none"
         self.assertEqual(self.post(api.radar_action, "/radar/41/reject", 41, "reject", note="withdrawn by owner"),
                          {"note": "withdrawn by owner"})
+        # source repairs (docs/SPEC-REPAIR-PHASE-B.md 1.2): {note?}, the owner token
+        self.assertEqual(self.post(api.repair_action, "/repairs/21/approve", 21, "approve", note="  looks   right "),
+                         {"note": "looks right"})
+        self.assertEqual(self.post(api.repair_action, "/repairs/21/reject", "21", "reject", note="  "), {})
+        self.assertEqual(self.post(api.repair_action, "/repairs/17/withdraw", 17, "withdraw"), {})
 
     def test_writes_validate_before_sending(self):
         bad = [
@@ -493,6 +499,10 @@ class ApiTests(unittest.TestCase):
             lambda: api.add_radar_request(self.ws, OWNER, kind="missed_story", text="We missed the drone award",
                                           url="javascript:alert(1)"),
             lambda: api.radar_action(self.ws, OWNER, 41, "delete"),
+            lambda: api.repair_action(self.ws, OWNER, 21, "applied"),  # zenux repair apply marks it, not the dashboard
+            lambda: api.repair_action(self.ws, OWNER, 0, "approve"),
+            lambda: api.repair_action(self.ws, OWNER, "../x", "approve"),
+            lambda: api.repair_action(self.ws, OWNER, 21, "reject", note="n" * (api.LONG_TEXT_MAX + 1)),
         ]
         for n, call in enumerate(bad):
             with self.subTest(n=n):

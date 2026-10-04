@@ -236,6 +236,11 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--zx-green-light
 .grade-lines { display: flex; flex-direction: column; gap: 2px; }
 .grade-line { color: var(--zx-text-soft); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .radar-body { padding-bottom: .5rem; }
+/* Source repairs (Control room): the action chip of each repair card, and keys and commands in a note. */
+.loop-kind-replace, .loop-kind-add { color: var(--zx-sky); border-color: rgba(56,189,248,.55); background: rgba(56,189,248,.14); }
+.loop-kind-slow_down { color: var(--zx-warn); border-color: rgba(251,191,36,.55); background: rgba(251,191,36,.14); }
+.loop-kind-turn_off { color: var(--zx-bad); border-color: rgba(248,113,113,.6); background: rgba(248,113,113,.14); }
+.refine-note .mono { font-family: var(--zx-mono); font-size: 12.5px; }
 /* ------------------------------------------------------------------ the control room: health cards, tiles, tables */
 .health-card { margin: 0 0 6px; padding: 18px 22px; background: var(--zx-card); border: 1px solid var(--zx-line); border-top: 3px solid var(--zx-ok); border-radius: 10px; }
 .health-card.bad { border-top-color: var(--zx-bad); }
@@ -304,8 +309,10 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--zx-green-light
 .zx-asked { display: inline-block; padding: 2px 8px; color: var(--zx-text); background: var(--zx-raised); border: 1px solid var(--zx-line-strong); border-radius: 999px; font: 500 13px/18px var(--zx-font); }
 #zx-coverage-requests { scroll-margin-top: 3.5rem; }
 /* ------------------------------------------------------------------ cards, datelines, badges and state chips */
-[class*="st-key-zx_item_"] { gap: 6px !important; padding: 0 0 12px; border-bottom: 1px solid var(--zx-line); }
-[class*="st-key-zx_item_"]:last-child { border-bottom: 0; }
+[class*="st-key-zx_item_"] { gap: 6px !important; padding: 0 0 14px; border-bottom: 1px dashed var(--zx-line-strong); }
+/* Each story sits alone in its own wrapper, so :last-child matched every story; the last story of a briefing is the
+   one whose wrapper is followed by a non-story (the editor's notes draw their own line). */
+div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"])) > [class*="st-key-zx_item_"] { border-bottom: 0; }
 [class*="st-key-zx_item_"] .feed-item { border-bottom: 0; }
 [class*="st-key-zx_item_"] > :not(:first-child) { padding-inline: 24px; }
 [class*="st-key-zx_row_"] { gap: 6px !important; margin-bottom: 10px; padding: 16px 20px 10px; background: var(--zx-card); border: 1px solid var(--zx-line); border-radius: 10px; }
@@ -435,8 +442,11 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--zx-green-light
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 /* Card actions (owner, 2026-10-04): More like this, Less like this and Rate this story as three separate outlined
    pills, set off from the story above them by a hairline, each with its own colour. */
-:is([class*="st-key-zx_item_"], [class*="st-key-zx_row_"]) [class*="st-key-zx_actions_"] { margin-top: 2px; padding-top: 10px; border-top: 1px dashed var(--zx-line); gap: 8px 10px !important; }
-.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"]) button[kind] {
+/* A briefing story ends with its buttons and the dashed line under them (owner, 2026-10-04: a line above the buttons
+   read as the header of the next story); a filtered-out story is its own card, so the line inside it stays above. */
+[class*="st-key-zx_item_"] [class*="st-key-zx_actions_"] { margin-top: 6px; gap: 8px 10px !important; }
+[class*="st-key-zx_row_"] [class*="st-key-zx_actions_"] { margin-top: 2px; padding-top: 10px; border-top: 1px dashed var(--zx-line); gap: 8px 10px !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] {
   min-height: 34px; padding: 2px 16px !important; border-radius: 999px !important; background: var(--zx-raised) !important;
 }
 .st-key-zx_view [class*="st-key-act_more_"] button[kind] { border: 1px solid rgba(52,211,153,.6) !important; }
@@ -448,8 +458,11 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--zx-green-light
 .st-key-zx_view [class*="st-key-act_rate_"] button[kind] { border: 1px solid rgba(251,191,36,.6) !important; }
 .st-key-zx_view [class*="st-key-act_rate_"] button[kind] :is(p, span) { color: var(--zx-warn) !important; }
 .st-key-zx_view [class*="st-key-act_rate_"] button[kind]:hover { background: rgba(251,191,36,.14) !important; border-color: var(--zx-warn) !important; }
-.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"]) button[kind]:disabled { border-color: var(--zx-line-strong) !important; background: transparent !important; }
-.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"]) button[kind]:disabled :is(p, span) { color: var(--zx-muted) !important; }
+.st-key-zx_view [class*="st-key-act_promote_"] button[kind], .st-key-zx_view [class*="st-key-br_promote_"] button[kind] { border: 1px solid rgba(56,189,248,.6) !important; }
+.st-key-zx_view [class*="st-key-act_promote_"] button[kind] :is(p, span), .st-key-zx_view [class*="st-key-br_promote_"] button[kind] :is(p, span) { color: var(--zx-sky) !important; }
+.st-key-zx_view [class*="st-key-act_promote_"] button[kind]:hover, .st-key-zx_view [class*="st-key-br_promote_"] button[kind]:hover { background: rgba(56,189,248,.14) !important; border-color: var(--zx-sky) !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind]:disabled { border-color: var(--zx-line-strong) !important; background: transparent !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind]:disabled :is(p, span) { color: var(--zx-muted) !important; }
 /* "Why am I seeing this?" under the editor's notes: one entry per story, headed by its number. */
 .why-item-head { display: flex; align-items: baseline; gap: 12px; margin: 12px 0 8px; }
 .why-num { flex: 0 0 auto; color: var(--zx-muted); font: 500 12px/1.5 var(--zx-mono); font-variant-numeric: tabular-nums; }

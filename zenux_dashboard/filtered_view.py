@@ -12,9 +12,10 @@ control (each choice carries the view's true count from the answer's `views`) an
   preview and choice, and Bring back on a removed mute).
 - old "Old news": filter=old_news, the hub's old-news rule and the editor's old-news rejections.
 
-Sort (on the count line, right above the list): Newest first, Highest score first or Lowest score first. Changing the view resets it to
-the view's own order (Near misses: highest first; the rest: newest first). A score order covers the whole window: the
-view's pages are all read first (up to MAX_PAGES), and stories without a score (old news, mutes) come last.
+Sort (on the count line, right above the list): Newest first (by the story's own date, the one on each row), Highest
+score first or Lowest score first. Changing the view resets it to the view's own order (Near misses: highest first; the
+rest: newest first). Every order covers the whole window: the hub pages by when the editor decided, so the view's pages
+are all read first (up to MAX_PAGES) and sorted here; stories without a score come last in a score order.
 
 The hub does the work: one row per story, the true `total`, the search box sent as `q` (every word must match the
 title, the editor's reasoning, the source's name, the publisher or a company, over the whole window), the coverage-area
@@ -245,9 +246,15 @@ def default_sort(view: str) -> str:
     return VIEW_SORT.get(view, "newest")
 
 
+def story_ts(row: Mapping) -> float:
+    """The story's own date, the one its row shows (published, else when it was decided)."""
+    return parse_time(pick(row, "published_at", "decided_at")).timestamp()
+
+
 def view_rows(view: str, rows: Iterable[Mapping], sort: str | None = None) -> list[dict]:
     """The view's rows in the chosen order (the view's own when none): highest or lowest score first (unknown scores
-    last, then the newest), or newest first (the hub's order)."""
+    last, then the newest), or newest first by the story's own date (not the hub's order, which is when the editor
+    decided)."""
     rows = unique_rows(rows)
     sort = sort if sort in SORT_LABELS else default_sort(view)
     if sort == "high":
@@ -256,7 +263,7 @@ def view_rows(view: str, rows: Iterable[Mapping], sort: str | None = None) -> li
     if sort == "low":
         return sorted(rows, key=lambda r: (score_of(r) is None, score_of(r) or 0, -decided_ts(r),
                                            -(event_id_of(r) or 0)))
-    return rows
+    return sorted(rows, key=lambda r: (-story_ts(r), -(event_id_of(r) or 0)))
 
 
 def area_options(ws: Workspace, rows: Iterable[Mapping], current: str) -> list[str]:
@@ -280,7 +287,7 @@ def count_line(*, shown: int, total: int, days: int, loaded: int, query: str = "
         text = f"Showing {shown} of {plural(total, 'story', 'stories')}"
     text += f" · {last_days(days)}"
     if near and loaded < total:
-        first = "lowest" if sort == "low" else "best"
+        first = {"low": "lowest", "newest": "newest"}.get(sort, "best")
         text += f" · {first} first among the newest {loaded}"
     return text
 
@@ -645,8 +652,9 @@ def render(ws: Workspace) -> None:
     area = current_area()
     signature = (ws.id, view, days, area, query.casefold(), sort)
     limit = shown_limit(signature)
-    # A score order covers the whole window, so every page of the view is read first (up to MAX_PAGES).
-    pages = MAX_PAGES if sort in BY_SCORE else -(-limit // ROW_CAP)
+    # Every order covers the whole window, so every page of the view is read first (up to MAX_PAGES): the hub pages by
+    # decision time, which is neither the story's date nor its score.
+    pages = MAX_PAGES
     try:
         body, error = read(ws, view, days, query=query, area=area, pages=pages), None
     except api.ApiError as exc:
@@ -664,7 +672,7 @@ def render(ws: Workspace) -> None:
     total = max(body["total"], len(rows))
     page = rows[:limit]
     counts = count_line(shown=len(page), total=total, days=days, loaded=len(rows), query=query,
-                        near=sort in BY_SCORE and body["has_more"], sort=sort)
+                        near=body["has_more"], sort=sort)
     count_col, sort_col = st.columns([5, 1.7], vertical_alignment="center")
     count_col.markdown(f'<div class="rejected-summary">{esc(counts)}</div>', unsafe_allow_html=True)
     with sort_col:

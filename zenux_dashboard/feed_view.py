@@ -543,7 +543,7 @@ def render_shelf(ws: Workspace, edition: Mapping, index: Any, kind: str, used: s
             return
         with st.container(horizontal=True, gap="small", key=unique_key(f"zx_actions_shelf_{index}_{kind}_{target.event_id}", used)):
             key = unique_key(f"br_promote_{index}_{kind}_{target.event_id}", used)
-            if ui.write_button("Should have been in", ws=ws, key=key, type="tertiary"):
+            if ui.write_button("Should have been in", ws=ws, key=key, icon=":material/move_up:"):
                 actions.open_promote(ws, target)
             # WF5 AW-10: a look-alike name ("Lambda Energy" for Lambda) can be taken off the watchlist shelf.
             for n, star in enumerate(dicts(row.get("stars")) if kind == "watchlist" else []):

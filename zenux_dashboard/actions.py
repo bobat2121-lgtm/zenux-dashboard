@@ -308,8 +308,8 @@ def target_from_row(ws: Workspace, row: dict) -> Target:
 
 
 def action_bar(ws: Workspace, target: Target, *, key: str, promote: bool = False) -> None:
-    """More like this, Less like this and Rate this story as separate outlined buttons, then Should have been in (when
-    `promote` and the story is not in a briefing), in one horizontal row that wraps on narrow screens. The lazy More
+    """More like this, Less like this, Rate this story and Should have been in (when `promote` and the story is not in
+    a briefing) as separate outlined buttons, in one horizontal row that wraps on narrow screens. The lazy More
     menu (Wrong facts, mutes, star) is drawn only while SHOW_MORE_MENU is on; it is off for now (the owner's call,
     2026-10-04): mutes and stars stay in Coverage and My preferences."""
     with st.container(horizontal=True, key=f"zx_actions_{key}", gap="small", vertical_alignment="center"):
@@ -326,7 +326,7 @@ def action_bar(ws: Workspace, target: Target, *, key: str, promote: bool = False
             if ui.write_button("Rate this story", ws=ws, key=f"act_rate_{key}", icon=":material/star_rate:"):
                 open_rate(ws, target)
         if promote and not target.in_briefing and target.event_id is not None:
-            if ui.write_button("Should have been in", ws=ws, key=f"act_promote_{key}", type="tertiary"):
+            if ui.write_button("Should have been in", ws=ws, key=f"act_promote_{key}", icon=":material/move_up:"):
                 open_promote(ws, target)
         if SHOW_MORE_MENU:
             menu = st.popover("More", key=f"zx_more_{key}", on_change="rerun", icon=":material/more_horiz:",

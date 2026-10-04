@@ -8,7 +8,8 @@ engine runs"). Pick a coverage area (a module: `cv_area`, mirrored as `module` i
 - How it works: four steps with this area's live numbers. Watch (companies and sources, and the kinds of sources),
   Collect (stories this week), Score (the ZENUX editor scores every story 0 to 100; its next run), Brief (what made
   your briefings this week, and the bar and size of a briefing from "How much");
-- one line on source health ("All 151 sources are working", or which are not responding, with Show them);
+- one line on source health ("All 151 sources are working", or which are not responding, with Show them), and, while
+  the area has open source repairs (GET /modules `repairs_open`), "ZENUX is fixing 2 sources.";
 - What ZENUX watches: a search box, Companies or Sources, a filter (watchlist, muted, by name only; not responding,
   turned off, muted) and one sortable table. Clicking a row opens its details (the `company` or `source` dialog,
   registered here), where Star, Mute and Request coverage live; Mute, unmute and star go through the card-action
@@ -25,6 +26,7 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Mapping
 
+import pandas as pd
 import streamlit as st
 
 from . import actions, api, data, labels, links, radar_view, status, ui
@@ -54,6 +56,9 @@ ASK_JUMP = "Ask for a source, a company or a topic ↓"
 TABLE_HINT = ("Click a row for its details: star a company, mute a source or company, or ask for more coverage. "
               "Muted: " + labels.STILL_COLLECTED)
 COLLECT_TEXT = "Clearly off-topic items are dropped as they arrive. Everything else waits for the editor."
+# The name column of each table stands out (owner, 2026-10-04): pinned at the left, bold, in the link green.
+NAME_COLUMNS = {"companies": "Company", "sources": "Source"}
+NAME_STYLE = {"color": "#6EF2B6", "font-weight": "700"}
 FOLLOWS = {"own_feed": "Own news", "sec_filings": "SEC filings", "federal_contracts": "Contracts",
            "news_search": "News search"}
 
@@ -263,19 +268,29 @@ def flow_html(steps: list[tuple[str, str, str]]) -> str:
     return f'<div class="cov-flow" role="list" aria-label="How ZENUX works">{"".join(cells)}</div>'
 
 
+def fixing_text(card: Mapping | None) -> str:
+    """'ZENUX is fixing 1 source.' or 'ZENUX is fixing 3 sources.' while the area has open source repairs (GET /modules
+    `repairs_open`: proposed, approved or applied, not yet recovered); '' otherwise and from an older hub."""
+    n = as_int(card.get("repairs_open")) if isinstance(card, Mapping) else None
+    return f"ZENUX is fixing {plural(n, 'source')}." if n is not None and n > 0 else ""
+
+
 def health_line(insp: Mapping, card: Mapping | None) -> tuple[str, str, list[str]]:
-    """(css, sentence, names of the failing sources) for the source-health line."""
+    """(css, sentence, names of the failing sources) for the source-health line, with fixing_text after the sources
+    not responding."""
     sources = dicts(insp.get("sources"))
     failing = [one_line(s.get("label")) or "A source" for s in sources if state_of(s) == "failing" and not is_off(s)]
     c = counts_of(insp, card)
     off = (f" {plural(c['off'], 'source is', 'sources are')} turned off on purpose: sites that block automated "
            "reading or no longer work." if c["off"] else "")
+    fixing = fixing_text(card)
+    fixing = f" {fixing}" if fixing else ""
     if failing:
         names = join_and(failing[:3]) + (f" and {len(failing) - 3} more" if len(failing) > 3 else "")
         verb = "isn't" if len(failing) == 1 else "aren't"
         return ("warn", f"{plural(len(failing), 'source')} {verb} responding right now: {names}. ZENUX keeps trying; "
-                        f"everything else is collected as usual.{off}", failing)
-    return "ok", f"All {plural(c['on'], 'source')} on are working.{off}", []
+                        f"everything else is collected as usual.{fixing}{off}", failing)
+    return "ok", f"All {plural(c['on'], 'source')} on are working.{fixing}{off}", []
 
 
 def stats_text(row: Mapping) -> str:
@@ -398,6 +413,13 @@ def filter_label(kind: str, code: str, insp: Mapping) -> str:
     return f"{FILTERS[kind][code]} · {sum(1 for r in rows if matches(r, kind, [], code))}"
 
 
+def styled_table(rows: list[dict], kind: str) -> Any:
+    """The table's rows with the name column highlighted (a pandas Styler; st.dataframe draws its colour and weight)."""
+    frame = pd.DataFrame(rows)
+    name = NAME_COLUMNS[kind]
+    return frame.style.set_properties(subset=[name], **NAME_STYLE) if name in frame.columns else frame
+
+
 def render_lists(ws: Workspace, module_id: str, insp: Mapping) -> None:
     """What ZENUX watches: the search box, Companies or Sources, its filter, and one table whose rows open details."""
     ui.section("What ZENUX watches")
@@ -433,7 +455,9 @@ def render_lists(ws: Workspace, module_id: str, insp: Mapping) -> None:
                     unsafe_allow_html=True)
         return
     key = table_key(kind)
-    st.dataframe(rows, key=key, hide_index=True, width="stretch", height=min(38 + 35 * len(rows), 460),
+    config[NAME_COLUMNS[kind]] = st.column_config.TextColumn(pinned=True, width="medium")
+    st.dataframe(styled_table(rows, kind), key=key, hide_index=True, width="stretch",
+                 height=min(38 + 35 * len(rows), 460),
                  column_config=config, selection_mode="single-row",
                  on_select=partial(open_details, ws.id, module_id, kind, ids, key))
     noun = ("company", "companies") if kind == "companies" else ("source", "sources")

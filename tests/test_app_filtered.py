@@ -327,17 +327,18 @@ class CountSearchFilterTests(FilteredCase):
         self.assert_clean(at)
         self.assertEqual(len(self.rows_shown(at)), 100)
         self.assertTrue(self.count_line(at).startswith("Showing 100 of 620 stories"))
-        # newest first reads page by page: past the first page, Show 50 more reads the next one from the hub
+        # newest first is by the story's own date, so it reads the whole window too; Show 50 more reads nothing new
         self.fresh()
         self.http.calls.clear()
         at.selectbox(key="fo_sort").set_value("newest").run()
         self.assert_clean(at)
-        self.assertEqual([int(c.params.get("offset") or 0) for c in self.reads()], [0])
+        self.assertEqual([int(c.params.get("offset") or 0) for c in self.reads()], [0, 500])
         at.session_state["fo_limit"] = (("pilot", "near", 3, "", "", "newest"), 500)
         at.run()
+        reads = len(self.reads())
         at.button(key="fo_more").click().run()
         self.assert_clean(at)
-        self.assertIn(500, [int(c.params.get("offset") or 0) for c in self.reads()])
+        self.assertEqual(len(self.reads()), reads)
         self.assertEqual(len(self.rows_shown(at)), 550)
         self.assertEqual(self.count_line(at), "Showing 550 of 620 stories · last 3 days")
         self.assert_clean(at)
@@ -364,11 +365,23 @@ class CountSearchFilterTests(FilteredCase):
         self.assertEqual(at.selectbox(key="fo_sort").value, "high")
 
     def test_unscored_stories_come_last_in_a_score_order(self):
-        rows = [{"event_id": 1, "score": None}, {"event_id": 2, "score": 41}, {"event_id": 3, "score": 66}]
+        rows = [{"event_id": 1, "score": None, "published_at": "2026-10-01T10:00:00Z"},
+                {"event_id": 2, "score": 41, "published_at": "2026-10-03T10:00:00Z"},
+                {"event_id": 3, "score": 66, "published_at": "2026-07-02T10:00:00Z"}]
         self.assertEqual([r["event_id"] for r in filtered_view.view_rows("all", rows, "high")], [3, 2, 1])
         self.assertEqual([r["event_id"] for r in filtered_view.view_rows("all", rows, "low")], [2, 3, 1])
-        self.assertEqual([r["event_id"] for r in filtered_view.view_rows("all", rows, "newest")], [1, 2, 3])
         self.assertEqual([r["event_id"] for r in filtered_view.view_rows("near", rows)], [3, 2, 1])
+
+    def test_newest_first_is_by_the_storys_own_date(self):
+        # owner, 2026-10-04: one run decides many stories at once, so the hub's order (when the editor decided) mixed
+        # a Jul 2 award between Sep 22 and Sep 23 stories; newest first follows the date each row shows
+        decided = "2026-10-04T16:54:00Z"
+        rows = [{"event_id": 10, "decided_at": decided, "published_at": "2026-09-22T10:00:00Z"},
+                {"event_id": 11, "decided_at": decided, "published_at": "2026-07-02T10:00:00Z"},
+                {"event_id": 12, "decided_at": decided, "published_at": "2026-09-23T10:00:00Z"},
+                {"event_id": 13, "decided_at": "2026-10-03T12:00:00Z", "published_at": None}]
+        self.assertEqual([r["event_id"] for r in filtered_view.view_rows("all", rows, "newest")], [13, 12, 10, 11])
+        self.assertEqual([r["event_id"] for r in filtered_view.view_rows("all", rows)], [13, 12, 10, 11])
 
     def test_search_is_sent_to_the_hub(self):
         at = self.filtered()

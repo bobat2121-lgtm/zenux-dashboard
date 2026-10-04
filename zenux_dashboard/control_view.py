@@ -13,7 +13,12 @@ Builder vocabulary is allowed here (source keys, lanes, routines by role); sente
    row per module, then the routines and the footer. A module that is not ok has a clickable status light ("Degraded",
    "Down"...) that opens "Sources not working": each failing source of that module with what is wrong in plain words
    (the HTTP answer, the failure streak, the last error the module reported), when it last worked, and the
-   acknowledged and quiet ones. Under the card, outside the fragment (nothing with an input field reruns on a timer):
+   acknowledged and quiet ones. Phase A of docs/PLAN-SOURCE-REPAIR.md: a source with one missed check after working
+   is "retrying" (it colours nothing), and a source the module slowed down after repeated HTTP 429s is "slowed"; an ok
+   module with either gets a small note ("1 retrying · 1 slowed") that opens the same window. Phase B: a failing or
+   retrying source with an open repair says so in the window, in one line ("A fix is proposed ..."; the cached GET
+   /repairs, matched by module and source key). Under the card, outside the fragment (nothing with an input field
+   reruns on a timer):
    - failing sources with Acknowledge (a note; POST /admin/sources/ack) and acknowledged sources with Remove
      acknowledgement (POST /admin/sources/unack), both through ui.write with a toast and undo;
    - the stage line and its switch (POST /admin/stage, after a confirmation, with undo);
@@ -23,7 +28,10 @@ Builder vocabulary is allowed here (source keys, lanes, routines by role); sente
    if already sent", Run. It POSTs the module Worker's /backfill (bearer run_token, behind the builder unlock) and
    polls GET /backfill for progress.
 3. Coverage requests to review (radar_view.render_review): the Source finder's technical proposals, approve or reject.
-4. Configuration (collapsed): what is set, never a value, and where the builder PIN comes from.
+4. Source repairs to review (repairs_view.render_review): the Radar scout's proposed fixes for broken sources, each
+   with before and after and the probe's evidence, approve or reject; then the approved ones with their apply command
+   (and Withdraw), the applied, recovered, rejected and withdrawn ones.
+5. Configuration (collapsed): what is set, never a value, and where the builder PIN comes from.
 """
 
 from __future__ import annotations
@@ -34,10 +42,10 @@ from typing import Any, Mapping
 
 import streamlit as st
 
-from . import api, data, labels, links, owner, radar_view, ui
+from . import api, data, labels, links, owner, radar_view, repairs_view, ui
 from .config import Config, Module, Workspace
-from .fmt import (as_int, as_list, clip, count_of, dicts, empty_state, esc, fmt_day, fmt_short, label_of, link,
-                  one_line, parse_time, pick, pill, plural, relative_time, safe_url, section_label, table, zone,
+from .fmt import (as_int, as_list, clip, count_of, dicts, empty_state, esc, every_text, fmt_day, fmt_short, label_of,
+                  link, one_line, parse_time, pick, pill, plural, relative_time, safe_url, section_label, table, zone,
                   zone_label, MIN_TIME, UTC)
 
 HEALTH_REFRESH_SECONDS = 60
@@ -147,6 +155,7 @@ def _source_row(module_id: str, row: Mapping) -> dict:
         "last_new_at": pick(row, "last_new_at"),
         "warnings": [one_line(w) for w in as_list(row.get("warnings")) if one_line(w)],
         "error": one_line(pick(row, "last_error", "error")),  # the module's own health has it; the hub's has not
+        "pace": dict(row["pace"]) if isinstance(row.get("pace"), Mapping) else None,
         # schema v7: which problem it is (failing, structural_empty, quota_streak), its streaks, and the owner's
         # acknowledgement while the problem is unchanged ({acked_at, note, ...} or null)
         "kind": one_line(row.get("kind")),
@@ -155,6 +164,29 @@ def _source_row(module_id: str, row: Mapping) -> dict:
         "acknowledged": dict(acknowledged) if isinstance(acknowledged, Mapping) else (
             {} if acknowledged is True else None),
     }
+
+
+def _slowed_row(module_id: str, row: Mapping) -> dict:
+    """A source the module slowed down after repeated HTTP 429s: a /diagnostics or module /health `slowed` row, or a
+    source row carrying `pace`."""
+    pace = row.get("pace") if isinstance(row.get("pace"), Mapping) else row
+    return {
+        "module": one_line(pick(row, "module_id", "module")) or module_id,
+        "key": one_line(pick(row, "source_key", "key")),
+        "factor": as_int(pace.get("factor")) or 1,
+        "base_minutes": as_int(pace.get("base_minutes")),
+        "effective_minutes": as_int(pace.get("effective_minutes")),
+        "http": as_int(pick(pace, "http_status")),
+        "since": pace.get("since"),
+    }
+
+
+def slowed_text(row: Mapping, tz: str) -> str:
+    """'Checked every 2 h instead of every 1 h since Oct 4: the site asked us to slow down (HTTP 429).'"""
+    since = f" since {fmt_short(row.get('since'), tz)}" if row.get("since") else ""
+    return (f"Checked {every_text(row.get('effective_minutes'))} instead of {every_text(row.get('base_minutes'))}{since}: "
+            f"the site asked us to slow down (HTTP {row.get('http') or 429}). It returns to normal after a week "
+            "without that.")
 
 
 def _ack_row(row: Mapping) -> dict:
@@ -192,6 +224,15 @@ def _merge(rows: list[dict]) -> list[dict]:
     return sorted(out.values(), key=lambda r: (r["module"], r["key"]))
 
 
+def _merge_slowed(rows: list[dict]) -> list[dict]:
+    """Slowed rows unique by (module, key), the hub's first; a factor of 1 is not slowed."""
+    out: dict[tuple, dict] = {}
+    for row in rows:
+        if row["key"] and row["factor"] > 1:
+            out.setdefault((row["module"], row["key"]), row)
+    return sorted(out.values(), key=lambda r: (r["module"], r["key"]))
+
+
 def lease_of(diag: Any, now: datetime | None = None) -> dict | None:
     lease = pick(diag, "review.lease", "lease")
     if not isinstance(lease, Mapping):
@@ -220,11 +261,14 @@ def _stale_reason(hub_entry: Mapping) -> str:
 
 
 def module_status(hub_entry: dict | None, health: dict | None, health_error: str | None, failing: int,
-                  configured: bool = True, acknowledged: int = 0, partial_flagged: bool = False) -> tuple[str, str]:
+                  configured: bool = True, acknowledged: int = 0, partial_flagged: bool = False,
+                  retrying: int = 0, red_flagged: bool = False) -> tuple[str, str]:
     """(status, reason) of one module row. The hub's view wins over the module's liveness answer; a configured module
     never shows ok when the hub reports it stale, failed or without runs, and is never shown as retired.
     `partial_flagged`: the hub lists a module_partial reason for this module (its partial run has a cause other than
-    the failing sources), so acknowledged sources never turn it ok."""
+    the failing sources), so acknowledged sources never turn it ok. `retrying`: sources with one missed check after
+    working; like acknowledged ones they never make a partial run degraded, and a failed run whose only misses are
+    retrying (the hub raises no red reason for it, `red_flagged` False: often the only source due in that tick) is ok."""
     entry = hub_entry if isinstance(hub_entry, Mapping) else {}
     if health_error:
         return "down", health_error
@@ -232,6 +276,8 @@ def module_status(hub_entry: dict | None, health: dict | None, health_error: str
         return "failed", one_line(health.get("error")) or "the module reports a failed run"
     hub_status = one_line(entry.get("status")).lower()
     if hub_status == "failed":
+        if retrying and not failing and not red_flagged:
+            return "ok", plural(retrying, "source") + " retrying"
         return "failed", "last run failed"
     if hub_status == "no_runs":
         return "no_runs", "no run has reached the hub yet"
@@ -245,8 +291,9 @@ def module_status(hub_entry: dict | None, health: dict | None, health_error: str
     if unfinished or (isinstance(health, Mapping) and isinstance(health.get("unfinished"), Mapping)):
         return "degraded", "a run did not finish" if unfinished <= 1 else f"{unfinished} runs did not finish"
     if hub_status == "partial":
-        if acknowledged and not partial_flagged:  # its only failing sources are ones the owner already knows about
-            return "ok", plural(acknowledged, "acknowledged source")
+        if (acknowledged or retrying) and not partial_flagged:  # only known or retrying sources missed this run
+            return "ok", " · ".join(p for p in (plural(retrying, "source") + " retrying" if retrying else "",
+                                               plural(acknowledged, "acknowledged source") if acknowledged else "") if p)
         causes = entry.get("partial_causes") if isinstance(entry.get("partial_causes"), Mapping) else {}
         other = [one_line(c) for c in (causes.get("other") or []) if one_line(c)]
         return "degraded", ("partial run: " + ", ".join(other[:3])) if other else "some sources failed"
@@ -330,6 +377,8 @@ def summarize(ws: Workspace, report: Mapping) -> dict:
     entries = hub_modules(diag)
     failing: list[dict] = [_source_row("", r) for r in dicts(pick(diag, "failing", default=[]))]
     silent: list[dict] = [_source_row("", r) for r in dicts(pick(diag, "silent", default=[]))]
+    retrying: list[dict] = [_source_row("", r) for r in dicts(pick(diag, "retrying", default=[]))]
+    slowed: list[dict] = [_slowed_row("", r) for r in dicts(pick(diag, "slowed", default=[]))]
     module_ids = [m.id for m in ws.modules] + [mid for mid in entries if ws.module(mid) is None]
     modules = []
     for mid in module_ids:
@@ -342,6 +391,8 @@ def summarize(ws: Workspace, report: Mapping) -> dict:
         silent += [_source_row(mid, r) for r in dicts(entry.get("silent"))]
         failing += [_source_row(mid, r) for r in dicts((health or {}).get("failing"))]
         silent += [_source_row(mid, r) for r in dicts((health or {}).get("silent"))]
+        retrying += [_source_row(mid, r) for r in dicts(entry.get("retrying")) + dicts((health or {}).get("retrying"))]
+        slowed += [_slowed_row(mid, r) for r in dicts(entry.get("slowed")) + dicts((health or {}).get("slowed"))]
         last_run = pick(entry, "last_run") if isinstance(pick(entry, "last_run"), Mapping) else {}
         health_run = (health or {}).get("last_run") if isinstance((health or {}).get("last_run"), Mapping) else {}
         modules.append({
@@ -371,6 +422,9 @@ def summarize(ws: Workspace, report: Mapping) -> dict:
     acked = {(a["module"], a["key"]) for a in acknowledged}
     failing = [r for r in failing if (r["module"], r["key"]) not in acked]
     silent = _merge(silent)
+    failing_keys = {(r["module"], r["key"]) for r in failing}
+    retrying = [r for r in _merge(retrying) if (r["module"], r["key"]) not in failing_keys]  # failing wins
+    slowed = _merge_slowed(slowed)
     red_modules = {r["module"] for r in hub_reasons if r["level"] == "red" and r["module"]}
     partial_modules = {r["module"] for r in hub_reasons if r["code"] == "module_partial" and r["module"]}
     for module in modules:
@@ -378,11 +432,14 @@ def summarize(ws: Workspace, report: Mapping) -> dict:
         module["failing"] = n_fail
         module["acknowledged"] = sum(1 for a in acknowledged if a["module"] == module["id"])
         module["silent"] = sum(1 for r in silent if r["module"] == module["id"])
+        module["retrying"] = sum(1 for r in retrying if r["module"] == module["id"])
+        module["slowed"] = sum(1 for r in slowed if r["module"] == module["id"])
         module["red"] = module["id"] in red_modules
         module["status"], module["reason"] = module_status(
             module["hub_entry"] or None, module["health"], module["error"], n_fail,
             configured=module["configured"] or module["hub_configured"], acknowledged=module["acknowledged"],
-            partial_flagged=module["id"] in partial_modules)
+            partial_flagged=module["id"] in partial_modules, retrying=module["retrying"],
+            red_flagged=module["red"])
     # The dashboard adds only what the hub cannot see: an unreachable configured module, or one whose own health
     # check says it is not ok (its state database is down, its last run failed) before the hub has noticed.
     own = [module_error_reason(m) for m in modules if m["configured"] and m["error"]]
@@ -429,6 +486,8 @@ def summarize(ws: Workspace, report: Mapping) -> dict:
         "failing": failing,
         "acknowledged": acknowledged,
         "silent": silent,
+        "retrying": retrying,
+        "slowed": slowed,
         "modules": modules,
         "grading": block("grading"),
         "routines": block("routines"),
@@ -914,6 +973,13 @@ def light_label(m: Mapping) -> str:
     return (status[:1].upper() + status[1:]) + (f" · {reason}" if reason else "")
 
 
+def notes_label(m: Mapping) -> str:
+    """'1 retrying · 1 slowed' for a module with sources in either state, else ''."""
+    parts = [f"{m.get('retrying')} retrying" if m.get("retrying") else "",
+             f"{m.get('slowed')} slowed" if m.get("slowed") else ""]
+    return " · ".join(p for p in parts if p)
+
+
 def open_failing(workspace_id: str, module_id: str) -> None:
     ui.open_dialog(DIALOG_FAILING, workspace_id=workspace_id, module_id=module_id)
 
@@ -948,7 +1014,15 @@ def render_module_rows(ws: Workspace, s: dict) -> None:
             cols = st.columns(MODULE_WIDTHS, vertical_alignment="center")
             cols[0].markdown(f'<div class="mod-td">{cells[0]}</div>', unsafe_allow_html=True)
             with cols[1]:
-                if m["status"] in QUIET_LIGHT:
+                note = notes_label(m)
+                if m["status"] in QUIET_LIGHT and note:
+                    with st.container(horizontal=True, gap="small", vertical_alignment="center"):
+                        st.markdown(f'<div class="mod-td">{module_pill(m)}</div>', unsafe_allow_html=True)
+                        if st.button(note, key=f"cr_notes_{ws.id}_{m['id']}", type="tertiary",
+                                     help="See which sources are retrying or slowed down, and why"):
+                            open_failing(ws.id, m["id"])
+                            st.rerun(scope="app")
+                elif m["status"] in QUIET_LIGHT:
                     st.markdown(f'<div class="mod-td">{module_pill(m)}'
                                 + (f' <span class="tile-d">{esc(clip(m["reason"], 60))}</span>' if m["reason"] else "")
                                 + '</div>', unsafe_allow_html=True)
@@ -970,8 +1044,9 @@ def source_names(workspace_id: str, module_id: str) -> dict[str, str]:
             if one_line(src.get("key")) and one_line(src.get("label"))}
 
 
-def failing_source_html(row: Mapping, name: str, tz: str) -> str:
-    """One failing source: its name and key, then what is wrong, since when, the streak and its health."""
+def failing_source_html(row: Mapping, name: str, tz: str, repair: str = "") -> str:
+    """One failing source: its name and key, then what is wrong, since when, the streak, its health and, when a fix is
+    under way, the line about its open repair (repairs_view.window_line)."""
     health = one_line(row.get("health"))
     facts = [("What's wrong", failure_reason(row)),
              ("Last worked", fmt_short(row.get("last_ok_at"), tz) if row.get("last_ok_at") else "not yet")]
@@ -979,6 +1054,7 @@ def failing_source_html(row: Mapping, name: str, tz: str) -> str:
         facts.append(("Failed checks in a row", str(as_int(row.get("failures")))))
     if health:
         facts.append(("Health", label_of(health) + (f" ({HEALTH_WORDS[health]})" if health in HEALTH_WORDS else "")))
+    facts.append(("Repair", repair))  # left out while empty
     title = (f'<span class="failing-name">{esc(name)}</span> ' if name else "") + \
         f'<span class="mono">{esc(row.get("key"))}</span>'
     rows = "".join(f'<div class="why-row"><span class="why-label">{esc(k)}</span><span>{esc(v)}</span></div>'
@@ -987,8 +1063,9 @@ def failing_source_html(row: Mapping, name: str, tz: str) -> str:
 
 
 def failing_dialog(workspace_id: str, module_id: str) -> None:
-    """Sources not working in one module: the module's status and reason, each failing source and why, then the
-    acknowledged and the quiet ones (the same cached health read the card used)."""
+    """Sources not working in one module: the module's status and reason, each failing source and why (with its open
+    repair, if any), then the retrying, slowed, acknowledged and quiet ones (the same cached health read the card
+    used, and the cached GET /repairs)."""
     ws = data.config().workspace(workspace_id)
     if ws is None:
         st.info("This workspace is no longer configured.")
@@ -1002,10 +1079,17 @@ def failing_dialog(workspace_id: str, module_id: str) -> None:
                 + (f'<span class="health-sub">{esc(m["reason"])}</span>' if m["reason"] else "") + "</div>",
                 unsafe_allow_html=True)
     names = source_names(ws.id, module_id)
+    fixes = repairs_view.open_fixes(ws.id)
+
+    def with_repair(r: Mapping) -> str:
+        return failing_source_html(r, names.get(r["key"], ""), ws.timezone,
+                                   repairs_view.window_line(fixes.get((r["module"], r["key"]))))
+
     failing = [r for r in s["failing"] if r["module"] == module_id]
     if failing:
-        st.markdown("".join(failing_source_html(r, names.get(r["key"], ""), ws.timezone) for r in failing),
-                    unsafe_allow_html=True)
+        st.markdown("".join(with_repair(r) for r in failing), unsafe_allow_html=True)
+    elif m["status"] in QUIET_LIGHT and (m.get("retrying") or m.get("slowed")):
+        st.markdown("No source is failing.")
     elif m["status"] == "down":
         st.markdown(f"ZENUX could not reach {module_id} itself: {m['reason'] or 'no answer'}. Its sources are not "
                     "being checked until it answers again.")
@@ -1014,6 +1098,19 @@ def failing_dialog(workspace_id: str, module_id: str) -> None:
                     "itself is not running.")
     else:
         st.markdown(f"No single source is failing. {m['reason'][:1].upper() + m['reason'][1:] if m['reason'] else ''}")
+    retrying = [r for r in s["retrying"] if r["module"] == module_id]
+    if retrying:
+        st.markdown('<div class="refine-label">Retrying after one missed check (it colours nothing)</div>',
+                    unsafe_allow_html=True)
+        st.markdown("".join(with_repair(r) for r in retrying), unsafe_allow_html=True)
+    slowed = [r for r in s["slowed"] if r["module"] == module_id]
+    if slowed:
+        st.markdown('<div class="refine-label">Slowed down automatically</div>', unsafe_allow_html=True)
+        st.markdown("".join(
+            f'<div class="failing-source"><div class="failing-title">'
+            + (f'<span class="failing-name">{esc(names.get(r["key"], ""))}</span> ' if names.get(r["key"]) else "")
+            + f'<span class="mono">{esc(r["key"])}</span></div><div class="why-block"><div class="why-row">'
+            f'<span>{esc(slowed_text(r, ws.timezone))}</span></div></div></div>' for r in slowed), unsafe_allow_html=True)
     acked = [a for a in s["acknowledged"] if a["module"] == module_id]
     if acked:
         st.markdown('<div class="refine-label">Known problems you acknowledged</div>', unsafe_allow_html=True)
@@ -1030,7 +1127,7 @@ def failing_dialog(workspace_id: str, module_id: str) -> None:
 
 
 def failing_title(module_id: str = "", **_: Any) -> str:
-    return f"Sources not working · {module_id}" if module_id else "Sources not working"
+    return f"Source health · {module_id}" if module_id else "Source health"
 
 
 def health_card_html(ws: Workspace, s: dict) -> str:
@@ -1211,6 +1308,15 @@ def render_card_display(ws: Workspace, s: dict) -> None:
     if s["silent"]:
         with st.expander(f"{ws.id} · silent sources · {len(s['silent'])}"):
             st.markdown(silent_table(s["silent"], ws.timezone), unsafe_allow_html=True)
+    if s["retrying"]:
+        with st.expander(f"{ws.id} · retrying after one missed check · {len(s['retrying'])}"):
+            st.markdown(failing_table(s["retrying"], ws.timezone), unsafe_allow_html=True)
+    if s["slowed"]:
+        with st.expander(f"{ws.id} · slowed down automatically · {len(s['slowed'])}"):
+            st.markdown(table(["Module", "Source", "Checked now", "Normally", "Since"], [[
+                esc(r["module"]), f'<span class="mono">{esc(r["key"])}</span>', esc(every_text(r["effective_minutes"])),
+                esc(every_text(r["base_minutes"])), esc(fmt_short(r["since"], ws.timezone)),
+            ] for r in s["slowed"]]), unsafe_allow_html=True)
     biggest = dicts(pick(s.get("grading"), "agreement.biggest", default=[]))
     if biggest:
         with st.expander(f"{ws.id} · biggest disagreements · {len(biggest)}"):
@@ -1544,13 +1650,15 @@ def render_config(conf: Config) -> None:
 
 
 def render(conf: Config, ws: Workspace) -> None:
-    """The Control room: today's diagnostics, backfill, coverage requests to review, configuration (builder only)."""
+    """The Control room: today's diagnostics, backfill, coverage requests and source repairs to review, configuration
+    (builder only)."""
     if not owner.is_builder(conf):
         st.info(NOT_BUILDER)
         return
     render_health(conf, ws)
     render_backfill(conf, ws)
     radar_view.render_review(conf)
+    repairs_view.render_review(conf)
     render_config(conf)
 
 

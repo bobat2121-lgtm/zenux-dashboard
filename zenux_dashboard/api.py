@@ -5,14 +5,15 @@ the Authorization header, never in a URL, and no error carries a token, a header
 short technical line for the builder, and `detail` is the hub's own plain sentence (`{error, message, ...}`).
 
 Hub routes (docs/SPEC-PHASE02.md section 5 for the shapes, docs/SPEC-PHASE05.md for the WF5 ones;
-docs/SPEC-PHASE03-UI.md 3.3 for these wrappers):
+docs/SPEC-PHASE03-UI.md 3.3 for these wrappers; docs/SPEC-REPAIR-PHASE-B.md 1.2 and 1.4 for the source repairs):
     reads  (bearer READ_TOKEN):  GET /editions, /editions/<id>, /editions/latest, /editions/search, /status,
                                  /rejected, /modules, /modules/<id>/inspect, /mutes, /mutes/preview,
                                  /mutes/bring-back-preview, /stars, /stars/preview, /preferences, /rules, /settings,
-                                 /settings/volume/preview, /brief, /radar, /diagnostics, /snapshot, /sources
+                                 /settings/volume/preview, /brief, /radar, /repairs, /diagnostics, /snapshot, /sources
     writes (bearer OWNER_TOKEN): POST /preferences, /rules/<id>/<action> (reopen undoes turning a suggestion down),
                                  /feedback, /mutes, /stars, /promote, /settings/volume, /brief/suggest, /signoff,
-                                 /admin/stage, /radar/requests, /radar/<id>/{approve|reject}, /admin/sources/{ack|unack}
+                                 /admin/stage, /radar/requests, /radar/<id>/{approve|reject},
+                                 /repairs/<id>/{approve|reject|withdraw}, /admin/sources/{ack|unack}
 
 A hub refusal is {error, message, ...details}: `message` is one plain sentence (docs/SPEC-PHASE05.md section 1), so
 `detail` can be shown as written once ui.looks_technical passes it; `data` keeps the details (`fields` on a validation
@@ -59,6 +60,7 @@ MUTE_KINDS = ("source", "entity", "story", "outlet")  # outlet (WF5): one outlet
 VOLUME_MODES = ("top", "standard", "broad")
 STAGES = ("staging", "live")
 RADAR_KINDS = ("track_source", "missed_story", "new_coverage")
+REPAIR_ACTIONS = ("approve", "reject", "withdraw")  # POST /repairs/<id>/<action>; no route reverses one
 REJECTED_FILTERS = ("all", "near_miss", "same_story", "muted", "old_news", "auto")
 REJECTED_LIMIT = 500        # the hub's page size cap for GET /rejected (BRAIN_LIMITS.rejectedMax)
 SEARCH_DAYS = 90            # GET /editions/search looks this far back by default
@@ -321,6 +323,13 @@ def radar(ws: Workspace) -> dict:
     """GET /radar: {requests, total, limit, has_more}; each request with its stage, timeline, plain status and
     proposal, sources and first stories."""
     return _dict(hub_get(ws, "/radar"), "radar")
+
+
+def repairs(ws: Workspace) -> dict:
+    """GET /repairs: {repairs, counts}; the source repairs the Radar scout proposed, newest first (at most 100), each
+    with the catalog's entry before the fix, the proposal, the alternates with their labels and the probe's evidence
+    (docs/SPEC-REPAIR-PHASE-B.md 1.4), and `counts` by status over every repair. An older hub answers 404."""
+    return _dict(hub_get(ws, "/repairs"), "repairs")
 
 
 def diagnostics(ws: Workspace) -> dict:
@@ -590,6 +599,18 @@ def radar_action(ws: Workspace, token: str, radar_id: int, action: str, *, note:
     if proposed_at is not NOT_SHOWN:
         body["proposed_at"] = proposed_at
     return hub_post(ws, f"/radar/{rid}/{action}", body, token)
+
+
+def repair_action(ws: Workspace, token: str, repair_id: int, action: str, note: str | None = None) -> dict:
+    """POST /repairs/<id>/<approve|reject|withdraw> {note?}: a proposed repair becomes approved or rejected, a proposed
+    or approved one withdrawn. Answers {repair}; a repair that has moved on is a 409 with the hub's plain sentence, an
+    unknown one a 404."""
+    if action not in REPAIR_ACTIONS:
+        raise invalid("Choose approve, reject or withdraw.")
+    rid = _id(repair_id)
+    if rid is None:
+        raise invalid("That source repair is not known.")
+    return hub_post(ws, f"/repairs/{rid}/{action}", _with({}, note=_note(note, LONG_TEXT_MAX)), token)
 
 
 def ack_source(ws: Workspace, module_id: str, source_key: str, note: str, owner_token: str) -> Any:

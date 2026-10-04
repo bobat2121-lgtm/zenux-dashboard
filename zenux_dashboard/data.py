@@ -96,6 +96,12 @@ def radar(workspace_id: str) -> dict:
     return api.radar(_ws(workspace_id))
 
 
+@st.cache_data(ttl=READ_TTL, show_spinner=False)
+def repairs(workspace_id: str) -> dict:
+    """GET /repairs: source repairs (the Control room's review and its source-health window)."""
+    return api.repairs(_ws(workspace_id))
+
+
 # ---------------------------------------------------------------------------------------------- tuning
 
 
@@ -211,9 +217,9 @@ def workspace_health(workspace_id: str) -> dict:
     return gather_health(_ws(workspace_id))
 
 
-READS = (editions, edition, latest_edition_id, search_editions, status, rejected, modules, inspect, radar, mutes,
-         mute_preview, bring_back_preview, stars, star_preview, preferences, rules, settings, volume_preview, brief,
-         diagnostics, hub_sources)
+READS = (editions, edition, latest_edition_id, search_editions, status, rejected, modules, inspect, radar, repairs,
+         mutes, mute_preview, bring_back_preview, stars, star_preview, preferences, rules, settings, volume_preview,
+         brief, diagnostics, hub_sources)
 
 
 def clear_reads() -> None:

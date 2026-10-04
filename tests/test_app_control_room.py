@@ -292,7 +292,7 @@ class HealthPanelTests(ControlCase):
         self.assert_clean(at)
         self.assertEqual(at.session_state["zx_dialog"]["name"], control_view.DIALOG_FAILING)
         text = self.visible_text(at)
-        self.assertIn("Sources not working · defense-unmanned", text)
+        self.assertIn("Source health · defense-unmanned", text)
         self.assertIn("sam-opps", text)
         self.assertIn("The site asked ZENUX to slow down (HTTP 429, too many requests).", text)
         self.assertIn("Failed checks in a row 3", text)
@@ -304,6 +304,48 @@ class HealthPanelTests(ControlCase):
         at.button(key="dlg_cancel").click().run()
         self.assert_clean(at)
         self.assertNotIn("zx_dialog", at.session_state)
+
+    def test_retrying_and_slowed_sources_colour_nothing_and_open_the_window(self):
+        # docs/PLAN-SOURCE-REPAIR.md Phase A: one missed check after working is "retrying", a source slowed after
+        # repeated HTTP 429s is "slowed"; neither makes the module degraded
+        diag = fx.diagnostics(failing=False)
+        diag["modules"][1]["status"] = "partial"
+        sam = {"module_id": "defense-unmanned", "source_key": "sam-opps", "health": "degraded", "last_status": "error",
+               "last_http_status": 503, "consecutive_failures": 1, "last_ok_at": fx.iso(1)}
+        diag["retrying"] = [sam]
+        diag["slowed"] = [{"module": "defense-unmanned", "source_key": "eu-ted-uas", "factor": 2, "base_minutes": 360,
+                           "effective_minutes": 720, "reason": "throttled", "http_status": 429, "since": fx.iso(5)}]
+        self.http.on("GET", PILOT_HUB + "/diagnostics", diag)
+        at = self.control()
+        self.assert_clean(at)
+        self.assertEqual([b.key for b in at.button if str(b.key).startswith("cr_light_")], [])  # nothing degraded
+        note = at.button(key="cr_notes_pilot_defense-unmanned")
+        self.assertEqual(note.label, "1 retrying · 1 slowed")
+        labels_ = [e.label for e in at.expander]
+        self.assertIn("pilot · retrying after one missed check · 1", labels_)
+        self.assertIn("pilot · slowed down automatically · 1", labels_)
+        note.click().run()
+        self.assert_clean(at)
+        text = self.visible_text(at)
+        self.assertIn("Source health · defense-unmanned", text)
+        self.assertIn("No source is failing.", text)
+        self.assertIn("Retrying after one missed check (it colours nothing)", text)
+        self.assertIn("The site's server had an error (HTTP 503).", text)
+        self.assertIn("Slowed down automatically", text)
+        self.assertIn("Checked every 12 h instead of every 6 h since", text)
+        self.assertIn("the site asked us to slow down (HTTP 429)", text)
+
+    def test_status_with_retrying_sources(self):
+        status = control_view.module_status({"status": "partial"}, None, None, 0, retrying=1)
+        self.assertEqual(status, ("ok", "1 source retrying"))
+        self.assertEqual(control_view.module_status({"status": "partial"}, None, None, 0, retrying=1, partial_flagged=True)[0],
+                         "degraded")  # a partial run with another cause stays degraded
+        # a failed run whose only misses are retrying (no red reason from the hub) is ok; with a red reason it is failed
+        self.assertEqual(control_view.module_status({"status": "failed"}, None, None, 0, retrying=1), ("ok", "1 source retrying"))
+        self.assertEqual(control_view.module_status({"status": "failed"}, None, None, 0, retrying=1, red_flagged=True)[0], "failed")
+        self.assertEqual(control_view.module_status({"status": "failed"}, None, None, 0)[0], "failed")
+        self.assertEqual(control_view.every_text(90), "every 90 min")
+        self.assertEqual(control_view.every_text(2880), "every 2 days")
 
     def test_failure_reasons_in_plain_words(self):
         reason = control_view.failure_reason

@@ -992,6 +992,13 @@ def radar_v8() -> dict:
     ], "total": 6, "limit": 200, "has_more": False}
 
 
+def repairs_v9() -> dict:
+    """GET /repairs (schema 9, docs/SPEC-REPAIR-PHASE-B.md 1.2): no source repair yet. fixtures_repairs.py holds one of
+    every action and status."""
+    return {"repairs": [], "counts": {"proposed": 0, "approved": 0, "applied": 0, "recovered": 0, "rejected": 0,
+                                      "withdrawn": 0}}
+
+
 # ------------------------------------------------------------------------------------------------ WF5 reads
 
 
