@@ -645,6 +645,7 @@ def render_row(ws: Workspace, row: dict, view: str) -> None:
 
 
 def render(ws: Workspace) -> None:
+    actions.ctrl_click_support()  # Ctrl/Cmd+click on More / Less like this opens the options
     view = current_view()
     sort = current_sort(view)
     days = current_days()

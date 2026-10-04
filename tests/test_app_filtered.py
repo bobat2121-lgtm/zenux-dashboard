@@ -499,7 +499,7 @@ class RowActionTests(FilteredCase):
     def test_less_like_this_targets_the_event(self):
         self.http.on("POST", PILOT_HUB + "/preferences", FakeResponse(201, ff.preference_created()))
         at = self.filtered(pin=PIN)
-        self.click(at, "act_less_r7201")
+        self.click(at, "act_lessfull_r7201")
         self.assert_clean(at)
         scope = at.radio(key="dlg_scope")
         self.assertEqual(scope.value, "similar")
@@ -518,7 +518,7 @@ class RowActionTests(FilteredCase):
     def test_more_like_this_without_a_story(self):
         self.http.on("POST", PILOT_HUB + "/preferences", FakeResponse(201, ff.preference_created(direction="more")))
         at = self.filtered(pin=PIN)
-        self.click(at, "act_more_r7204")
+        self.click(at, "act_morefull_r7204")
         self.assert_clean(at)
         options = list(at.radio(key="dlg_scope").options)
         self.assertEqual(len(options), 2)
@@ -529,6 +529,16 @@ class RowActionTests(FilteredCase):
         self.assertNotIn("item_id", sent(post))
         self.assertEqual(sent(post).get("direction"), "more")
         self.assert_clean(at)
+
+    def test_a_plain_click_on_a_row_saves_at_once(self):
+        self.http.on("POST", PILOT_HUB + "/preferences", FakeResponse(201, ff.preference_created()))
+        at = self.filtered(pin=PIN)
+        self.click(at, "act_less_r7201")
+        self.assert_clean(at)
+        post = self.http.find("POST", PILOT_HUB + "/preferences")[-1]
+        self.assertEqual(post.bearer, OWNER)
+        self.assertEqual(sent(post), {"direction": "less", "scope": "similar", "event_id": 7201})
+        self.assertTrue(any(t.startswith("Saved: Show me less like this.") for t in self.toasts(at)))
 
     def test_mute_source_from_a_row(self):
         self.http.on("POST", MUTES, FakeResponse(201, ff.mute_added()))

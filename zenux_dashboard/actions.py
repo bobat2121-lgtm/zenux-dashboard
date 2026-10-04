@@ -17,8 +17,14 @@ st.secrets), and looks the workspace up again when it draws.
 
 What each write does (docs/SPEC-PHASE02.md; the copy below says exactly this and nothing more):
 
-- More / Less like this: POST /preferences. The preference is active at once (the wording assistant may later
-  suggest a clearer wording, which the analyst approves or not). Undo: POST /rules/<id>/retire {reason: "undone"}.
+- More / Less like this: POST /preferences. A plain click saves at once with the defaults (stories like this, no end
+  date, no words; quick_preference). Ctrl+click (Cmd+click on a Mac) opens the dialog with every option (just this
+  story, the analyst's own words, an end date): Streamlit buttons do not report modifier keys, so the page script
+  (CTRL_CLICK_JS, drawn by ctrl_click_support) forwards such a click to the story's hidden twin button
+  (act_morefull_<key> / act_lessfull_<key>, hidden in feed.css). Touch screens have no Ctrl key: once a story holds a
+  preference, its "Change" button opens the same dialog. The preference is active at once (the wording assistant
+  may later suggest a clearer wording, which the analyst approves or not). Undo: POST /rules/<id>/retire
+  {reason: "undone"}.
 - Wrong facts: POST /feedback {verdict: "factual_error", item_id, note} on a briefing item. The ZENUX editor
   re-checks the item at the next briefing and either corrects it or explains why it stands. No undo route.
 - Rate this story: POST /feedback {scope: "item", verdict, score}. The 0-100 slider and the four ratings move
@@ -98,6 +104,37 @@ SCORE_SCALE = (
 RATE_SCALE_NOTE = ("Your rating and score go to the editor beside its own score. When your band differs from the "
                    "editor's, it scores similar stories in your band from the next briefing.")
 EXISTS_FALLBACK = "You already have a preference made from this story. Replace it?"
+# A plain click on More / Less like this saves at once; the tooltip says so and how to get the options.
+QUICK_HELP = {
+    "more": ("Saves at once: more stories like this, with no end date. Ctrl+click (Cmd+click on a Mac) for options: "
+             "just this story, your own words or an end date."),
+    "less": ("Saves at once: fewer stories like this, with no end date. Ctrl+click (Cmd+click on a Mac) for options: "
+             "just this story, your own words or an end date."),
+}
+CHANGE_HELP = "Options for this story: just this story, your own words or an end date."
+CHANGE_REPLACES = "Saving replaces what you asked for on this story."
+ALREADY_ASKED = "You already asked for {what} on this story. Use Change for other options."
+# Ctrl+click (Cmd+click on a Mac) on More / Less like this: Streamlit buttons do not report modifier keys, so this
+# page script catches such a click before the button sees it and clicks the story's hidden twin button instead
+# (act_morefull_<key> / act_lessfull_<key>), whose run opens the dialog with every option.
+CTRL_CLICK_JS = r"""
+(function () {
+  if (window.zxCtrlClick) return;
+  window.zxCtrlClick = true;
+  document.addEventListener('click', function (ev) {
+    if (!(ev.ctrlKey || ev.metaKey) || !ev.target || !ev.target.closest) return;
+    var holder = ev.target.closest('[class*="st-key-act_more_"], [class*="st-key-act_less_"]');
+    if (!holder) return;
+    var m = /(?:^|\s)st-key-act_(more|less)_(\S+)/.exec(holder.className);
+    if (!m) return;
+    var twin = document.querySelector('.st-key-act_' + m[1] + 'full_' + CSS.escape(m[2]) + ' button');
+    if (!twin || twin.disabled) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    twin.click();
+  }, true);
+})();
+"""
 
 DIALOG_PREF = "pref"
 DIALOG_WRONG_FACTS = "wrong_facts"
@@ -318,9 +355,20 @@ def action_bar(ws: Workspace, target: Target, *, key: str, promote: bool = False
             st.markdown(f'<span class="zx-asked">{esc(asked_text(pref))}</span>', unsafe_allow_html=True)
             ui.write_button("Undo", ws=ws, key=f"act_undo_pref_{key}_{n}", type="tertiary",
                             on_click=undo_preference, args=(ws, pref["id"]))
-        if ui.write_button("More like this", ws=ws, key=f"act_more_{key}", icon=":material/thumb_up:"):
+            # The options dialog without a Ctrl key (phones and tablets), set to replace what the story holds.
+            ui.write_button("Change", ws=ws, key=f"act_change_pref_{key}_{n}", type="tertiary", help=CHANGE_HELP,
+                            on_click=open_preference, args=(ws, target, pref.get("direction") or "more"),
+                            kwargs={"replace_note": CHANGE_REPLACES})
+        # A plain click saves at once; Ctrl/Cmd+click reaches the hidden twin (CTRL_CLICK_JS), which opens the options.
+        if ui.write_button("More like this", ws=ws, key=f"act_more_{key}", icon=":material/thumb_up:",
+                           help=QUICK_HELP["more"]):
+            quick_preference(ws, target, "more")
+        if ui.write_button("More like this, with options", ws=ws, key=f"act_morefull_{key}"):
             open_preference(ws, target, "more")
-        if ui.write_button("Less like this", ws=ws, key=f"act_less_{key}", icon=":material/thumb_down:"):
+        if ui.write_button("Less like this", ws=ws, key=f"act_less_{key}", icon=":material/thumb_down:",
+                           help=QUICK_HELP["less"]):
+            quick_preference(ws, target, "less")
+        if ui.write_button("Less like this, with options", ws=ws, key=f"act_lessfull_{key}"):
             open_preference(ws, target, "less")
         if target.event_id is not None or target.item_id is not None:
             if ui.write_button("Rate this story", ws=ws, key=f"act_rate_{key}", icon=":material/star_rate:"):
@@ -545,10 +593,64 @@ def why_body(ws: Workspace, target: Target, why: Mapping, key: str, extra: list[
 # ---------------------------------------------------------------------------------------------- openers
 
 
-def open_preference(ws: Workspace, target: Target, direction: str) -> None:
-    """More like this ("more") or Less like this ("less")."""
+def open_preference(ws: Workspace, target: Target, direction: str, replace_note: str | None = None) -> None:
+    """The dialog for More like this ("more") or Less like this ("less") with every option. replace_note: the story
+    already holds a preference and saving replaces it (the dialog shows the note and its button says "Replace it")."""
     direction = direction if direction in DIRECTIONS else "more"
     ui.open_dialog(DIALOG_PREF, workspace_id=ws.id, target=target, direction=direction)
+    if replace_note:
+        st.session_state[REPLACE_KEY] = replace_note  # after open_dialog, which clears the dialog's widgets
+
+
+def quick_preference(ws: Workspace, target: Target, direction: str) -> None:
+    """A plain click on More / Less like this: save "stories like this" with no end date and no words, at once, then
+    rerun so the card says what was asked (with Undo and Change). A story that already holds the same preference only
+    says so; one that holds the other direction opens the dialog, set to replace it (one preference per story)."""
+    direction = direction if direction in DIRECTIONS else "more"
+    if target.my_prefs:
+        if any(one_line(p.get("direction")) == direction for p in target.my_prefs):
+            what = {"more": "more like this", "less": "less like this"}[direction]
+            ui.notify(ALREADY_ASKED.format(what=what))
+            st.rerun()
+        open_preference(ws, target, direction, replace_note=CHANGE_REPLACES)
+        return
+    result, handled = save_preference(ws, target, direction, scope=DEFAULT_SCOPE, words="", expires=None,
+                                      replacing=False)
+    if handled is not None:  # the hub knows of a preference the page did not show yet: ask in the dialog
+        open_preference(ws, target, direction, replace_note=one_line(handled.detail) or EXISTS_FALLBACK)
+        return
+    if result is not None:
+        st.rerun()
+
+
+def save_preference(ws: Workspace, target: Target, direction: str, *, scope: str, words: str, expires: str | None,
+                    replacing: bool) -> tuple[Any | None, api.ApiError | None]:
+    """POST /preferences for this story, with its toast and Undo; a "preference_exists" refusal comes back to the
+    caller instead of being drawn. -> (result or None, the refusal or None)."""
+    item_id = target.item_id
+    event_id = None if item_id is not None else target.event_id
+
+    def call(token: str) -> Any:
+        return api.add_preference(ws, token, direction=direction, scope=scope or DEFAULT_SCOPE, text=words,
+                                  item_id=item_id, event_id=event_id, expires_at=expires, replace=replacing)
+
+    def undo(result: Any) -> tuple | None:
+        pid = one_line(pick(result, "preference.id"))
+        if not pid:
+            return None
+        return ("Saved a preference.", lambda token: api.rule_action(ws, token, pid, "retire", {"reason": "undone"}),
+                "Preference removed.")
+
+    from .brief_view import write_or_handle  # brief_view imports nothing of this module; late to keep imports light
+    return write_or_handle(ws, call, toast=lambda r: preference_toast(direction, r, ws.timezone), undo=undo,
+                           codes=("preference_exists",))
+
+
+def ctrl_click_support() -> None:
+    """The page script behind Ctrl/Cmd+click on More / Less like this (CTRL_CLICK_JS). Drawn once per run by each view
+    that shows story buttons, in a container feed.css hides (zx_ctrl_click), so it takes no room."""
+    with st.container(key="zx_ctrl_click"):
+        st.html(f"<script>{CTRL_CLICK_JS}</script>", unsafe_allow_javascript=True)
 
 
 def open_wrong_facts(ws: Workspace, target: Target) -> None:
@@ -782,23 +884,8 @@ def preference_dialog(workspace_id: str, target: Target, direction: str) -> None
         return
     words = clean_text(text)
     expires = ui.local_midnight_iso(until, ws.timezone) if isinstance(until, date) else None
-    item_id = target.item_id
-    event_id = None if item_id is not None else target.event_id
-
-    def call(token: str) -> Any:
-        return api.add_preference(ws, token, direction=direction, scope=scope or DEFAULT_SCOPE, text=words,
-                                  item_id=item_id, event_id=event_id, expires_at=expires, replace=replacing)
-
-    def undo(result: Any) -> tuple | None:
-        pid = one_line(pick(result, "preference.id"))
-        if not pid:
-            return None
-        return ("Saved a preference.", lambda token: api.rule_action(ws, token, pid, "retire", {"reason": "undone"}),
-                "Preference removed.")
-
-    from .brief_view import write_or_handle  # brief_view imports nothing of this module; late to keep imports light
-    result, handled = write_or_handle(ws, call, toast=lambda r: preference_toast(direction, r, ws.timezone),
-                                      undo=undo, codes=("preference_exists",))
+    result, handled = save_preference(ws, target, direction, scope=scope or DEFAULT_SCOPE, words=words,
+                                      expires=expires, replacing=replacing)
     if handled is not None:
         st.session_state[REPLACE_KEY] = one_line(handled.detail) or EXISTS_FALLBACK
         st.rerun()

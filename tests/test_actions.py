@@ -68,7 +68,7 @@ class PreferenceTests(ActionCase):
         answer = fb.preference_created("R-0013")
         self.http.on("POST", PREFERENCES, FakeResponse(201, answer))
         at = self.briefing()
-        self.click(at, "act_more_i1201")
+        self.click(at, "act_morefull_i1201")
         self.assert_clean(at)
         scope = at.radio(key="dlg_scope")
         self.assertEqual(scope.value, "similar")
@@ -98,10 +98,55 @@ class PreferenceTests(ActionCase):
         self.assert_sent(PILOT_HUB + "/rules/R-0013/retire", {"reason": "undone"})
         self.assertIn("Preference removed.", self.toasts(at))
 
+    def test_a_plain_click_saves_stories_like_this_with_no_end_date(self):
+        answer = fb.preference_created("R-0013")
+        self.http.on("POST", PREFERENCES, FakeResponse(201, answer))
+        at = self.briefing()
+        self.assertEqual(at.button(key="act_more_i1201").help, actions.QUICK_HELP["more"])
+        self.click(at, "act_more_i1201")
+        self.assert_clean(at)
+        self.assert_sent(PREFERENCES, {"direction": "more", "scope": "similar", "item_id": 1201})
+        self.assert_dialog_closed(at)
+        self.assertIn(f"Saved: Show me more like this. {ui.effective_text(answer['effective'], TZ)}", self.toasts(at))
+        self.assertEqual(self.undo(at).text, "Saved a preference.")
+
+    def test_a_plain_click_on_less_like_this(self):
+        self.http.on("POST", PREFERENCES, FakeResponse(201, fb.preference_created("R-0014")))
+        at = self.briefing()
+        self.assertEqual(at.button(key="act_less_i1202").help, actions.QUICK_HELP["less"])
+        self.click(at, "act_less_i1202")
+        self.assert_clean(at)
+        self.assert_sent(PREFERENCES, {"direction": "less", "scope": "similar", "item_id": 1202})
+        self.assert_dialog_closed(at)
+
+    def test_ctrl_click_lands_on_a_hidden_twin_that_opens_every_option(self):
+        at = self.briefing()
+        keys = {str(b.key) for b in at.button}
+        self.assertTrue({"act_morefull_i1201", "act_lessfull_i1201"} <= keys)
+        scripts = [el for el in at.get("html") if "zxCtrlClick" in str(el.value)]
+        self.assertEqual(len(scripts), 1)  # one page script, however many stories
+        self.assertTrue(scripts[0].proto.unsafe_allow_javascript)
+        self.assertIn("ev.ctrlKey || ev.metaKey", str(scripts[0].value))
+        self.click(at, "act_morefull_i1201")  # what a Ctrl+click (Cmd+click) is forwarded to
+        self.assert_clean(at)
+        self.assertEqual(at.radio(key="dlg_scope").value, "similar")
+        self.assertFalse(at.checkbox(key="dlg_until_on").value)
+        self.assertEqual(self.http.posts(), [])
+
+    def test_a_plain_click_the_hub_refuses_as_a_second_preference_opens_the_options(self):
+        sentence = "You already asked for less like this on this story. Replace it with more like this?"
+        self.http.on("POST", PREFERENCES, FakeResponse(409, {"error": "preference_exists", "message": sentence}))
+        at = self.briefing()
+        self.click(at, "act_more_i1201")
+        self.assert_clean(at)
+        self.assertIn(sentence, self.texts(at, "warning"))
+        self.assertEqual(at.button(key="dlg_save").label, "Replace it")
+        self.assertEqual(self.toasts(at), [])
+
     def test_less_like_this_without_a_story(self):
         self.http.on("POST", PREFERENCES, FakeResponse(201, fb.preference_created("R-0014")))
         at = self.briefing()
-        self.click(at, "act_less_i1202")  # this story has not been in a briefing as a story yet: no story id
+        self.click(at, "act_lessfull_i1202")  # this story has not been in a briefing as a story yet: no story id
         self.assert_clean(at)
         scope = at.radio(key="dlg_scope")
         self.assertEqual(list(scope.options), [labels.SCOPE_LABELS[s] for s in ("similar", "standing")])
@@ -116,7 +161,7 @@ class PreferenceTests(ActionCase):
     def test_just_this_story(self):
         self.http.on("POST", PREFERENCES, FakeResponse(201, fb.preference_created()))
         at = self.briefing()
-        self.click(at, "act_less_i1201")
+        self.click(at, "act_lessfull_i1201")
         at.radio(key="dlg_scope").set_value("this_story")
         at.text_input(key="dlg_text").input("more of the same deal")
         at.button(key="dlg_save").click().run()
@@ -128,7 +173,7 @@ class PreferenceTests(ActionCase):
         sentence = "This story has not been in a briefing yet; choose 'Stories like this'."
         self.http.on("POST", PREFERENCES, FakeResponse(400, {"error": "no_story", "message": sentence}))
         at = self.briefing()
-        self.click(at, "act_more_i1201")
+        self.click(at, "act_morefull_i1201")
         at.radio(key="dlg_scope").set_value("this_story")
         at.button(key="dlg_save").click().run()
         self.assert_clean(at)
@@ -139,7 +184,7 @@ class PreferenceTests(ActionCase):
 
     def test_cancel_sends_nothing(self):
         at = self.briefing()
-        self.click(at, "act_more_i1201")
+        self.click(at, "act_morefull_i1201")
         at.button(key="dlg_cancel").click().run()
         self.assert_clean(at)
         self.assert_dialog_closed(at)
@@ -156,7 +201,7 @@ class PreferenceTests(ActionCase):
         keys = {b.key for b in at.button}
         self.assertIn("act_rate_e12r1", keys)
         self.assertNotIn("act_wrong_e12r1", keys)  # Wrong facts needs the briefing item
-        self.click(at, "act_more_e12r1")
+        self.click(at, "act_morefull_e12r1")
         at.button(key="dlg_save").click().run()
         self.assert_clean(at)
         self.assert_sent(PREFERENCES, {"direction": "more", "scope": "similar", "event_id": 9001})
@@ -517,7 +562,8 @@ class LockTests(ActionCase):
         body = fb.with_shelves()
         self.http.on("GET", EDITIONS, body)
         at = self.briefing(pin=None, popover="zx_more_i1201")
-        for key in ("act_more_i1201", "act_less_i1201", "act_wrong_i1201", "act_rate_i1201", "act_mute_source_i1201",
+        for key in ("act_more_i1201", "act_less_i1201", "act_morefull_i1201", "act_lessfull_i1201", "act_wrong_i1201",
+                    "act_rate_i1201", "act_mute_source_i1201",
                     "act_mute_co_i1201_0", "act_star_i1201_0", "act_unstar_i1201_1", "act_mute_story_i1201",
                     "br_promote_0_near_1301"):
             with self.subTest(key=key):

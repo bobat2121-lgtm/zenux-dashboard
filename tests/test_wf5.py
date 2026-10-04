@@ -109,7 +109,7 @@ class AlreadySaidTests(Case):
 
         self.http.on("POST", PREFERENCES, answer)
         at = self.briefing()
-        self.click(at, "act_more_i1201")
+        self.click(at, "act_morefull_i1201")
         self.assert_clean(at)
         self.assertIn("You asked for less like this on this story. Saving asks whether to replace it.",
                       self.texts(at, "caption"))
@@ -122,6 +122,46 @@ class AlreadySaidTests(Case):
         self.assert_clean(at)
         self.assertIs(self.sent(PREFERENCES)["replace"], True)
         self.assertTrue(any("It replaces your earlier one on this story." in t for t in self.toasts(at)))
+
+
+    def test_a_plain_click_the_other_way_opens_the_options_set_to_replace(self):
+        self.http.on("GET", EDITIONS, self.editions_with_a_preference())
+        self.http.on("POST", PREFERENCES, FakeResponse(201, dict(fb.preference_created("I-0003"), replaced=["I-0002"])))
+        at = self.briefing()
+        self.click(at, "act_more_i1201")
+        self.assert_clean(at)
+        self.assertEqual(self.http.find("POST", PREFERENCES), [])  # nothing replaced without asking
+        self.assertIn(actions.CHANGE_REPLACES, self.texts(at, "warning"))
+        self.assertEqual(at.button(key="dlg_save").label, "Replace it")
+        at.button(key="dlg_save").click().run()
+        self.assert_clean(at)
+        sent = self.sent(PREFERENCES)
+        self.assertEqual((sent["direction"], sent["scope"], sent["replace"]), ("more", "similar", True))
+
+    def test_a_plain_click_the_same_way_only_says_so(self):
+        self.http.on("GET", EDITIONS, self.editions_with_a_preference())
+        at = self.briefing()
+        self.click(at, "act_less_i1201")
+        self.assert_clean(at)
+        self.assertEqual(self.http.find("POST", PREFERENCES), [])
+        self.assertIn(actions.ALREADY_ASKED.format(what="less like this"), self.toasts(at))
+
+    def test_change_opens_every_option_without_a_ctrl_key(self):
+        self.http.on("GET", EDITIONS, self.editions_with_a_preference())
+        self.http.on("POST", PREFERENCES, FakeResponse(201, dict(fb.preference_created("I-0003"), replaced=["I-0002"])))
+        at = self.briefing()
+        change = at.button(key="act_change_pref_i1201_0")
+        self.assertEqual((change.label, change.help), ("Change", actions.CHANGE_HELP))
+        change.click().run()
+        self.assert_clean(at)
+        self.assertIn(actions.CHANGE_REPLACES, self.texts(at, "warning"))
+        at.radio(key="dlg_scope").set_value("this_story")
+        at.text_input(key="dlg_text").input("only this deal")
+        at.button(key="dlg_save").click().run()
+        self.assert_clean(at)
+        sent = self.sent(PREFERENCES)
+        self.assertEqual((sent["direction"], sent["scope"], sent["text"], sent["replace"]),
+                         ("less", "this_story", "only this deal", True))
 
 
 class LockedAndTilesTests(Case):

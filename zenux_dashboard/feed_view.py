@@ -696,6 +696,7 @@ def render_empty(ws: Workspace) -> None:
 
 def render(ws: Workspace) -> None:
     status.status_line(ws)
+    actions.ctrl_click_support()  # Ctrl/Cmd+click on More / Less like this opens the options
     try:
         editions, more = load(ws)
     except api.ApiError as exc:
