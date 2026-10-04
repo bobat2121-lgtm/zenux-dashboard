@@ -216,6 +216,25 @@ def counts_of(insp: Mapping, card: Mapping | None) -> dict[str, int]:
     }
 
 
+def removed_week(insp: Mapping) -> str:
+    """'Includes 9 from a removed source that ZENUX no longer collects.' when this week's total counts stories from
+    sources no longer in the area's list (the hub's orphans: retired, or renamed in the module); '' otherwise. The
+    number is the week's total minus what the listed sources account for."""
+    orphans = dicts(insp.get("orphans"))
+    if not orphans:
+        return ""
+    totals = insp.get("totals") if isinstance(insp.get("totals"), Mapping) else {}
+    listed = sum(as_int((s.get("stats") if isinstance(s.get("stats"), Mapping) else {}).get("items_7d")) or 0
+                 for s in dicts(insp.get("sources")))
+    gone = (as_int(totals.get("items_7d")) or 0) - listed
+    if gone <= 0:
+        return ""
+    if all(o.get("retired") is True for o in orphans):
+        what = "a removed source" if len(orphans) == 1 else "removed sources"
+        return f"Includes {number(gone)} from {what} that ZENUX no longer collects."
+    return f"Includes {number(gone)} from sources no longer listed in this area."
+
+
 def lane_words(insp: Mapping) -> str:
     """'Company news and filings, trade press and news search': the kinds of sources, by size, in plain words."""
     lanes = sorted(dicts(insp.get("lanes")), key=lambda lane: -(as_int(lane.get("source_count")) or 0))
@@ -251,7 +270,7 @@ def flow_steps(insp: Mapping, card: Mapping | None, bar: int | None, cap: int | 
     return [
         ("Watch", f"{plural(c['companies'], 'company', 'companies')} · "
                   f"{plural(c['on'] + c['off'], 'source')}" + (f" ({c['on']} on)" if c["off"] else ""), watch),
-        ("Collect", f"{number(c['week'])} stories this week", COLLECT_TEXT),
+        ("Collect", f"{number(c['week'])} stories this week", " ".join(p for p in (COLLECT_TEXT, removed_week(insp)) if p)),
         ("Score", "The ZENUX editor scores each one 0 to 100", score),
         ("Brief", brief_big, brief),
     ]

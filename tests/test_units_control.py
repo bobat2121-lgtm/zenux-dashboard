@@ -431,6 +431,26 @@ class CoverageShapeTests(unittest.TestCase):
         crusoe = self.insp["entities"][2]
         self.assertEqual([flag for flag, _, _ in coverage_view.coverage_flags(crusoe)], ["name_only"])
 
+    def test_stories_from_removed_sources_are_labelled(self):
+        def insp(total, listed, orphans):
+            return {"totals": {"items_7d": total}, "orphans": orphans,
+                    "sources": [{"key": f"s{n}", "stats": {"items_7d": v}} for n, v in enumerate(listed)]}
+        retired = [{"source_key": "ent-havocai-rss", "events": 9, "retired": True}]
+        self.assertEqual(coverage_view.removed_week(insp(1248, [1000, 239], retired)),
+                         "Includes 9 from a removed source that ZENUX no longer collects.")
+        two = retired + [{"source_key": "old-key", "events": 41, "retired": True}]
+        self.assertEqual(coverage_view.removed_week(insp(1250, [1239], two)),
+                         "Includes 11 from removed sources that ZENUX no longer collects.")
+        renamed = [{"source_key": "old-key", "events": 41, "retired": False}]
+        self.assertEqual(coverage_view.removed_week(insp(1250, [1239], renamed)),
+                         "Includes 11 from sources no longer listed in this area.")
+        self.assertEqual(coverage_view.removed_week(insp(1239, [1239], retired)), "", "older stories only: no label")
+        self.assertEqual(coverage_view.removed_week(insp(1248, [1239], [])), "", "no orphans: no label")
+        steps = coverage_view.flow_steps(insp(1248, [1239], retired), None, None, None, "", "")
+        self.assertEqual(steps[1][1], "1,248 stories this week")
+        self.assertTrue(steps[1][2].endswith("Includes 9 from a removed source that ZENUX no longer collects."))
+        self.assertEqual(labels.find_jargon(steps[1][2]), [])
+
     def test_every_analyst_string_is_plain(self):
         card = fc.modules()["modules"][0]
         rows = (coverage_view.company_rows(self.insp, [], "all")[1]
