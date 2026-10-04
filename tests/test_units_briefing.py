@@ -179,7 +179,7 @@ class TargetTests(unittest.TestCase):
             subjects=({"entity_id": "coreweave", "name": "CoreWeave", "muted": False, "starred": False},
                       {"entity_id": "microsoft", "name": "Microsoft", "muted": False, "starred": True}),
             url="https://example.com/coreweave", published=True, in_briefing=True, reason="Material news",
-            item_rank=1))
+            item_rank=1, score=93))
         second = actions.target_from_item(WS, edition, edition["items"][1])
         self.assertEqual((second.source_label, second.module, second.source_key, second.story_id),
                          ("war.gov", "defense-unmanned", "wargov-contracts", None))
@@ -194,6 +194,7 @@ class TargetTests(unittest.TestCase):
                           target.source_label, target.published, target.in_briefing, target.reason),
                          ("Nebius raises capital", 1301, None, "ai-infra", "dcd-news", "Data Center Dynamics", False,
                           False, "Near miss"))
+        self.assertEqual(target.score, 66)
         keyed = actions.target_from_row(WS, dict(row, source_label="dcd-news"))
         self.assertEqual(keyed.source_label, "example.com")  # never the source key
         self.assertEqual(actions.subjects_of([{"entity_id": "a", "name": "A"}, {"id": "a"}, {"name": "x"}, "junk"]),

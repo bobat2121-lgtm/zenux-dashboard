@@ -12,6 +12,10 @@ control (each choice carries the view's true count from the answer's `views`) an
   preview and choice, and Bring back on a removed mute).
 - old "Old news": filter=old_news, the hub's old-news rule and the editor's old-news rejections.
 
+Sort (on the count line, right above the list): Newest first, Highest score first or Lowest score first. Changing the view resets it to
+the view's own order (Near misses: highest first; the rest: newest first). A score order covers the whole window: the
+view's pages are all read first (up to MAX_PAGES), and stories without a score (old news, mutes) come last.
+
 The hub does the work: one row per story, the true `total`, the search box sent as `q` (every word must match the
 title, the editor's reasoning, the source's name, the publisher or a company, over the whole window), the coverage-area
 filter as `module`, and pages of up to 500 (`offset`). Rows show 50 at a time; "Show 50 more" reads the next page when
@@ -53,7 +57,14 @@ ROW_CAP = api.REJECTED_LIMIT   # one GET /rejected page
 MAX_PAGES = 20                 # at most this many pages are read for one view (10,000 stories)
 ALL_AREAS = ""                 # the "All areas" choice of the coverage-area filter
 
+SORTS: tuple[tuple[str, str], ...] = (("newest", "Newest first"), ("high", "Highest score first"),
+                                      ("low", "Lowest score first"))
+SORT_LABELS = dict(SORTS)
+VIEW_SORT = {"near": "high"}           # a view's own order; every other view: newest first
+BY_SCORE = ("high", "low")
+
 VIEW_KEY = "fo_view"
+SORT_KEY = "fo_sort"
 SEARCH_KEY = "fo_search"
 DAYS_KEY = "fo_days"
 AREA_KEY = "fo_area"
@@ -230,12 +241,20 @@ def unique_rows(rows: Iterable[Mapping]) -> list[dict]:
     return out
 
 
-def view_rows(view: str, rows: Iterable[Mapping]) -> list[dict]:
-    """The view's rows in its order (6.2): near misses best score first (unknown scores last, then newest), every
-    other view in the hub's order (newest first)."""
+def default_sort(view: str) -> str:
+    return VIEW_SORT.get(view, "newest")
+
+
+def view_rows(view: str, rows: Iterable[Mapping], sort: str | None = None) -> list[dict]:
+    """The view's rows in the chosen order (the view's own when none): highest or lowest score first (unknown scores
+    last, then the newest), or newest first (the hub's order)."""
     rows = unique_rows(rows)
-    if view == "near":
+    sort = sort if sort in SORT_LABELS else default_sort(view)
+    if sort == "high":
         return sorted(rows, key=lambda r: (score_of(r) is None, -(score_of(r) or 0), -decided_ts(r),
+                                           -(event_id_of(r) or 0)))
+    if sort == "low":
+        return sorted(rows, key=lambda r: (score_of(r) is None, score_of(r) or 0, -decided_ts(r),
                                            -(event_id_of(r) or 0)))
     return rows
 
@@ -248,9 +267,11 @@ def area_options(ws: Workspace, rows: Iterable[Mapping], current: str) -> list[s
     return sorted(found, key=lambda m: (labels.area_name(m).casefold(), m))
 
 
-def count_line(*, shown: int, total: int, days: int, loaded: int, query: str = "", near: bool = False) -> str:
+def count_line(*, shown: int, total: int, days: int, loaded: int, query: str = "", near: bool = False,
+               sort: str = "high") -> str:
     """The count line (6.1), from the hub's true total: what is shown out of every story of the view (with the search
-    and the coverage area), and, for near misses not all loaded, that the order covers the loaded ones."""
+    and the coverage area), and, for a score order over a view not all loaded (`near`), that the order covers the
+    loaded ones."""
     if query:
         text = f"{plural(total, 'story matches', 'stories match')} “{query}”"
         if shown < total:
@@ -259,7 +280,8 @@ def count_line(*, shown: int, total: int, days: int, loaded: int, query: str = "
         text = f"Showing {shown} of {plural(total, 'story', 'stories')}"
     text += f" · {last_days(days)}"
     if near and loaded < total:
-        text += f" · best first among the newest {loaded}"
+        first = "lowest" if sort == "low" else "best"
+        text += f" · {first} first among the newest {loaded}"
     return text
 
 
@@ -303,8 +325,8 @@ def score_chip(row: Mapping) -> str:
 def chips_html(row: Mapping, view: str, later: bool = False) -> str:
     """The plain reason, then the state chips. In the Muted view the "Muted" chip stands in for the reason when the
     reason is the mute itself ("Muted by you" twice says nothing more); in the Same story view the "Same story as:
-    <headline>" line stands in for a "Same story as another" reason when the hub names the story. In Near misses the
-    score chip reads "Score 74 of 100 · bar 80". `later`: a later briefing published it."""
+    <headline>" line stands in for a "Same story as another" reason when the hub names the story. A scored story's
+    chip reads "Score 74 of 100 · bar 80" in every view. `later`: a later briefing published it."""
     out = []
     reason = reason_text(row)
     named = bool(one_line(pick(canonical_of(row) or {}, "title")))
@@ -312,8 +334,9 @@ def chips_html(row: Mapping, view: str, later: bool = False) -> str:
         view == "same" and named and reason == labels.REASON_LABELS["duplicate"])
     if not doubled:
         out.append(f'<span class="rejected-chip">{esc(reason)}</span>')
-    if view == "near":  # the score alone: a 74 is "Also notable" elsewhere, never a near miss
-        out.append(score_chip(row))
+    # the score and the bar in force, in every view, so a score order shows what it sorts by (a story the hub decided
+    # itself, old news or muted, has none)
+    out.append(score_chip(row))
     if view == "muted":
         out.append(chip("Muted", "chip-state chip-muted"))
     if later:
@@ -402,7 +425,9 @@ def extra_of(row: Mapping) -> list[tuple[str, str]]:
 
 
 def _view_changed() -> None:
-    links.set_focus(view=st.session_state.get(VIEW_KEY) or DEFAULT_VIEW)
+    view = st.session_state.get(VIEW_KEY) or DEFAULT_VIEW
+    links.set_focus(view=view)
+    st.session_state[SORT_KEY] = default_sort(view)  # a new view starts in its own order
 
 
 def current_view() -> str:
@@ -428,6 +453,10 @@ def remembered(key: str, ok: Callable[[Any], bool], default: Any) -> Any:
     saved[key] = value
     st.session_state[SAVED_KEY] = saved
     return value
+
+
+def current_sort(view: str) -> str:
+    return remembered(SORT_KEY, lambda v: v in SORT_LABELS, default_sort(view))
 
 
 def current_days() -> int:
@@ -610,16 +639,19 @@ def render_row(ws: Workspace, row: dict, view: str) -> None:
 
 def render(ws: Workspace) -> None:
     view = current_view()
+    sort = current_sort(view)
     days = current_days()
     query = current_query()
     area = current_area()
-    signature = (ws.id, view, days, area, query.casefold())
+    signature = (ws.id, view, days, area, query.casefold(), sort)
     limit = shown_limit(signature)
+    # A score order covers the whole window, so every page of the view is read first (up to MAX_PAGES).
+    pages = MAX_PAGES if sort in BY_SCORE else -(-limit // ROW_CAP)
     try:
-        body, error = read(ws, view, days, query=query, area=area, pages=-(-limit // ROW_CAP)), None
+        body, error = read(ws, view, days, query=query, area=area, pages=pages), None
     except api.ApiError as exc:
         body, error = {"items": [], "total": 0, "views": {}, "has_more": False}, exc
-    rows = view_rows(view, body["items"])
+    rows = view_rows(view, body["items"], sort)
     header(area_options(ws, rows, area), days, area, body["views"])
     st.caption(INTRO[view])
     if view == "muted":
@@ -632,8 +664,12 @@ def render(ws: Workspace) -> None:
     total = max(body["total"], len(rows))
     page = rows[:limit]
     counts = count_line(shown=len(page), total=total, days=days, loaded=len(rows), query=query,
-                        near=view == "near" and body["has_more"])
-    st.markdown(f'<div class="rejected-summary">{esc(counts)}</div>', unsafe_allow_html=True)
+                        near=sort in BY_SCORE and body["has_more"], sort=sort)
+    count_col, sort_col = st.columns([5, 1.7], vertical_alignment="center")
+    count_col.markdown(f'<div class="rejected-summary">{esc(counts)}</div>', unsafe_allow_html=True)
+    with sort_col:
+        st.selectbox("Sort", [k for k, _ in SORTS], key=SORT_KEY, format_func=SORT_LABELS.get,
+                     label_visibility="collapsed")
     if not page:
         message = EMPTY[view].format(last=last_days(days))
         if query:

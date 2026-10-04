@@ -34,8 +34,13 @@ from streamlit import logger as _st_logger  # noqa: E402
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 import fixtures as fx  # noqa: E402
+from zenux_dashboard import config as zx_config  # noqa: E402
 from zenux_dashboard import labels, owner  # noqa: E402
 from zenux_dashboard.config import Workspace  # noqa: E402
+
+# The tests exercise the PIN gate unless a test turns open access on (secrets `open_access = true`): the beta default
+# (config.OPEN_ACCESS_DEFAULT, on) would otherwise unlock every test's workspace.
+zx_config.OPEN_ACCESS_DEFAULT = False
 
 # Bare-mode notices ("missing ScriptRunContext", "No runtime found") are expected outside `streamlit run`.
 # The option covers every later config parse; set_log_level covers the loggers that already exist.
@@ -365,10 +370,20 @@ class AppCase(unittest.TestCase):
         text = self.visible_text(at)
         self.assertEqual(labels.find_jargon(text) + ENGINE_KEY_RE.findall(text), [], text)
 
-    @staticmethod
-    def open_popover(at: AppTest, key: str) -> None:
-        """Open a lazy popover (key, on_change="rerun") for the next run."""
+    def open_popover(self, at: AppTest, key: str) -> None:
+        """Open a lazy popover (key, on_change="rerun") for the next run. A card's More menu (zx_more_*) is off for now
+        (actions.SHOW_MORE_MENU); opening it turns it back on for the test, so its code keeps working for its return."""
+        if key.startswith("zx_more_"):
+            self.more_menu_on()
         at.session_state[key] = True
+
+    def more_menu_on(self) -> None:
+        """Draw the card's More menu in this test (actions.SHOW_MORE_MENU, off for now)."""
+        from zenux_dashboard import actions
+
+        patcher = patch.object(actions, "SHOW_MORE_MENU", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     @staticmethod
     def open_expander(at: AppTest, key: str) -> None:

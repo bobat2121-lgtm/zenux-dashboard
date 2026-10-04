@@ -1,5 +1,9 @@
 """Sign in to edit: the owner PIN gate and builder access (docs/SPEC-PHASE03-UI.md 1.2).
 
+Open access (config.OPEN_ACCESS_DEFAULT, or `open_access = true` in the secrets) switches the gate off for the beta:
+every session gets the workspace's owner_token and the Control room, and nothing below asks for a PIN. With
+`open_access = false` the PIN gate works exactly as described next.
+
 The analyst types the workspace's PIN once per browser session under "Sign in to edit" (top right) and presses
 Unlock. The PIN never leaves this server: it is checked once, in constant time, against the workspace's `owner_pin`
 from st.secrets through the server-wide guard below, and the field is cleared right away (the PIN is never kept in
@@ -286,19 +290,28 @@ def is_unlocked(ws: Workspace | None) -> bool:
 
 
 def is_builder(conf: Config | None = None) -> bool:
-    """The builder unlocked this session with the current builder PIN."""
+    """Open access is on, or the builder unlocked this session with the current builder PIN."""
+    conf = conf if conf is not None else load_config()
+    if conf.open_access:
+        return True
     s = _session()
     stored = s.get(BUILDER_KEY) if s is not None else None
-    if stored is None:  # the common case, decided without reading the configuration
+    if stored is None:
         return False
-    conf = conf if conf is not None else load_config()
     return conf.has_builder and _same(stored, _fingerprint("builder", conf.builder_pin))
 
 
+def is_open(ws: Workspace | None) -> bool:
+    """Open access: this workspace is editable by every visitor, with no PIN."""
+    return ws is not None and ws.open_access and ws.can_write
+
+
 def token(ws: Workspace | None) -> str | None:
-    """The workspace's owner_token while the workspace or the builder is unlocked, else None."""
+    """The workspace's owner_token under open access, or while the workspace or the builder is unlocked, else None."""
     if ws is None or not (ws.hub_url and ws.owner_token):
         return None
+    if ws.open_access:
+        return ws.owner_token
     return ws.owner_token if is_unlocked(ws) or is_builder() else None
 
 

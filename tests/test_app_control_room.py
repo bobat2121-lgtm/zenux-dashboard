@@ -12,7 +12,7 @@ import fixtures_coverage as fc
 from helpers import (AppCase, BETA_COV, BETA_HUB, BETA_READ, BETA_RUN, BUILDER_PIN, Call, FakeResponse, OWNER,
                      PILOT_AI, PILOT_DEF, PILOT_HUB, PIN, READ, RUN_AI, RUN_DEF, hub_defaults, one_workspace,
                      two_workspaces)
-from zenux_dashboard import ui
+from zenux_dashboard import control_view, ui
 INSPECT_AI = PILOT_HUB + "/modules/ai-infra/inspect"
 INSPECT_DEF = PILOT_HUB + "/modules/defense-unmanned/inspect"
 STAGE = PILOT_HUB + "/admin/stage"
@@ -249,10 +249,15 @@ class HealthPanelTests(ControlCase):
         self.assertIn('<div class="tile warn"><div class="tile-n">1</div><div class="tile-l">Failing sources</div>', html)
         self.assertIn('<div class="tile warn"><div class="tile-n">1</div><div class="tile-l">Silent sources</div>', html)
         self.assertIn("#12 · 2 items", html)
-        self.assertIn('<td><span class="mono">ai-infra</span></td><td><span class="status-pill ok">ok</span></td>', html)
-        self.assertIn('<td>42</td><td>270</td>', html)
-        self.assertIn('<span class="mono">defense-unmanned</span></td><td><span class="status-pill warn">degraded</span>', html)
-        self.assertIn('<span class="mono">coverage</span></td><td><span class="status-pill ok">ok</span>', html)
+        # one row per module: an ok module shows its pill, a degraded one a clickable status light
+        self.assertIn('<div class="mod-td"><span class="mono">ai-infra</span></div>', html)
+        self.assertIn('<div class="mod-td"><span class="status-pill ok">ok</span></div>', html)
+        self.assertIn('<div class="mod-td">42</div>', html)
+        self.assertIn('<div class="mod-td">270</div>', html)
+        self.assertEqual(at.button(key="cr_light_warn_pilot_defense-unmanned").label, "Degraded · 1 failing source")
+        self.assertEqual([b.key for b in at.button if str(b.key).startswith("cr_light_")],
+                         ["cr_light_warn_pilot_defense-unmanned"])
+        self.assertIn('<div class="mod-td"><span class="mono">coverage</span></div>', html)
         self.assertIn("<td>defense-unmanned</td><td><span class=\"mono\">sam-opps</span></td>"
                       "<td><span class=\"status-pill warn\">backoff</span></td><td>error</td><td>429</td><td>3</td>", html)
         self.assertIn("silent_for_96h", html)
@@ -273,8 +278,49 @@ class HealthPanelTests(ControlCase):
         at = self.control()
         self.assert_clean(at)
         html = self.html(at)
-        self.assertIn('<span class="status-pill bad">down</span> <span class="tile-d">unreachable (ConnectionError)</span>', html)
+        self.assertEqual(at.button(key="cr_light_bad_pilot_ai-infra").label, "Down · unreachable (ConnectionError)")
         self.assertIn('<span class="status-pill warn">running</span> 3/8', html)
+        # the light of a module that is down explains that the module itself did not answer
+        at.button(key="cr_light_bad_pilot_ai-infra").click().run()
+        self.assert_clean(at)
+        self.assertIn("ZENUX could not reach ai-infra itself: unreachable (ConnectionError).", self.visible_text(at))
+
+    def test_the_degraded_light_opens_the_failing_sources(self):
+        at = self.control()
+        self.assert_clean(at)
+        at.button(key="cr_light_warn_pilot_defense-unmanned").click().run()
+        self.assert_clean(at)
+        self.assertEqual(at.session_state["zx_dialog"]["name"], control_view.DIALOG_FAILING)
+        text = self.visible_text(at)
+        self.assertIn("Sources not working · defense-unmanned", text)
+        self.assertIn("sam-opps", text)
+        self.assertIn("The site asked ZENUX to slow down (HTTP 429, too many requests).", text)
+        self.assertIn("Failed checks in a row 3", text)
+        self.assertIn("Health backoff (retrying less often)", text)
+        self.assertIn("Last worked", text)
+        self.assertIn(control_view.ACK_HINT, text)
+        self.assertIn("Quiet lately (working, but no new stories)", text)  # the module's silent source
+        self.assert_no_secrets(at)
+        at.button(key="dlg_cancel").click().run()
+        self.assert_clean(at)
+        self.assertNotIn("zx_dialog", at.session_state)
+
+    def test_failure_reasons_in_plain_words(self):
+        reason = control_view.failure_reason
+        self.assertEqual(reason({"http": 403}), "The site refused ZENUX's request (HTTP 403). It may block automated "
+                                                "readers.")
+        self.assertEqual(reason({"http": 404}), "The page wasn't found (HTTP 404). It may have moved.")
+        self.assertEqual(reason({"http": 503}), "The site's server had an error (HTTP 503).")
+        self.assertEqual(reason({"status": "timeout"}), "The site didn't answer in time.")
+        self.assertEqual(reason({"kind": "structural_empty", "empty_streak": 4}),
+                         "The page loads, but ZENUX found no stories on it 4 runs in a row. The site's layout may have "
+                         "changed.")
+        self.assertEqual(reason({"kind": "quota_streak", "quota_streak": 2}),
+                         "The daily allowance for this source's service was used up 2 runs in a row.")
+        self.assertEqual(reason({"http": 429, "error": "rate limited by api.sam.gov"}),
+                         "The site asked ZENUX to slow down (HTTP 429, too many requests). Last error: rate limited by "
+                         "api.sam.gov")
+        self.assertEqual(reason({}), "The last check failed.")
 
     def test_all_healthy(self):
         self.http.on("GET", PILOT_HUB + "/diagnostics", fx.diagnostics(failing=False) | {"status": "ok", "modules": [

@@ -1,9 +1,11 @@
 """Card actions shared by Briefing, Filtered out, My preferences and Coverage (docs/SPEC-PHASE03-UI.md 5.4).
 
-A card shows at most three buttons (More like this, Less like this, and Should have been in where the caller offers
-it), one lazy "More" popover (Wrong facts, Rate this story, Mute source, Mute company or Unmute company, Star or
-Remove from watchlist, Mute this story) and one lazy "Why" expander. Lazy means the popover and the expander draw
-their contents only while open (`on_change="rerun"` and `.open`), so a page of 60 cards stays light.
+A card shows at most four buttons (More like this, Less like this and Rate this story as outlined buttons, and Should
+have been in where the caller offers it). The lazy "More" popover (Wrong facts, Mute source, Mute company or Unmute
+company, Star or Remove from watchlist, Mute this story) is off for now (SHOW_MORE_MENU). A filtered-out row has one
+lazy "Why" expander; a briefing lists every story's Why in one section under the editor's notes (feed_view). Lazy
+means the popover and the expanders draw their contents only while open (`on_change="rerun"` and `.open`), so a page
+of 60 cards stays light.
 
 Every write button goes through `ui.write_button` (drawn disabled with "Unlock to edit" while the workspace is
 locked, so nothing fails after submit because of the lock), and every write through `ui.write` (the owner token,
@@ -19,8 +21,9 @@ What each write does (docs/SPEC-PHASE02.md; the copy below says exactly this and
   suggest a clearer wording, which the analyst approves or not). Undo: POST /rules/<id>/retire {reason: "undone"}.
 - Wrong facts: POST /feedback {verdict: "factual_error", item_id, note} on a briefing item. The ZENUX editor
   re-checks the item at the next briefing and either corrects it or explains why it stands. No undo route.
-- Rate this story: POST /feedback {scope: "item"}. A rating is used to calibrate the next briefing when it differs
-  from the ZENUX editor's score, and nothing more. No undo route.
+- Rate this story: POST /feedback {scope: "item", verdict, score}. The 0-100 slider and the four ratings move
+  together (a score picks its rating, a rating moves the score into its band); the hub stores both and the next lease
+  shows them to the editor when the rating's band differs from the editor's score. No undo route.
 - Should have been in: POST /promote {event_id, note}. The story goes back to the editor with the note; it may still
   stay out if the evidence is thin. No undo route.
 - Mute (source, company, story): the 7-day preview (GET /mutes/preview) is the confirmation step, then POST /mutes
@@ -48,6 +51,7 @@ from .fmt import (MIN_TIME, as_int, as_list, dicts, domain_of, esc, fmt_clock, f
                   pick, plural, safe_url)
 
 TEXT_MAX = 500
+SHOW_MORE_MENU = False  # the card's More popover; off for now (owner, 2026-10-04)
 WRONG_FACTS_MIN = 10
 PROMOTE_MIN = 3
 UNTIL_DEFAULT_DAYS = 30
@@ -79,6 +83,20 @@ ALSO_ABOUT = ("Stories that are also about a company you haven't muted still sho
 NOT_ITS_SUBJECT = ("This story names {label} but isn't about it, so muting {label} doesn't hide it. To hide this story, "
                    "use Mute this story.")
 REPLACE_KEY = "dlg_replace"  # set after the hub answered preference_exists: the Save button becomes "Replace it"
+RATE_CHOICE_KEY = "dlg_choice"
+RATE_SCORE_KEY = "dlg_score"
+RATE_SCORE_SET_KEY = "dlg_score_set"  # True once the analyst moved the slider: only then is the exact score sent
+# Where the slider lands when a rating is picked (inside the rating's band).
+RATING_SCORES = {"lead": 95, "digest": 80, "watch": 55, "reject": 20}
+# The firm core's bands, as the ZENUX editor reads a score (rubric/core/firm-core.md section 1).
+SCORE_SCALE = (
+    ("90–100", "Top story", "A major, confirmed event. Leads the briefing."),
+    ("70–89", "In the briefing", "Material news worth reporting."),
+    ("40–69", "Near miss", "Relevant, but not enough to report. Listed under Filtered out."),
+    ("0–39", "Not relevant", "Off-topic, minor or old news."),
+)
+RATE_SCALE_NOTE = ("Your rating and score go to the editor beside its own score. When your band differs from the "
+                   "editor's, it scores similar stories in your band from the next briefing.")
 EXISTS_FALLBACK = "You already have a preference made from this story. Replace it?"
 
 DIALOG_PREF = "pref"
@@ -112,6 +130,7 @@ class Target:
     outlet: str | None = None            # WF5 AW-1: the outlet behind a news-search story ("Yahoo Finance")
     outlet_domain: str | None = None     # its domain, what an outlet mute keys on ("finance.yahoo.com")
     my_prefs: tuple[dict, ...] = ()      # WF5 AW-2: the analyst's preferences made from this story [{id, direction}]
+    score: int | None = None             # the ZENUX editor's score (the Rate dialog shows it beside the slider)
 
 
 # ---------------------------------------------------------------------------------------------- targets
@@ -254,6 +273,7 @@ def target_from_item(ws: Workspace, edition: dict, item: dict) -> Target:
         outlet=outlet or None,
         outlet_domain=outlet_domain or None,
         my_prefs=my_prefs_of(why.get("my_preferences")),
+        score=as_int(item.get("score")) if as_int(item.get("score")) is not None else as_int(why.get("score")),
     )
 
 
@@ -280,6 +300,7 @@ def target_from_row(ws: Workspace, row: dict) -> Target:
         outlet=outlet or None,
         outlet_domain=outlet_domain or None,
         my_prefs=my_prefs_of(row.get("my_preferences")),
+        score=as_int(row.get("score")),
     )
 
 
@@ -287,26 +308,32 @@ def target_from_row(ws: Workspace, row: dict) -> Target:
 
 
 def action_bar(ws: Workspace, target: Target, *, key: str, promote: bool = False) -> None:
-    """More like this, Less like this, Should have been in (when `promote` and the story is not in a briefing) and the
-    lazy More menu, in one horizontal row that wraps on narrow screens."""
+    """More like this, Less like this and Rate this story as separate outlined buttons, then Should have been in (when
+    `promote` and the story is not in a briefing), in one horizontal row that wraps on narrow screens. The lazy More
+    menu (Wrong facts, mutes, star) is drawn only while SHOW_MORE_MENU is on; it is off for now (the owner's call,
+    2026-10-04): mutes and stars stay in Coverage and My preferences."""
     with st.container(horizontal=True, key=f"zx_actions_{key}", gap="small", vertical_alignment="center"):
         # WF5 AW-2: what the analyst already said about this story, with its own Undo.
         for n, pref in enumerate(target.my_prefs):
             st.markdown(f'<span class="zx-asked">{esc(asked_text(pref))}</span>', unsafe_allow_html=True)
             ui.write_button("Undo", ws=ws, key=f"act_undo_pref_{key}_{n}", type="tertiary",
                             on_click=undo_preference, args=(ws, pref["id"]))
-        if ui.write_button("More like this", ws=ws, key=f"act_more_{key}", type="tertiary"):
+        if ui.write_button("More like this", ws=ws, key=f"act_more_{key}", icon=":material/thumb_up:"):
             open_preference(ws, target, "more")
-        if ui.write_button("Less like this", ws=ws, key=f"act_less_{key}", type="tertiary"):
+        if ui.write_button("Less like this", ws=ws, key=f"act_less_{key}", icon=":material/thumb_down:"):
             open_preference(ws, target, "less")
+        if target.event_id is not None or target.item_id is not None:
+            if ui.write_button("Rate this story", ws=ws, key=f"act_rate_{key}", icon=":material/star_rate:"):
+                open_rate(ws, target)
         if promote and not target.in_briefing and target.event_id is not None:
             if ui.write_button("Should have been in", ws=ws, key=f"act_promote_{key}", type="tertiary"):
                 open_promote(ws, target)
-        menu = st.popover("More", key=f"zx_more_{key}", on_change="rerun", icon=":material/more_horiz:",
-                          type="tertiary")
-        with menu:
-            if menu.open:
-                more_menu(ws, target, key)
+        if SHOW_MORE_MENU:
+            menu = st.popover("More", key=f"zx_more_{key}", on_change="rerun", icon=":material/more_horiz:",
+                              type="tertiary")
+            with menu:
+                if menu.open:
+                    more_menu(ws, target, key)
 
 
 def more_menu(ws: Workspace, target: Target, key: str) -> None:
@@ -315,9 +342,6 @@ def more_menu(ws: Workspace, target: Target, key: str) -> None:
     pop = f"zx_more_{key}"
     if target.published and target.item_id is not None:
         ui.menu_item("Wrong facts", ws=ws, key=f"act_wrong_{key}", popover_key=pop, action=open_wrong_facts,
-                     args=(ws, target))
-    if target.event_id is not None or target.item_id is not None:
-        ui.menu_item("Rate this story", ws=ws, key=f"act_rate_{key}", popover_key=pop, action=open_rate,
                      args=(ws, target))
     if target.outlet and target.outlet_domain:
         # WF5 AW-1: one outlet behind a news-search source, without muting the whole search.
@@ -676,8 +700,9 @@ def wrong_facts_toast(result: Any, tz: str) -> str:
     return f"Flagged. The ZENUX editor re-checks it at {at} and either corrects it or explains why it stands."
 
 
-def rating_toast() -> str:
-    return "Rating saved. " + labels.RATING_HONEST
+def rating_toast(score: int | None = None) -> str:
+    saved = f"Rating saved with your score of {score}. " if score is not None else "Rating saved. "
+    return saved + labels.RATING_HONEST
 
 
 def promote_toast(result: Any, tz: str) -> str:
@@ -805,20 +830,53 @@ def wrong_facts_dialog(workspace_id: str, target: Target) -> None:
         close()
 
 
+def _rating_picked() -> None:
+    """A rating was picked: the slider moves into its band (unless it is already there)."""
+    verdict = st.session_state.get(RATE_CHOICE_KEY)
+    if verdict in RATING_SCORES and labels.band_of(st.session_state.get(RATE_SCORE_KEY)) != verdict:
+        st.session_state[RATE_SCORE_KEY] = RATING_SCORES[verdict]
+
+
+def _score_moved() -> None:
+    """The slider moved: its band picks the rating, and the exact score is sent with it."""
+    st.session_state[RATE_SCORE_SET_KEY] = True
+    band = labels.band_of(st.session_state.get(RATE_SCORE_KEY))
+    if band in RATING_SCORES:
+        st.session_state[RATE_CHOICE_KEY] = band
+
+
+def score_scale_html() -> str:
+    """What each part of the 0-100 scale means to the ZENUX editor (the firm core's bands)."""
+    rows = "".join(f'<div class="why-row"><span class="why-label">{esc(span)} · {esc(name)}</span>'
+                   f'<span>{esc(meaning)}</span></div>' for span, name, meaning in SCORE_SCALE)
+    return f'<div class="why-block score-scale">{rows}</div>'
+
+
 def rate_dialog(workspace_id: str, target: Target) -> None:
-    """A plain rating; it is used to calibrate the next briefing when it differs from the editor's score."""
+    """A plain rating and, if the analyst moves it, an exact 0-100 score; used to calibrate the next briefing when its
+    band differs from the editor's score."""
     ws = dialog_ws(workspace_id)
     if ws is None:
         return
     story_line(target)
     choices = list(labels.RATING_CHOICES)
     default = "digest" if target.published else "watch"
-    verdict = st.radio("How would you rate it?", choices, index=choices.index(default), key="dlg_choice",
+    # dialog widgets start fresh on every open (ui.open_dialog clears the dlg_* keys); the defaults go in first
+    st.session_state.setdefault(RATE_CHOICE_KEY, default)
+    st.session_state.setdefault(RATE_SCORE_KEY, RATING_SCORES[st.session_state[RATE_CHOICE_KEY]]
+                                if st.session_state[RATE_CHOICE_KEY] in RATING_SCORES else RATING_SCORES[default])
+    verdict = st.radio("How would you rate it?", choices, key=RATE_CHOICE_KEY, on_change=_rating_picked,
                        format_func=lambda v: labels.VERDICT_LABELS.get(v, v))
     note = st.text_input("A note for the editor (optional)", key="dlg_text", max_chars=TEXT_MAX)
-    st.caption(labels.RATING_HONEST)
+    score = st.slider("Your score, 0 to 100 (optional)", min_value=0, max_value=100, step=1, key=RATE_SCORE_KEY,
+                      on_change=_score_moved)
+    if target.score is not None:
+        st.caption(f"The ZENUX editor scored it {target.score}.")
+    st.markdown(score_scale_html(), unsafe_allow_html=True)
+    st.caption(RATE_SCALE_NOTE)
     if not buttons(ws, "Save"):
         return
+    exact = as_int(score) if st.session_state.get(RATE_SCORE_SET_KEY) is True else None
     # the story: its briefing item, else the briefing and rank (an item without an id), else the story itself
     item_id = target.item_id
     by_rank = item_id is None and target.published and target.edition_id is not None and target.item_rank is not None
@@ -826,7 +884,7 @@ def rate_dialog(workspace_id: str, target: Target) -> None:
         ws, token, verdict=verdict or default, item_id=item_id,
         edition_id=target.edition_id if by_rank else None, item_rank=target.item_rank if by_rank else None,
         event_id=None if item_id is not None or by_rank else target.event_id,
-        note=clean_text(note), scope="item"), toast=rating_toast())
+        note=clean_text(note), scope="item", score=exact), toast=rating_toast(exact))
     if result is not None:
         close()
 

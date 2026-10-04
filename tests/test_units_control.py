@@ -358,68 +358,71 @@ class CoverageShapeTests(unittest.TestCase):
         older = coverage_view.mute_row({"mute_id": 5}, coverage_view.entity_mute_fallback({"id": "acme", "name": "Acme"}))
         self.assertEqual((older["id"], older["kind"], older["ref"], older["label"]), (5, "entity", "acme", "Acme"))
 
-    def test_columns_and_groups(self):
-        columns = coverage_view.build_columns(self.insp)
-        names = {code: [(label, [row.get("name") or row.get("label") for _, row, _ in rows]) for label, rows in groups]
-                 for code, groups in columns.items()}
-        self.assertEqual(names["public"], [("AI cloud", ["CoreWeave", "Nebius"])])
-        self.assertEqual(names["private"], [("AI cloud", ["Crusoe", "Stargate LLC"]),
-                                            ("Power companies", ["Tennessee Valley Authority", "Example <b>Co</b>"])])
-        self.assertEqual(names["industry"], [("Company news and filings", ["SEC filings: data center and AI cloud companies"]),
-                                             ("News search", ["News search: AI data center themes"]),
-                                             ("Trade press", ["Data Center Dynamics"])])
-        self.assertEqual(names["government"], [
-            ("Local permitting and zoning", ["Old county permits <page>", "Loudoun County, VA agendas"]),
-            ("Power and grid", ["ERCOT large-load interconnection reports"]),
-            ("Programs and agencies", ["DOE Genesis Mission"])])
-        # row indexes are the inspector's positions (the widget keys use them)
-        self.assertEqual([n for n, _, _ in columns["public"][0][1]], [0, 1])
-        self.assertEqual([n for n, _, _ in columns["industry"][2][1]], [0])
-
-    def test_column_rules(self):
-        self.assertEqual(coverage_view.entity_column({"ownership": "public"}), "public")
-        for ownership in ("private", "subsidiary", "government", None, "unknown"):
-            self.assertEqual(coverage_view.entity_column({"ownership": ownership}), "private")
-        self.assertEqual(coverage_view.entity_column({"ownership": "public", "role": "program"}), "government")
-        self.assertEqual(coverage_view.source_column({"origin": "module", "column": "companies"}), "industry")
-        self.assertEqual(coverage_view.source_column({"origin": "module", "column": "industry"}), "industry")
-        self.assertEqual(coverage_view.source_column({"origin": "module", "column": "government"}), "government")
-        self.assertEqual(coverage_view.source_column({"column": None}), "industry")
-        self.assertIsNone(coverage_view.source_column({"origin": "entity", "column": "companies"}))
+    def test_groups_and_listing(self):
         self.assertEqual(coverage_view.entity_group({"category": "ai_cloud"}), "Ai cloud")
         self.assertEqual(coverage_view.entity_group({}), "Other companies")
+        self.assertEqual(coverage_view.entity_group({"role": "program"}), "Programs and agencies")
         self.assertEqual(coverage_view.source_group({}), "Other sources")
+        self.assertEqual(coverage_view.listed({"ownership": "public"}), "Public")
+        for ownership in ("private", "subsidiary", "government", None, "unknown"):
+            self.assertEqual(coverage_view.listed({"ownership": ownership}), "Private")
+        self.assertEqual(coverage_view.listed({"ownership": "public", "role": "program"}), "Program or agency")
+        entities = {e["id"]: e for e in self.insp["entities"]}
+        self.assertEqual(coverage_view.follows_text(entities["coreweave"]), "Own news, SEC filings")
+        self.assertEqual(coverage_view.follows_text(entities["crusoe"]), "By name only")
+        self.assertEqual(coverage_view.follows_text(entities["tva"]), "Contracts")
+        self.assertEqual(coverage_view.you_text(entities["coreweave"]), "★ Watchlist")
+        self.assertEqual(coverage_view.you_text(entities["example-co"]), "Muted")
+        self.assertEqual(coverage_view.you_text(entities["nebius"]), "")
 
-    def test_search_and_show(self):
-        def keys(terms, show="all"):
-            cols = coverage_view.build_columns(self.insp, coverage_view.terms_of(terms), show)
-            return sorted(row.get("id") or row.get("key") for groups in cols.values() for _, rows in groups
-                          for _, row, _ in rows)
+    def test_search_and_filters(self):
+        def ids(kind, terms="", filter_="all"):
+            if kind == "companies":
+                return coverage_view.company_rows(self.insp, coverage_view.terms_of(terms), filter_)[0]
+            return coverage_view.source_rows(self.insp, coverage_view.terms_of(terms), filter_, TZ)[0]
 
-        self.assertEqual(keys("Crusoe"), ["crusoe"])
-        self.assertEqual(keys("crwv"), ["coreweave"])
-        self.assertEqual(keys("  dynamics   center "), ["dcd-news"])
-        self.assertEqual(keys("", "starred"), ["coreweave"])
-        self.assertEqual(keys("", "muted"), ["example-co", "gn-themes"])
-        self.assertEqual(keys("", "name_only"), ["crusoe", "doe-genesis"])
-        self.assertEqual(keys("", "failing"), ["ercot-large-load"])
-        self.assertEqual(keys("crusoe", "starred"), [])
+        self.assertEqual(ids("companies", "Crusoe"), ["crusoe"])
+        self.assertEqual(ids("companies", "crwv"), ["coreweave"])
+        self.assertEqual(ids("sources", "  dynamics   center "), ["dcd-news"])
+        self.assertEqual(ids("companies", "", "starred"), ["coreweave"])
+        self.assertEqual(ids("companies", "", "muted"), ["example-co"])
+        self.assertEqual(ids("companies", "", "name_only"), ["crusoe", "doe-genesis"])
+        self.assertEqual(ids("sources", "", "failing"), ["ercot-large-load"])
+        self.assertEqual(ids("sources", "", "off"), ["old-permits", "ent-coreweave-2"])
+        self.assertEqual(ids("sources", "", "muted"), ["gn-themes"])
+        self.assertEqual(ids("companies", "crusoe", "starred"), [])
+        self.assertEqual(len(ids("sources")), 8)  # the companies' own feeds are listed too
         self.assertEqual(coverage_view.terms_of("  A  b "), ["a", "b"])
 
-    def test_counts_and_rows(self):
+    def test_the_four_steps_and_the_health_line(self):
         card = fc.modules()["modules"][0]
-        self.assertEqual(coverage_view.counts_line(self.insp, card),
-                         "7 companies · 6 sources on (2 off) · 1840 stories this week (14 in your briefings) · 61 in "
-                         "your briefings in 30 days")
-        self.assertEqual(coverage_view.counts_line(self.insp, None),  # counted from the inspector
-                         "7 companies · 6 sources on (2 off) · 1840 stories this week (14 in your briefings) · 61 in "
-                         "your briefings in 30 days")
-        # WF5 AW-12: the 30-day figure is left out when it only repeats this week's
-        same = dict(self.insp, totals=dict(self.insp["totals"], briefing_7d=28, briefing_30d=28))
-        self.assertTrue(coverage_view.counts_line(same, None).endswith("stories this week (28 in your briefings)"))
-        self.assertEqual(coverage_view.tuning_line(self.insp, card), "2 muted · 1 on your watchlist")
-        self.assertEqual(coverage_view.tuning_line(self.insp, None), "2 muted · 1 on your watchlist")
-        self.assertEqual(coverage_view.tuning_line(fc.inspect_def(), fc.modules()["modules"][1]), "")
+        steps = coverage_view.flow_steps(self.insp, card, 70, 12, "Standard", "4:30 PM ET")
+        self.assertEqual([title for title, _, _ in steps], ["Watch", "Collect", "Score", "Brief"])
+        self.assertEqual(steps[0][1], "7 companies · 8 sources (6 on)")
+        self.assertEqual(steps[1][1], "1,840 stories this week")
+        self.assertTrue(steps[2][2].endswith("Next run: 4:30 PM ET."))
+        self.assertEqual(steps[3][1], "14 in your briefings this week")
+        self.assertEqual(steps[3][2], "Stories scoring 70 or more make your briefing, up to 12 at a time (How much: "
+                                      "Standard). The rest stay under Filtered out.")
+        older = coverage_view.flow_steps(fc.inspect_def(), fc.modules()["modules"][1], None, None, "", "")
+        self.assertEqual(older[0][1], "1 company · 1 source")
+        self.assertEqual(older[3][1], "4 in your briefings in 30 days")
+        self.assertNotIn("Next run", older[2][2])
+        self.assertEqual(coverage_view.lane_words(self.insp), "Company news and filings, local permitting and zoning, "
+                                                              "trade press, power and grid, and news search")
+        css, sentence, failing = coverage_view.health_line(self.insp, card)
+        self.assertEqual((css, failing), ("warn", ["ERCOT large-load interconnection reports"]))
+        self.assertTrue(sentence.startswith("1 source isn't responding right now: ERCOT large-load interconnection "
+                                            "reports."))
+        self.assertIn("2 sources are turned off on purpose", sentence)
+        css, sentence, failing = coverage_view.health_line(fc.inspect_def(), fc.modules()["modules"][1])
+        self.assertEqual((css, sentence, failing), ("ok", "All 1 source on are working.", []))
+
+    def test_counts_and_health_text(self):
+        card = fc.modules()["modules"][0]
+        self.assertEqual(coverage_view.counts_of(self.insp, card),
+                         {"companies": 7, "on": 6, "off": 2, "week": 1840, "briefing_7d": 14, "briefing_30d": 61})
+        self.assertEqual(coverage_view.counts_of(self.insp, None)["on"], 6)  # counted from the inspector
         sources = {s["key"]: s for s in self.insp["sources"]}
         self.assertEqual(coverage_view.health_text(sources["dcd-news"], TZ), "Working")
         self.assertEqual(coverage_view.health_text(sources["ercot-large-load"], TZ), "Not responding since Oct 1")
@@ -427,20 +430,19 @@ class CoverageShapeTests(unittest.TestCase):
         self.assertEqual(coverage_view.health_text({}, TZ), "Not run yet")
         crusoe = self.insp["entities"][2]
         self.assertEqual([flag for flag, _, _ in coverage_view.coverage_flags(crusoe)], ["name_only"])
-        self.assertIn('<span class="cov-chip cov-chip-name_only" title="ZENUX only catches it when another source names it '
-                      'in a story.">Name only</span>', coverage_view.entity_row_html(crusoe))
-        self.assertIn("Example &lt;b&gt;Co&lt;/b&gt;", coverage_view.entity_row_html(self.insp["entities"][6]))
-        self.assertIn("Old county permits &lt;page&gt;", coverage_view.source_row_html(sources["old-permits"], TZ))
 
     def test_every_analyst_string_is_plain(self):
+        card = fc.modules()["modules"][0]
+        rows = (coverage_view.company_rows(self.insp, [], "all")[1]
+                + coverage_view.source_rows(self.insp, [], "all", TZ)[1])
         rendered = " ".join(
-            [coverage_view.entity_row_html(e) for e in self.insp["entities"]]
-            + [coverage_view.source_row_html(s, TZ) for s in self.insp["sources"]]
-            + [coverage_view.counts_line(self.insp, None), coverage_view.tuning_line(self.insp, None)]
-            + list(coverage_view.SHOW_CHOICES.values()))
-        import re
-        text = re.sub(r"<[^>]+>", " ", rendered)
-        self.assertEqual(labels.find_jargon(text), [])
+            [" ".join(str(v) for v in row.values()) + " " + " ".join(row) for row in rows]
+            + [" ".join(" ".join(step) for step in coverage_view.flow_steps(self.insp, card, 70, 12, "Standard", ""))]
+            + [coverage_view.health_line(self.insp, card)[1], coverage_view.TABLE_HINT]
+            + [label for filters in coverage_view.FILTERS.values() for label in filters.values()])
+        self.assertEqual(labels.find_jargon(rendered), [])
+        self.assertNotIn("ai-infra", rendered)
+        self.assertNotIn("dcd-news", rendered)
 
     def test_mute_fallbacks(self):
         self.assertEqual(coverage_view.source_mute_fallback("ai-infra", self.insp["sources"][0]),

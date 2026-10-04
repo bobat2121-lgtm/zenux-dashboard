@@ -433,3 +433,73 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--zx-green-light
   [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:not(:first-child) { flex: 1 1 0 !important; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+/* Card actions (owner, 2026-10-04): More like this, Less like this and Rate this story as three separate outlined
+   pills, set off from the story above them by a hairline, each with its own colour. */
+:is([class*="st-key-zx_item_"], [class*="st-key-zx_row_"]) [class*="st-key-zx_actions_"] { margin-top: 2px; padding-top: 10px; border-top: 1px dashed var(--zx-line); gap: 8px 10px !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"]) button[kind] {
+  min-height: 34px; padding: 2px 16px !important; border-radius: 999px !important; background: var(--zx-raised) !important;
+}
+.st-key-zx_view [class*="st-key-act_more_"] button[kind] { border: 1px solid rgba(52,211,153,.6) !important; }
+.st-key-zx_view [class*="st-key-act_more_"] button[kind] :is(p, span) { color: var(--zx-ok) !important; }
+.st-key-zx_view [class*="st-key-act_more_"] button[kind]:hover { background: rgba(52,211,153,.14) !important; border-color: var(--zx-ok) !important; }
+.st-key-zx_view [class*="st-key-act_less_"] button[kind] { border: 1px solid rgba(248,113,113,.6) !important; }
+.st-key-zx_view [class*="st-key-act_less_"] button[kind] :is(p, span) { color: var(--zx-bad) !important; }
+.st-key-zx_view [class*="st-key-act_less_"] button[kind]:hover { background: rgba(248,113,113,.14) !important; border-color: var(--zx-bad) !important; }
+.st-key-zx_view [class*="st-key-act_rate_"] button[kind] { border: 1px solid rgba(251,191,36,.6) !important; }
+.st-key-zx_view [class*="st-key-act_rate_"] button[kind] :is(p, span) { color: var(--zx-warn) !important; }
+.st-key-zx_view [class*="st-key-act_rate_"] button[kind]:hover { background: rgba(251,191,36,.14) !important; border-color: var(--zx-warn) !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"]) button[kind]:disabled { border-color: var(--zx-line-strong) !important; background: transparent !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"]) button[kind]:disabled :is(p, span) { color: var(--zx-muted) !important; }
+/* "Why am I seeing this?" under the editor's notes: one entry per story, headed by its number. */
+.why-item-head { display: flex; align-items: baseline; gap: 12px; margin: 12px 0 8px; }
+.why-num { flex: 0 0 auto; color: var(--zx-muted); font: 500 12px/1.5 var(--zx-mono); font-variant-numeric: tabular-nums; }
+.why-title { min-width: 0; color: var(--zx-white); font: 700 15px/1.4 var(--zx-font); overflow-wrap: anywhere; }
+[class*="st-key-zx_why_"] { padding-bottom: 12px; border-bottom: 1px solid var(--zx-line); }
+[class*="st-key-zx_why_"]:last-child { border-bottom: 0; }
+/* The Rate dialog's score scale. */
+.score-scale { margin: 4px 0 2px; padding: 10px 12px; background: var(--zx-raised); border: 1px solid var(--zx-line); border-radius: 8px; }
+.score-scale .why-label { flex: 0 0 190px; }
+@media (max-width: 640px) { .score-scale .why-label { flex-basis: 100%; } }
+/* Control room card (owner, 2026-10-04): one bordered container holding the top, the module rows (with their
+   clickable status lights) and the routines and footer. */
+[class*="st-key-zx_hcard_"] { margin: 0 0 6px; padding: 18px 22px; background: var(--zx-card); border: 1px solid var(--zx-line); border-top: 3px solid var(--zx-ok); border-radius: 10px; gap: 6px !important; }
+[class*="st-key-zx_hcard_warn_"] { border-top-color: var(--zx-warn); }
+[class*="st-key-zx_hcard_bad_"] { border-top-color: var(--zx-bad); }
+[class*="st-key-zx_hcard_"] .health-card { margin: 0; padding: 0; background: transparent; border: 0; }
+[class*="st-key-zx_modrows_"] { gap: 0 !important; }
+[class*="st-key-zx_modrows_"] [data-testid="stHorizontalBlock"] { padding: 5px 0; border-bottom: 1px solid var(--zx-line); }
+[class*="st-key-zx_modrows_"] [data-testid="stHorizontalBlock"]:last-child { border-bottom: 0; }
+.mod-th { color: var(--zx-muted); font: 700 12px/1.4 var(--zx-font); letter-spacing: .8px; text-transform: uppercase; white-space: nowrap; }
+.mod-td { color: var(--zx-text-soft); font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.mod-td .mono { font-family: var(--zx-mono); font-size: 12.5px; }
+.st-key-zx_view [class*="st-key-cr_light_"] button[kind] { min-height: 26px; padding: 1px 12px !important; border-radius: 999px !important; cursor: pointer; }
+.st-key-zx_view [class*="st-key-cr_light_"] button[kind] p { font: 700 12px/1.4 var(--zx-font) !important; letter-spacing: .4px; }
+.st-key-zx_view [class*="st-key-cr_light_warn_"] button[kind] { border: 1px solid rgba(251,191,36,.6) !important; background: rgba(251,191,36,.14) !important; }
+.st-key-zx_view [class*="st-key-cr_light_warn_"] button[kind] p { color: var(--zx-warn) !important; }
+.st-key-zx_view [class*="st-key-cr_light_bad_"] button[kind] { border: 1px solid rgba(248,113,113,.6) !important; background: rgba(248,113,113,.14) !important; }
+.st-key-zx_view [class*="st-key-cr_light_bad_"] button[kind] p { color: var(--zx-bad) !important; }
+.st-key-zx_view [class*="st-key-cr_light_"] button[kind]:hover { filter: brightness(1.25); }
+.st-key-zx_view [class*="st-key-cr_light_"] button[kind]:hover p { text-decoration: underline; text-underline-offset: 3px; }
+.health-tail { margin-top: 4px; }
+/* Sources not working (the status light's window). */
+.failing-source { padding: 12px 0; border-bottom: 1px solid var(--zx-line); }
+.failing-source:last-child { border-bottom: 0; }
+.failing-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
+.failing-name { color: var(--zx-white); font: 700 15px/1.4 var(--zx-font); }
+.failing-title .mono { color: var(--zx-muted); font: 500 12.5px/1.4 var(--zx-mono); }
+/* Coverage (owner, 2026-10-04): how ZENUX covers the area, in four steps with live numbers, then one health line. */
+.cov-flow { display: grid; grid-template-columns: minmax(0,1fr) 24px minmax(0,1fr) 24px minmax(0,1fr) 24px minmax(0,1fr); align-items: stretch; gap: 0; margin: 4px 0 12px; }
+.cov-step { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; background: var(--zx-card); border: 1px solid var(--zx-line); border-radius: 10px; }
+.cov-step-k { display: flex; align-items: center; gap: 8px; color: var(--zx-muted); font: 700 12px/1.4 var(--zx-font); letter-spacing: 1px; text-transform: uppercase; }
+.cov-step-n { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--zx-green); color: var(--zx-white); font: 700 12px/1 var(--zx-font); letter-spacing: 0; }
+.cov-step-big { color: var(--zx-white); font: 700 17px/1.35 var(--zx-font); }
+.cov-step-d { color: var(--zx-text-soft); font: 400 13.5px/1.5 var(--zx-font); }
+.cov-arrow { display: flex; align-items: center; justify-content: center; color: var(--zx-muted); font: 400 18px/1 var(--zx-font); }
+.cov-health { padding: 8px 12px; border-radius: 8px; font: 400 14px/1.5 var(--zx-font); color: var(--zx-text-soft); border: 1px solid var(--zx-line); background: var(--zx-card); }
+.cov-health.ok { border-left: 3px solid var(--zx-ok); }
+.cov-health.warn { border-left: 3px solid var(--zx-warn); }
+.st-key-zx_cov_health { flex-wrap: wrap !important; }
+@media (max-width: 900px) {
+  .cov-flow { grid-template-columns: minmax(0,1fr); gap: 0; }
+  .cov-arrow { height: 22px; transform: rotate(90deg); }
+}

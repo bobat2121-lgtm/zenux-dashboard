@@ -1,17 +1,17 @@
-"""AppTest: the Coverage tab: coverage areas, the header, search and Show filters, the four columns with lazy groups,
-company and source rows, the star and mute switches (through the card-action dialogs), and the company and source
-details with Request coverage."""
+"""AppTest: the Coverage tab: coverage areas, How ZENUX covers this area (four steps with live numbers), the
+source-health line, What ZENUX watches (Companies or Sources, search, filters, one table whose rows open details),
+the star and mute switches in the details (through the card-action dialogs), and Request coverage."""
 
 from __future__ import annotations
 
 import unittest
 from typing import Any
+from unittest.mock import patch
 
 import fixtures as fx
 import fixtures_coverage as fc
-from fixtures_coverage import COREWEAVE, CRUSOE, DCD, ERCOT, EXAMPLE, GENESIS, GN_THEMES, NEBIUS, OLD_PERMITS
 from helpers import AppCase, FakeResponse, OWNER, PILOT_HUB, PIN, READ, hub_defaults
-from zenux_dashboard import labels, ui
+from zenux_dashboard import coverage_view, labels, ui
 
 MODULES = PILOT_HUB + "/modules"
 INSPECT_AI = PILOT_HUB + "/modules/ai-infra/inspect"
@@ -19,18 +19,6 @@ INSPECT_DEF = PILOT_HUB + "/modules/defense-unmanned/inspect"
 MUTES = PILOT_HUB + "/mutes"
 STARS = PILOT_HUB + "/stars"
 RADAR_NEW = PILOT_HUB + "/radar/requests"
-# The ai-infra groups by column (largest first, then by label): see fixtures_coverage.inspect_ai.
-PUBLIC_AI_CLOUD = "cv_g_public_0"            # CoreWeave, Nebius
-PRIVATE_AI_CLOUD = "cv_g_private_0"          # Crusoe, Stargate LLC
-PRIVATE_POWER = "cv_g_private_1"             # Tennessee Valley Authority, Example Co
-INDUSTRY_COMPANY_NEWS = "cv_g_industry_0"    # SEC filings
-INDUSTRY_NEWS_SEARCH = "cv_g_industry_1"     # News search (muted)
-INDUSTRY_TRADE_PRESS = "cv_g_industry_2"     # Data Center Dynamics
-GOV_PERMITTING = "cv_g_government_0"         # Old county permits (off), Loudoun agendas
-GOV_POWER = "cv_g_government_1"              # ERCOT (not responding)
-GOV_PROGRAMS = "cv_g_government_2"           # DOE Genesis Mission (a program)
-ALL_GROUPS = (PUBLIC_AI_CLOUD, PRIVATE_AI_CLOUD, PRIVATE_POWER, INDUSTRY_COMPANY_NEWS, INDUSTRY_NEWS_SEARCH,
-              INDUSTRY_TRADE_PRESS, GOV_PERMITTING, GOV_POWER, GOV_PROGRAMS)
 
 
 def undo_of(at) -> Any:
@@ -61,32 +49,26 @@ class CoverageCase(AppCase):
     def coverage(self, **kwargs):
         return self.app(tab="coverage", **kwargs)
 
-    def opened(self, at, *groups: str):
-        """Open lazy groups for the next run (AppTest keeps no expander state between runs) and run."""
-        for key in groups:
-            self.open_expander(at, key)
+    @staticmethod
+    def details(at, kind: str, ident: str, module: str = "ai-infra"):
+        """Open a row's details, as clicking its row in the table does (AppTest cannot click a table row; the click
+        itself is tested in RowClickTests), and run."""
+        args = ({"entity_id": ident} if kind == "company" else {"source_key": ident})
+        at.session_state["zx_dialog"] = {"name": kind, "args": {"workspace_id": "pilot", "module_id": module, **args}}
         return at.run()
 
-    def click_in(self, at, groups: tuple[str, ...], key: str):
-        """Click a row button inside lazy groups: open them to draw the rows, and keep them open in the run that
-        receives the click."""
-        at = self.opened(at, *groups)
-        for group in groups:
-            self.open_expander(at, group)
-        return at.button(key=key).click().run()
-
     @staticmethod
-    def filters_label(at) -> str:
-        """The label of Coverage's Filters popover (the top bar has a popover of its own)."""
-        popover = next(p for p in at.get("popover") if str(p.proto.id).endswith("cv_filters"))
-        return popover.proto.popover.label
+    def table(at):
+        frames = list(at.dataframe)
+        return frames[0].value if frames else None
 
-    def row_buttons(self, at) -> list[str]:
-        return [b.key for b in at.button if str(b.key or "").startswith(("cv_star_", "cv_mute_s_", "cv_details_"))]
+    def column(self, at, name: str) -> list:
+        frame = self.table(at)
+        return [] if frame is None else list(frame[name])
 
 
 class AreaTests(CoverageCase):
-    def test_area_picker_header_and_column_counts(self):
+    def test_area_picker_header_and_how_it_works(self):
         at = self.coverage()
         self.assert_clean(at)
         area = at.segmented_control(key="cv_area")
@@ -96,16 +78,23 @@ class AreaTests(CoverageCase):
         self.assertIn('<div class="cov-title">AI infrastructure: data centers, colocation, AI cloud, bitcoin miners</div>'
                       '<div class="cov-desc">Data center leases, power deals, AI cloud capacity and miners moving to '
                       'AI.</div>', html)
-        self.assertIn('<div class="cov-stats">7 companies · 6 sources on (2 off) · 1840 stories this week (14 in your '
-                      'briefings) · 61 in your briefings in 30 days</div><div class="cov-stats">2 muted · 1 on your '
-                      'watchlist</div>', html)
+        # the four steps, with this area's numbers, the bar and size from How much, and the editor's next run
+        flow = next(str(m.value) for m in at.markdown if 'class="cov-flow"' in str(m.value))
+        for words in ("Watch", "7 companies · 8 sources (6 on)",
+                      "Company news and filings, local permitting and zoning, trade press, power and grid, and news "
+                      "search, checked around the clock.",
+                      "Collect", "1,840 stories this week", coverage_view.COLLECT_TEXT,
+                      "Score", "The ZENUX editor scores each one 0 to 100", "Next run: ",
+                      "Brief", "14 in your briefings this week",
+                      "Stories scoring 70 or more make your briefing, up to 12 at a time (How much: Standard). The rest "
+                      "stay under Filtered out."):
+            self.assertIn(words, flow)
+        self.assertEqual(flow.count('class="cov-step"'), 4)
+        self.assertEqual(flow.count('class="cov-arrow"'), 3)
         # WF5 AW-13: a jump to the request form at the top, which lands on the form's anchor
         self.assertIn('<div class="zx-jump"><a href="#zx-coverage-requests">Ask for a source, a company or a topic ↓</a></div>',
                       html)
         self.assertIn('<div id="zx-coverage-requests"></div>', html)
-        for title, n in (("Public companies", 2), ("Private and state-owned", 4), ("Industry sources", 3),
-                         ("Government and public record", 4)):
-            self.assertIn(f'<div class="cov-col"><span>{title}</span><span> · {n}</span></div>', html)
         self.assertEqual(self.http.find("GET", MODULES)[0].bearer, READ)
         self.assertEqual(self.http.find("GET", INSPECT_AI)[0].bearer, READ)
         self.assertEqual(self.http.find("GET", INSPECT_DEF), [])  # only the area shown is read
@@ -120,9 +109,10 @@ class AreaTests(CoverageCase):
         self.assertEqual(len(self.http.find("GET", INSPECT_DEF)), 1)
         html = self.html(at)
         self.assertIn('<div class="cov-title">Defense unmanned: drones, counter-drone, autonomy</div>', html)
-        self.assertIn("1 company · 1 source on (0 off) · 61 stories this week · 4 in your briefings in 30 days", html)
-        self.assertNotIn("muted · ", html)  # no mutes or stars in this area
-        self.assertEqual([e.label for e in at.expander], ["Counter-drone: kinetic · 1", "Contracts and solicitations · 1"])
+        self.assertIn("1 company · 1 source", html)
+        self.assertIn("4 in your briefings in 30 days", html)  # an older hub without this week's figure
+        self.assertIn("All 1 source on are working.", html)
+        self.assertEqual(self.column(at, "Company"), ["Anduril"])
         self.assertEqual(at.selectbox(key="rq_area").value, "defense-unmanned")  # the request composer follows
 
     def test_module_link_selects_the_area(self):
@@ -182,109 +172,149 @@ class AreaTests(CoverageCase):
         self.http.on("GET", PILOT_HUB + "/settings", FakeResponse(503, {"error": "x"}))
         at = self.coverage()
         self.assert_clean(at)
-        self.assertIn('<div class="cov-col"><span>Public companies</span><span> · 2</span></div>', self.html(at))
+        self.assertIn("Stories that clear your bar make your briefing.", self.html(at))
+        self.assertEqual(len(self.column(at, "Company")), 7)
 
 
-class ColumnTests(CoverageCase):
-    def test_groups_are_lazy(self):
+class HealthLineTests(CoverageCase):
+    def test_a_source_not_responding_is_named_and_shown(self):
         at = self.coverage()
-        self.assertEqual([e.label for e in at.expander], [
-            "AI cloud · 2", "AI cloud · 2", "Power companies · 2", "Company news and filings · 1", "News search · 1",
-            "Trade press · 1", "Local permitting and zoning · 2", "Power and grid · 1", "Programs and agencies · 1"])
-        self.assertEqual(self.row_buttons(at), [])  # closed groups draw no rows
-        self.assertNotIn("CoreWeave", self.html(at))
-        at = self.opened(at, PUBLIC_AI_CLOUD)
         self.assert_clean(at)
-        self.assertEqual(self.row_buttons(at), ["cv_star_0", "cv_details_e_0", "cv_star_1", "cv_details_e_1"])
+        line = next(str(m.value) for m in at.markdown if 'class="cov-health' in str(m.value))
+        self.assertIn('class="cov-health warn"', line)
+        self.assertIn("1 source isn&#x27;t responding right now: ERCOT large-load interconnection reports. ZENUX keeps "
+                      "trying; everything else is collected as usual. 2 sources are turned off on purpose", line)
+        at.button(key="cv_show_failing").click().run()
+        self.assert_clean(at)
+        self.assertEqual(at.segmented_control(key="cv_list").value, "sources")
+        self.assertEqual(self.column(at, "Source"), ["ERCOT large-load interconnection reports"])
+        self.assertEqual(self.column(at, "Status"), ["Not responding since Oct 1"])
 
-    def test_rows_chips_stats_and_states(self):
-        at = self.opened(self.coverage(), *ALL_GROUPS)
+    def test_all_working(self):
+        body = fc.inspect_ai()
+        for source in body["sources"]:
+            if source["health"]["state"] == "failing":
+                source["health"]["state"] = "ok"
+        self.http.on("GET", INSPECT_AI, body)
+        at = self.coverage()
         self.assert_clean(at)
-        html = self.html(at)
-        self.assertIn('<div class="cov-name">CoreWeave <span class="cov-tickers">NASDAQ:CRWV</span></div>'
-                      '<div class="cov-chips"><span class="cov-chip cov-chip-own_feed" title="ZENUX reads its own newsroom, '
-                      'investor relations or wire releases.">Own feed</span><span class="cov-chip cov-chip-sec_filings" '
-                      'title="ZENUX reads its filings with the SEC.">SEC filings</span></div>'
-                      '<div class="cov-stats">9 this week (1 in briefings) · 2 in briefings (30 days)</div>'
-                      '<div><span class="zx-chip chip-state chip-starred">On your watchlist</span></div>', html)
-        self.assertIn('<span class="cov-chip cov-chip-name_only" title="ZENUX only catches it when another source names it '
-                      'in a story.">Name only</span>', html)
-        self.assertIn('<span class="cov-chip cov-chip-federal_contracts"', html)
-        self.assertIn("Example &lt;b&gt;Co&lt;/b&gt;", html)
-        self.assertIn('<span class="zx-chip chip-state chip-muted">Muted</span>', html)
-        self.assertIn('<div class="cov-name">ERCOT large-load interconnection reports</div><div class="cov-stats">Page '
-                      'watch · Not responding since Oct 1</div>', html)
-        self.assertIn("News feed · Turned off: The site blocks automated access from our servers; we will retry from "
-                      "another network.", html)
-        self.assertIn("Old county permits &lt;page&gt;", html)
-        self.assertIn('<div class="cov-name">DOE Genesis Mission</div>', html)  # a program, in Government
-        self.assertNotIn("CoreWeave newsroom", html)  # a company's own feeds live in its details
-        self.assertNotIn("javascript:", html)
-        self.assertEqual(at.button(key=f"cv_star_{COREWEAVE}").label, "Starred")
-        self.assertEqual(at.button(key=f"cv_star_{NEBIUS}").label, "Star")
-        self.assertEqual(at.button(key=f"cv_mute_s_{GN_THEMES}").label, "Unmute")
-        self.assertEqual(at.button(key=f"cv_mute_s_{DCD}").label, "Mute")
-        self.assertEqual(sorted(k for k in self.row_buttons(at) if k.startswith("cv_details_e_")),
-                         [f"cv_details_e_{n}" for n in range(7)])
-        self.assertEqual(sorted(k for k in self.row_buttons(at) if k.startswith("cv_details_s_")),
-                         [f"cv_details_s_{n}" for n in range(6)])  # the two entity feeds are not rows
-        self.assertIn(labels.STILL_COLLECTED, " ".join(self.texts(at, "caption")))
-        # the jargon guard with every group open
+        self.assertIn('class="cov-health ok">All 6 sources on are working.', self.html(at))
+        self.assertEqual([b.key for b in at.button if b.key == "cv_show_failing"], [])
+
+
+class ListTests(CoverageCase):
+    def test_companies_table(self):
+        at = self.coverage()
+        self.assert_clean(at)
+        self.assertEqual(at.segmented_control(key="cv_list").value, "companies")
+        self.assertEqual(list(at.segmented_control(key="cv_list").options), ["Companies · 7", "Sources · 8"])
+        frame = self.table(at)
+        self.assertEqual(list(frame.columns), ["Company", "Group", "Listed", "Ticker", "How ZENUX follows it",
+                                               "This week", "In briefings, 30 days", "You"])
+        self.assertEqual(list(frame["Company"]), ["CoreWeave", "Nebius", "Crusoe", "Stargate LLC",
+                                                  "Tennessee Valley Authority", "DOE Genesis Mission", "Example <b>Co</b>"])
+        first = frame.iloc[0].to_dict()
+        self.assertEqual(first, {"Company": "CoreWeave", "Group": "AI cloud", "Listed": "Public", "Ticker": "NASDAQ:CRWV",
+                                 "How ZENUX follows it": "Own news, SEC filings", "This week": 9,
+                                 "In briefings, 30 days": 2, "You": "★ Watchlist"})
+        self.assertEqual(list(frame["How ZENUX follows it"])[2], "By name only")  # Crusoe
+        self.assertEqual(list(frame["Listed"])[5], "Program or agency")
+        self.assertEqual(list(frame["You"])[6], "Muted")
+        self.assertIn("7 companies shown. " + coverage_view.TABLE_HINT, self.texts(at, "caption"))
+        self.assertIn(labels.STILL_COLLECTED, coverage_view.TABLE_HINT)
         self.assert_plain(at)
         self.assert_no_secrets(at)
 
-    def test_a_muted_company_cannot_be_starred(self):
-        at = self.opened(self.coverage(pin=PIN), PRIVATE_POWER)
+    def test_sources_table(self):
+        at = self.coverage()
+        at.segmented_control(key="cv_list").set_value("sources").run()
         self.assert_clean(at)
-        star = at.button(key=f"cv_star_{EXAMPLE}")
-        self.assertTrue(star.disabled)
-        self.assertEqual(star.proto.help, "Example <b>Co</b> is muted. Unmute it first.")
+        frame = self.table(at)
+        self.assertEqual(list(frame.columns), ["Source", "What it is", "Group", "Status", "This week",
+                                               "In briefings, 30 days", "You"])
+        self.assertEqual(len(frame), 8)  # the area's own sources and the companies' own feeds
+        rows = {r["Source"]: r for r in frame.to_dict("records")}
+        self.assertEqual(rows["ERCOT large-load interconnection reports"]["Status"], "Not responding since Oct 1")
+        self.assertEqual(rows["Old county permits <page>"]["Status"],
+                         "Turned off: The site blocks automated access from our servers; we will retry from another "
+                         "network.")
+        self.assertEqual(rows["News search: AI data center themes"]["You"], "Muted")
+        self.assertEqual(rows["Data Center Dynamics"]["Status"], "Working")
+        self.assertNotIn("javascript:", self.html(at))
+        self.assert_plain(at)
 
-    def test_search_opens_matching_groups(self):
+    def test_filters(self):
+        at = self.coverage()
+        for code, names in (("starred", ["CoreWeave"]), ("muted", ["Example <b>Co</b>"]),
+                            ("name_only", ["Crusoe", "DOE Genesis Mission"]), ("all", None)):
+            with self.subTest(code=code):
+                at.session_state["cv_filter_companies"] = code
+                at.run()
+                self.assert_clean(at)
+                shown = self.column(at, "Company")
+                self.assertEqual(shown, names or shown)
+        at.segmented_control(key="cv_list").set_value("sources").run()
+        for code, names in (("failing", ["ERCOT large-load interconnection reports"]),
+                            ("off", ["Old county permits <page>", "CoreWeave investor relations"]),
+                            ("muted", ["News search: AI data center themes"])):
+            with self.subTest(code=code):
+                at.session_state["cv_filter_sources"] = code
+                at.run()
+                self.assert_clean(at)
+                self.assertEqual(self.column(at, "Source"), names)
+
+    def test_search(self):
         at = self.coverage()
         at.text_input(key="cv_search").set_value("crusoe").run()
         self.assert_clean(at)
-        self.assertIn("1 match", self.texts(at, "caption"))
-        self.assertEqual([e.label for e in at.expander], ["AI cloud · 1"])
-        self.assertEqual(self.row_buttons(at), [f"cv_star_{CRUSOE}", f"cv_details_e_{CRUSOE}"])  # open at once
+        self.assertEqual(self.column(at, "Company"), ["Crusoe"])
         at.text_input(key="cv_search").set_value("CRWV").run()
-        self.assertEqual(self.row_buttons(at), [f"cv_star_{COREWEAVE}", f"cv_details_e_{COREWEAVE}"])
+        self.assertEqual(self.column(at, "Company"), ["CoreWeave"])
+        at.text_input(key="cv_search").set_value("power").run()  # a group name matches
+        self.assertEqual(self.column(at, "Company"), ["Tennessee Valley Authority", "Example <b>Co</b>"])
+        at.segmented_control(key="cv_list").set_value("sources").run()
         at.text_input(key="cv_search").set_value("center dynamics").run()  # every word, any order
-        self.assertEqual(self.row_buttons(at), [f"cv_mute_s_{DCD}", f"cv_details_s_{DCD}"])
-        at.text_input(key="cv_search").set_value("power").run()  # a category and a lane both match
-        self.assertEqual([e.label for e in at.expander], ["Power companies · 2", "Power and grid · 1"])
+        self.assertEqual(self.column(at, "Source"), ["Data Center Dynamics"])
         at.text_input(key="cv_search").set_value("zzz").run()
-        self.assertIn("0 matches. Try another word, or ask for coverage below.", self.texts(at, "caption"))
-        self.assertIn("No matches.", self.texts(at, "caption"))
+        self.assert_clean(at)
+        self.assertIsNone(self.table(at))
+        self.assertIn("Nothing matches. Try another word or filter, or ask for coverage below.", self.html(at))
 
-    def test_show_filters_sit_in_the_filters_popover(self):
+
+class RowClickTests(CoverageCase):
+    def test_a_clicked_row_opens_its_details_and_resets_the_selection(self):
+        state: dict = {"cv_table_companies_0": {"selection": {"rows": [1], "columns": []}}}
+        with patch("streamlit.session_state", state):
+            coverage_view.open_details("pilot", "ai-infra", "companies", ["coreweave", "nebius"], "cv_table_companies_0")
+        self.assertEqual(state["zx_dialog"], {"name": "company", "args": {"workspace_id": "pilot", "module_id": "ai-infra",
+                                                                         "entity_id": "nebius"}})
+        self.assertEqual(state[coverage_view.TABLE_N_KEY], 1)  # the next table starts with no selection
+        state = {"cv_table_sources_3": {"selection": {"rows": [0], "columns": []}}, coverage_view.TABLE_N_KEY: 3}
+        with patch("streamlit.session_state", state):
+            coverage_view.open_details("pilot", "ai-infra", "sources", ["dcd-news"], "cv_table_sources_3")
+        self.assertEqual(state["zx_dialog"]["name"], "source")
+        self.assertEqual(state["zx_dialog"]["args"]["source_key"], "dcd-news")
+        self.assertEqual(state[coverage_view.TABLE_N_KEY], 4)
+        for rows in ([], [5], None):  # nothing picked, or a stale index: nothing opens
+            state = {"k": {"selection": {"rows": rows}}}
+            with patch("streamlit.session_state", state):
+                coverage_view.open_details("pilot", "ai-infra", "companies", ["coreweave"], "k")
+            self.assertNotIn("zx_dialog", state)
+
+    def test_the_table_takes_row_clicks(self):
         at = self.coverage()
-        self.assertEqual(self.filters_label(at), "Filters")
-        self.assertEqual(list(at.radio(key="cv_show").options),
-                         ["All", "On your watchlist", "Muted", "Name only (gaps)", "Not responding"])
-        for show, buttons in (
-                ("name_only", [f"cv_star_{CRUSOE}", f"cv_details_e_{CRUSOE}", f"cv_star_{GENESIS}",
-                               f"cv_details_e_{GENESIS}"]),
-                ("failing", [f"cv_mute_s_{ERCOT}", f"cv_details_s_{ERCOT}"]),
-                ("starred", [f"cv_star_{COREWEAVE}", f"cv_details_e_{COREWEAVE}"]),
-                ("muted", [f"cv_star_{EXAMPLE}", f"cv_details_e_{EXAMPLE}", f"cv_mute_s_{GN_THEMES}",
-                           f"cv_details_s_{GN_THEMES}"])):
-            with self.subTest(show=show):
-                at.radio(key="cv_show").set_value(show).run()
-                self.assert_clean(at)
-                self.assertEqual(self.row_buttons(at), buttons)
-                self.assertEqual(self.filters_label(at), "Filters · 1 on")
-                self.assertIn(f"{len(buttons) // 2} match" + ("" if len(buttons) == 2 else "es"),
-                              self.texts(at, "caption"))
-        self.assert_plain(at)
+        self.assert_clean(at)
+        frame = at.dataframe[0]
+        self.assertEqual(list(frame.proto.selection_mode), [0])  # Arrow.SelectionMode.SINGLE_ROW
+        self.assertIn("cv_table_companies_0", frame.proto.id)
 
 
 class SwitchTests(CoverageCase):
     def test_star_previews_then_saves(self):
         self.http.on("GET", STARS + "/preview", fc.star_preview("nebius", "Nebius"))
         self.http.on("POST", STARS, FakeResponse(201, fc.star_added("nebius", "Nebius")))
-        at = self.coverage(pin=PIN)
-        at = self.click_in(at, (PUBLIC_AI_CLOUD,), f"cv_star_{NEBIUS}")
+        at = self.details(self.coverage(pin=PIN), "company", "nebius")
+        at.button(key="dlg_star").click().run()
         self.assert_clean(at)
         preview = self.http.find("GET", STARS + "/preview")[0]
         self.assertEqual((preview.params, preview.bearer), ({"entity": "nebius"}, READ))
@@ -295,12 +325,11 @@ class SwitchTests(CoverageCase):
         post = self.http.find("POST", STARS)[0]
         self.assertEqual((post.body, post.bearer), ({"action": "add", "entity_id": "nebius"}, OWNER))
         self.assertTrue(any(t.startswith("Nebius is on your watchlist.") for t in self.toasts(at)))
-        self.assertEqual(len(self.http.find("GET", INSPECT_AI)), 2)  # read again after the write
 
     def test_unstar_is_direct_with_undo(self):
         self.http.on("POST", STARS, fc.star_removed("coreweave", "CoreWeave"))
-        at = self.coverage(pin=PIN)
-        at = self.click_in(at, (PUBLIC_AI_CLOUD,), f"cv_star_{COREWEAVE}")
+        at = self.details(self.coverage(pin=PIN), "company", "coreweave")
+        at.button(key="dlg_star").click().run()
         self.assert_clean(at)
         post = self.http.find("POST", STARS)[0]
         self.assertEqual((post.body, post.bearer), ({"action": "remove", "entity_id": "coreweave"}, OWNER))
@@ -314,8 +343,8 @@ class SwitchTests(CoverageCase):
         self.http.on("GET", MUTES + "/preview", fc.mute_preview())
         self.http.on("POST", MUTES, lambda call: FakeResponse(201, fc.mute_added()) if call.body.get("action") == "add"
                      else fc.mute_removed(9, 5))
-        at = self.coverage(pin=PIN)
-        at = self.click_in(at, (INDUSTRY_TRADE_PRESS,), f"cv_mute_s_{DCD}")
+        at = self.details(self.coverage(pin=PIN), "source", "dcd-news")
+        at.button(key="dlg_mute").click().run()
         self.assert_clean(at)
         preview = self.http.find("GET", MUTES + "/preview")[0]
         self.assertEqual((preview.params, preview.bearer),
@@ -337,8 +366,8 @@ class SwitchTests(CoverageCase):
 
     def test_source_unmute_uses_the_inspectors_mute_reference(self):
         self.http.on("POST", MUTES, fc.mute_removed(4, 12))
-        at = self.coverage(pin=PIN)
-        at = self.click_in(at, (INDUSTRY_NEWS_SEARCH,), f"cv_mute_s_{GN_THEMES}")
+        at = self.details(self.coverage(pin=PIN), "source", "gn-themes")
+        at.button(key="dlg_mute").click().run()
         self.assert_clean(at)
         # the inspector's reference names the mute in full (gap 32): no GET /mutes lookup
         self.assertEqual(self.http.find("GET", MUTES), [])
@@ -352,26 +381,28 @@ class SwitchTests(CoverageCase):
         self.assertEqual((post.body, post.bearer), ({"action": "remove", "mute_id": 4, "bring_back_days": 7}, OWNER))
         self.assertTrue(any(t.startswith("Unmuted News search: AI data center themes.") for t in self.toasts(at)))
 
-    def test_locked_switches_are_disabled_and_send_nothing(self):
-        at = self.opened(self.coverage(), PUBLIC_AI_CLOUD, INDUSTRY_TRADE_PRESS)
+    def test_a_muted_company_cannot_be_starred(self):
+        at = self.details(self.coverage(pin=PIN), "company", "example-co")
         self.assert_clean(at)
-        for key in (f"cv_star_{NEBIUS}", f"cv_star_{COREWEAVE}", f"cv_mute_s_{DCD}"):
-            button = at.button(key=key)
-            self.assertTrue(button.disabled, key)
-            self.assertEqual(button.proto.help, labels.LOCKED_HELP)
-        self.assertFalse(at.button(key=f"cv_details_e_{NEBIUS}").disabled)  # reading is never locked
+        star = at.button(key="dlg_star")
+        self.assertTrue(star.disabled)
+        self.assertEqual(star.proto.help, "Example <b>Co</b> is muted. Unmute it first.")
+
+    def test_locked_switches_are_disabled_and_send_nothing(self):
+        at = self.coverage()
+        self.assert_clean(at)
         self.assertTrue(at.button(key="rq_send").disabled)
-        self.assertIn(":material/lock: " + labels.LOCKED_HELP, self.texts(at, "caption"))
-        at = self.click_in(at, (PUBLIC_AI_CLOUD,), f"cv_details_e_{NEBIUS}")
+        at = self.details(at, "company", "nebius")
         self.assertTrue(at.button(key="dlg_mute").disabled)
+        self.assertTrue(at.button(key="dlg_star").disabled)
+        self.assertEqual(at.button(key="dlg_star").proto.help, labels.LOCKED_HELP)
         self.assertEqual(self.http.posts(), [])
 
 
 class DetailsTests(CoverageCase):
     def test_company_details_name_only_and_request_coverage_prefilled(self):
         self.http.on("POST", RADAR_NEW, FakeResponse(201, fc.radar_created(47, "new_coverage")))
-        at = self.coverage(pin=PIN)
-        at = self.click_in(at, (PRIVATE_AI_CLOUD,), f"cv_details_e_{CRUSOE}")
+        at = self.details(self.coverage(pin=PIN), "company", "crusoe")
         self.assert_clean(at)
         text = self.visible_text(at)
         self.assertIn('<span class="why-label">Name only</span> ZENUX only catches Crusoe when another source names it.',
@@ -394,8 +425,7 @@ class DetailsTests(CoverageCase):
     def test_company_details_own_feeds_and_starred_company(self):
         self.http.on("GET", MUTES + "/preview", fc.mute_preview("source", "ai-infra", "ent-coreweave-1",
                                                                 "CoreWeave newsroom"))
-        at = self.coverage(pin=PIN)
-        at = self.click_in(at, (PUBLIC_AI_CLOUD,), f"cv_details_e_{COREWEAVE}")
+        at = self.details(self.coverage(pin=PIN), "company", "coreweave")
         self.assert_clean(at)
         text, html = self.visible_text(at), self.html(at)
         self.assertIn('<span class="why-label">Own feed</span> ZENUX reads its own newsroom, investor relations or wire '
@@ -417,8 +447,7 @@ class DetailsTests(CoverageCase):
     def test_mute_company_from_details(self):
         self.http.on("GET", MUTES + "/preview", fc.mute_preview("entity", None, "nebius", "Nebius"))
         self.http.on("POST", MUTES, FakeResponse(201, fc.mute_added(10, "entity", None, "nebius", "Nebius", 0)))
-        at = self.coverage(pin=PIN)
-        at = self.click_in(at, (PUBLIC_AI_CLOUD,), f"cv_details_e_{NEBIUS}")
+        at = self.details(self.coverage(pin=PIN), "company", "nebius")
         at.button(key="dlg_mute").click().run()
         self.assert_clean(at)
         self.assertEqual(self.http.find("GET", MUTES + "/preview")[0].params, {"kind": "entity", "ref": "nebius"})
@@ -427,8 +456,7 @@ class DetailsTests(CoverageCase):
         self.assertEqual(self.http.find("POST", MUTES)[0].body, {"action": "add", "kind": "entity", "ref": "nebius"})
 
     def test_source_details(self):
-        at = self.coverage()
-        at = self.click_in(at, (GOV_POWER,), f"cv_details_s_{ERCOT}")
+        at = self.details(self.coverage(), "source", "ercot-large-load")
         self.assert_clean(at)
         html = self.html(at)
         self.assertIn('<div class="cov-title">ERCOT large-load interconnection reports</div>', html)
@@ -439,8 +467,7 @@ class DetailsTests(CoverageCase):
         self.assertIn('href="https://example.com/feed"', html)
         self.assert_plain(at)
         self.fresh()
-        at = self.coverage()
-        at = self.click_in(at, (GOV_PERMITTING,), f"cv_details_s_{OLD_PERMITS}")
+        at = self.details(self.coverage(), "source", "old-permits")
         self.assert_clean(at)
         self.assertNotIn("javascript:", self.html(at))
         self.assertIn("Turned off: The site blocks automated access from our servers", self.html(at))

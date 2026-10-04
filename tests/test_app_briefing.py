@@ -140,11 +140,15 @@ class BriefingPageTests(BriefingCase):
         html = self.html(at)
         self.assertNotIn("javascript:", html)
         self.assertNotIn(BLANK_LINE, html)
-        # every card is its own block, with its action row and its Why expander
+        # every card is its own block with its action row: More, Less and Rate side by side, no More menu
         self.assertEqual({b.key for b in at.button if str(b.key).startswith("act_more_")},
                          {"act_more_i1201", "act_more_i1202", "act_more_i1101", "act_more_i1102"})
+        self.assertEqual({b.key for b in at.button if str(b.key).startswith("act_rate_")},
+                         {"act_rate_i1201", "act_rate_i1202", "act_rate_i1101", "act_rate_i1102"})
+        self.assertEqual([p for p in at.get("popover") if str(getattr(p, "key", "") or "").startswith("zx_more_")], [])
+        # one "Why am I seeing this?" per briefing, under the editor's notes, collapsed
         self.assertEqual([e.label for e in at.expander if e.label != feed_view.NOTES_LABEL],
-                         ["Why am I seeing this?"] * 4)
+                         ["Why am I seeing this?"] * 2)
 
     def test_correction_states(self):
         self.http.on("GET", EDITIONS, fb.with_corrections())
@@ -344,7 +348,11 @@ class DeepLinkTests(BriefingCase):
         focused = [c for c in self.cards(at) if c.startswith('<article class="feed-item zx-focus">')]
         self.assertEqual(len(focused), 1)
         self.assertIn("Army awards $48M", focused[0])
-        # its Why expander is open: its rows are drawn
+        # Why starts collapsed, also for a linked story; opened, it lists the linked briefing's stories by number
+        self.assertNotIn("Official confirmation · score 78 of 100", self.html(at))
+        self.open_expander(at, "zx_whyall_linked")
+        at.run()
+        self.assert_clean(at)
         self.assertIn("Official confirmation · score 78 of 100", self.html(at))
         at.button(key="br_back_latest").click().run()
         self.assert_clean(at)
@@ -360,8 +368,7 @@ class DeepLinkTests(BriefingCase):
         focused = [c for c in self.cards(at) if "zx-focus" in c]
         self.assertEqual(len(focused), 1)
         self.assertIn("CoreWeave signs 200 MW", focused[0])
-        self.assertIn("Material news · score 93 of 100", self.html(at))
-        self.assertNotIn("Official confirmation · score 78", self.html(at))  # the other Why expanders stay closed
+        self.assertNotIn("Material news · score 93 of 100", self.html(at))  # Why starts collapsed
 
     def test_a_linked_briefing_that_is_gone(self):
         self.http.on("GET", EDITIONS, lambda call: {"editions": [], "next_before": None, "has_more": False}
@@ -376,10 +383,17 @@ class DeepLinkTests(BriefingCase):
 class WhyTests(BriefingCase):
     def test_why_rows(self):
         at = self.app()
-        self.open_expander(at, "zx_why_i1201")
+        self.open_expander(at, "zx_whyall_0")
         at.run()
         self.assert_clean(at)
         html = self.html(at)
+        # one entry per story of the briefing, headed by the story's number and headline
+        heads = [str(m.value) for m in at.markdown if 'class="why-item-head"' in str(m.value)]
+        self.assertEqual(heads, [
+            '<div class="why-item-head"><span class="why-num">01</span><span class="why-title">CoreWeave signs 200 MW '
+            '&lt;capacity&gt; deal with Microsoft</span></div>',
+            '<div class="why-item-head"><span class="why-num">02</span><span class="why-title">'
+            f'{esc_text(fb.edition(fb.LATEST_ID, fb.LATEST_AT)["items"][1]["headline"])}</span></div>'])
         rows = next(str(m.value) for m in at.markdown if "Why it&#x27;s here" in str(m.value))
         self.assertEqual(rows, (
             '<div class="why-block">'
@@ -409,9 +423,9 @@ class WhyTests(BriefingCase):
             '<div class="why-row"><span class="why-label">Companies</span><span>CoreWeave, Microsoft (on your watchlist)'
             '</span></div></div>'))
         # each preference links to My preferences (AppTest forgets a keyed expander's open state: open it again)
-        self.assertEqual(at.button(key="why_pref_i1201_0").label, "See it in My preferences")
-        self.open_expander(at, "zx_why_i1201")
-        at.button(key="why_pref_i1201_1").click().run()
+        self.assertEqual(at.button(key="why_pref_w0_0_0").label, "See it in My preferences")
+        self.open_expander(at, "zx_whyall_0")
+        at.button(key="why_pref_w0_0_1").click().run()
         self.assert_clean(at)
         self.assertEqual(at.session_state["zx_tab"], "preferences")
         self.assertEqual({k: at.session_state["zx_focus"].get(k) for k in ("section", "pref")},
@@ -443,6 +457,7 @@ class HubPlainWordsTests(AppCase):
 
     def test_every_company_the_story_is_about_can_be_starred_or_muted(self):
         # gap 15: why.companies adds the buyer, which why.subjects leaves out
+        self.more_menu_on()
         at = self.app(pin=PIN, state={"zx_more_i1201": True})
         self.assert_clean(at)
         labels_shown = {b.label for b in at.button if str(b.key or "").startswith(("act_star_i1201", "act_mute_co_i1201"))}
@@ -452,7 +467,7 @@ class HubPlainWordsTests(AppCase):
         self.assert_plain(at)
 
     def test_why_reads_the_plain_reasoning(self):
-        at = self.app(state={"zx_why_i1201": True, "zx_why_i1202": True})
+        at = self.app(state={"zx_whyall_0": True})
         self.assert_clean(at)
         html = self.html(at)
         self.assertIn("Signed 15-year 200 MW agreement with a named hyperscaler", html)
@@ -523,7 +538,8 @@ class StateTests(BriefingCase):
         self.assertEqual(len(keys), len(set(keys)))  # repeated ids never collide
         for key in keys:
             self.open_popover(at, f"zx_more_{key}")
-            self.open_expander(at, f"zx_why_{key}")
+        for index in range(4):
+            self.open_expander(at, f"zx_whyall_{index}")
         at.run()
         self.assert_clean(at)
         self.assertNotIn("javascript:", self.html(at))
@@ -558,7 +574,8 @@ class PlainWordsTests(BriefingCase):
         at = self.app(pin=PIN, run=False)
         for key in ("i1201", "i1202", "i1101", "i1102"):
             self.open_popover(at, f"zx_more_{key}")
-            self.open_expander(at, f"zx_why_{key}")
+        for index in (0, 1):
+            self.open_expander(at, f"zx_whyall_{index}")
         at.run()
         self.assert_clean(at)
         visible = self.visible_text(at)

@@ -11,13 +11,14 @@ A briefing (edition) card: the kicker (LATEST on the newest, the hub's briefing 
 age, clock time, story count, and the "how much" setting when it is not Standard), the editor's one-sentence
 summary as the title (older briefings have none: a deterministic sentence built from the stories), the hero tiles
 and coverage-area split on the newest, the corrections answered in this briefing, one card per story, the "On your
-watchlist" and "Near misses" shelves, and the editor's notes collapsed at the bottom (shown as written, inside the
-expander only).
+watchlist" and "Near misses" shelves, the editor's notes collapsed at the bottom (shown as written, inside the
+expander only), and under them "Why am I seeing this?": one collapsed section with every story's reasons, each
+headed by the story's number ("01") and headline (lazy: drawn only while open).
 
 A story card: rank, dateline (date · plain source name, never a source key), the headline with its facts, metrics and
 source links (a corrected story shows the corrected text and metrics), coverage-area tags, TOP STORY at 90+, the plain
 tier, and its states (flagged by you, corrected, checked, your newest rating, on your watchlist); then the card
-actions and "Why am I seeing this?" (actions.py). Fields are read tolerantly, so an older or newer hub shape still
+actions (actions.py). Fields are read tolerantly, so an older or newer hub shape still
 renders; anything unknown is left out, not guessed.
 """
 
@@ -36,6 +37,7 @@ from .fmt import (MIN_TIME, as_int, as_list, chip, clip, dicts, empty_state, esc
 PAGE_SIZE = 5
 MAX_PAGES = 20
 NOTES_LABEL = "Editor's notes"
+WHY_LABEL = "Why am I seeing this?"
 FULL_ITEMS = "_all_items"  # set by search(): the edition's full item list, while `items` holds only the hits
 SEARCH_KEY = "br_search"
 SEARCH_LABEL = "Search your briefings"
@@ -479,9 +481,37 @@ def render_notes(edition: Mapping) -> None:
             st.markdown(f'<div class="grading-notes">{esc_lines(note)}</div>', unsafe_allow_html=True)
 
 
+def item_number(item: Mapping, n: int) -> str:
+    """The story's number as its card shows it ("01"): its rank, else its place in the briefing."""
+    rank = as_int(item.get("rank"))
+    return str(rank if rank is not None else n + 1).zfill(2)
+
+
+def why_head_html(number: str, title: str) -> str:
+    return (f'<div class="why-item-head"><span class="why-num">{esc(number)}</span>'
+            f'<span class="why-title">{esc(title)}</span></div>')
+
+
+def render_why(ws: Workspace, edition: Mapping, items: list[dict], index: Any) -> None:
+    """"Why am I seeing this?" for every story of the briefing, in one collapsed section under the editor's notes.
+    Lazy: the reasons are built only while it is open."""
+    if not items:
+        return
+    box = st.expander(WHY_LABEL, key=f"zx_whyall_{index}", on_change="rerun")
+    with box:
+        if not box.open:
+            return
+        for n, item in enumerate(items):
+            target = actions.target_from_item(ws, edition, item)
+            with st.container(key=f"zx_why_{index}_{n}"):
+                st.markdown(why_head_html(item_number(item, n), target.title), unsafe_allow_html=True)
+                why = item.get("why")
+                actions.why_body(ws, target, why if isinstance(why, Mapping) else {}, f"w{index}_{n}", [])
+
+
 def render_item(ws: Workspace, edition: Mapping, item: dict, index: Any, n: int, focus_item: int | None,
                 used: set[str]) -> None:
-    """One story card: the card HTML, the action row and the Why expander."""
+    """One story card: the card HTML and the action row (its Why is listed under the editor's notes)."""
     eid = as_int(edition_id(edition))
     item_id = as_int(item.get("id"))
     rank = as_int(item.get("rank"))
@@ -498,7 +528,6 @@ def render_item(ws: Workspace, edition: Mapping, item: dict, index: Any, n: int,
     with st.container(key=container):
         st.markdown(item_html(item, edition, ws.timezone, focus=focus), unsafe_allow_html=True)
         actions.action_bar(ws, target, key=key)
-        actions.why_expander(ws, target, item.get("why"), key=key, expanded=focus)
 
 
 def render_shelf(ws: Workspace, edition: Mapping, index: Any, kind: str, used: set[str]) -> None:
@@ -540,7 +569,7 @@ def render_shelf(ws: Workspace, edition: Mapping, index: Any, kind: str, used: s
 
 def render_edition(ws: Workspace, edition: Mapping, index: Any, *, latest: bool, searching: bool,
                    focus_item: int | None, used: set[str]) -> None:
-    """One briefing card: its header, corrections, stories, shelves and the editor's notes."""
+    """One briefing card: its header, corrections, stories, shelves, the editor's notes and every story's Why."""
     items = items_of(edition)
     with st.container(key=f"zx_edition_{index}"):
         st.markdown(edition_html(edition, ws.timezone, latest=latest, matched=len(items) if searching else None),
@@ -557,6 +586,7 @@ def render_edition(ws: Workspace, edition: Mapping, index: Any, *, latest: bool,
             render_shelf(ws, edition, index, "watchlist", used)
             render_shelf(ws, edition, index, "near", used)
         render_notes(edition)
+        render_why(ws, edition, items, index)
 
 
 def render_search(editions: list[dict], more: bool, tz: str) -> str:

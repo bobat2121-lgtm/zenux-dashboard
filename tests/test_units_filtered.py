@@ -181,11 +181,12 @@ class RowHtmlTests(unittest.TestCase):
         self.assertNotIn("uas-vision", html)
         self.assertNotIn("7303", html)
 
-    def test_score_chip_only_in_near(self):
+    def test_score_chip_in_every_view(self):
         row = ff.near_rows()[0]
-        self.assertIn('<span class="rejected-chip score">Score 64 of 100 · bar 70</span>',
-                      fv.row_html(row, "near", "UTC"))
-        self.assertNotIn("Score 64", fv.row_html(row, "all", "UTC"))
+        for view in ("near", "all"):  # a score order sorts by it, so every view shows it
+            self.assertIn('<span class="rejected-chip score">Score 64 of 100 · bar 70</span>',
+                          fv.row_html(row, view, "UTC"))
+        self.assertNotIn("Score", fv.row_html({**row, "score": None}, "all", "UTC"))  # old news, mutes: no score
         # WF3 review CV9: the chip never names a band (a 74 is "Also notable" elsewhere)
         high = {**row, "score": 74, "bar": None}
         self.assertIn('<span class="rejected-chip score">Score 74 of 100</span>', fv.row_html(high, "near", "UTC"))

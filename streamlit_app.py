@@ -4,7 +4,8 @@ Five tabs over a workspace's hub (docs/SPEC-PHASE03-UI.md): Briefing, Filtered o
 the analyst, and the Control room for the builder (in the tab list only while the builder is unlocked; it spans every
 configured workspace). Configuration comes only from st.secrets (dashboard/.streamlit/secrets.toml locally, App
 settings -> Secrets on Streamlit Community Cloud); see .streamlit/secrets.example.toml. Changes need "Sign in to
-edit" (the workspace PIN, once per browser session), which unlocks the workspace's owner_token.
+edit" (the workspace PIN, once per browser session), which unlocks the workspace's owner_token, unless open access
+is on (the beta default; `open_access = false` in the secrets turns the PIN back on).
 
 Every run, top to bottom: page config and stylesheet; config, deep links (read once per session), the workspace,
 a PIN preset by a test, the tab (a pending switch applied, the Control room dropped while the builder is locked) and
@@ -113,8 +114,19 @@ def _lock() -> None:
         links.set_tab(links.DEFAULT_TAB)
 
 
+OPEN_LABEL = "Open for testing"
+OPEN_TEXT = ("No PIN is needed: anyone with this link can edit and open the Control room while open access is on. "
+             "To require the PIN again, add `open_access = false` at the top of the app's Secrets on Streamlit "
+             "Community Cloud (App settings › Secrets).")
+
+
 def signin_popover(conf: Config, ws: Workspace, builder: bool) -> None:
-    """Sign in to edit (locked) / Signed in (unlocked), with the builder's part under a divider."""
+    """Sign in to edit (locked) / Signed in (unlocked), with the builder's part under a divider; under open access a
+    note that says so instead."""
+    if owner.is_open(ws):
+        with st.popover(OPEN_LABEL, key=SIGNIN_KEY, width="stretch", icon=":material/lock_open:"):
+            st.markdown(OPEN_TEXT)
+        return
     signed_in = owner.can_edit(ws)
     # on_change="rerun" makes the popover's open state a widget value, so Unlock, Open the Control room and Lock
     # can close it from their callbacks (the page under it is then in view)

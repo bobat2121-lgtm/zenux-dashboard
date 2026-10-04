@@ -200,20 +200,44 @@ class FeedbackTests(ActionCase):
 
     def test_rate_this_story(self):
         self.http.on("POST", FEEDBACK, FakeResponse(201, fb.feedback_stored()))
-        at = self.briefing(popover="zx_more_i1202")
-        self.click(at, "act_rate_i1202")
+        at = self.briefing()
+        self.click(at, "act_rate_i1202")  # beside Less like this, not in a menu
         self.assert_clean(at)
         choice = at.radio(key="dlg_choice")
         self.assertEqual(choice.value, "digest")
         self.assertEqual(list(choice.options), ["Top story", "In the briefing", "Near miss", "Not relevant"])
-        self.assertIn(labels.RATING_HONEST, self.texts(at, "caption"))
-        choice.set_value("reject")
+        # the slider sits under the note, in the rating's band, with the editor's score and the scale beside it
+        self.assertEqual(at.slider(key="dlg_score").value, actions.RATING_SCORES["digest"])
+        self.assertEqual((at.slider(key="dlg_score").min, at.slider(key="dlg_score").max), (0, 100))
+        self.assertIn("The ZENUX editor scored it 78.", self.texts(at, "caption"))
+        self.assertIn(actions.RATE_SCALE_NOTE, self.texts(at, "caption"))
+        scale = next(str(m.value) for m in at.markdown if 'class="why-block score-scale"' in str(m.value))
+        for span, name, meaning in actions.SCORE_SCALE:
+            self.assertIn(f"{span} · {name}", scale)
+            self.assertIn(meaning, scale)
+        # a rating moves the slider into its band; the score is only sent when the analyst moved the slider
+        choice.set_value("reject").run()
+        self.assertEqual(at.slider(key="dlg_score").value, actions.RATING_SCORES["reject"])
         at.text_input(key="dlg_text").input("Old news for us")
         at.button(key="dlg_save").click().run()
         self.assert_clean(at)
         self.assert_sent(FEEDBACK, {"verdict": "reject", "scope": "item", "item_id": 1202, "note": "Old news for us"})
         self.assertIn("Rating saved. " + labels.RATING_HONEST, self.toasts(at))
         self.assertIsNone(self.undo(at))
+
+    def test_the_slider_picks_the_rating_and_sends_the_score(self):
+        self.http.on("POST", FEEDBACK, FakeResponse(201, fb.feedback_stored()))
+        at = self.briefing()
+        self.click(at, "act_rate_i1202")
+        for score, verdict in ((93, "lead"), (64, "watch"), (12, "reject"), (77, "digest"), (90, "lead")):
+            at.slider(key="dlg_score").set_value(score).run()
+            self.assert_clean(at)
+            self.assertEqual(at.radio(key="dlg_choice").value, verdict, score)
+            self.assertEqual(at.slider(key="dlg_score").value, score)  # the rating never moves a score in its band
+        at.button(key="dlg_save").click().run()
+        self.assert_clean(at)
+        self.assert_sent(FEEDBACK, {"verdict": "lead", "scope": "item", "item_id": 1202, "score": 90})
+        self.assertIn("Rating saved with your score of 90. " + labels.RATING_HONEST, self.toasts(at))
 
     def test_should_have_been_in_from_a_shelf(self):
         self.http.on("GET", EDITIONS, fb.with_shelves())

@@ -1,50 +1,49 @@
-"""Coverage: who and what ZENUX collects in each coverage area, in the analyst's words (GET /modules, GET
-/modules/<id>/inspect).
+"""Coverage: how ZENUX covers each coverage area, in four steps, and who and what it watches (GET /modules, GET
+/modules/<id>/inspect, with GET /settings and GET /status for the editor's bar and next run).
 
-Pick a coverage area (a module: `cv_area`, mirrored as `module` in the page's link), then:
+Built to be read cold by a new analyst (owner, 2026-10-04: "simple and efficient ... intuitively process how this
+engine runs"). Pick a coverage area (a module: `cv_area`, mirrored as `module` in the page's link), then:
 
-- a header: the area's title and plain description, and its counts (companies, sources on and off, stories this
-  week, how many made the briefings this week and in 30 days, mutes and stars);
-- a search box (always visible: names, tickers, categories and source names in all four columns) and a Filters
-  popover with "Show": All, On your watchlist, Muted, Name only (gaps), Not responding;
-- four columns: Public companies, Private and state-owned (entities by ownership, grouped by category), Industry
-  sources and Government and public record (the area's own sources by lane column, grouped by lane; programs and
-  agencies join Government). A company's own feeds appear in its details, not as rows. Each group is a lazy expander
-  whose rows are drawn only while it is open (search and Show open every matching group).
-- a company row: name and tickers, coverage chips (own feed, SEC filings, federal contracts, news search, name only),
-  stories this week (and how many made the briefings) and in briefings (30 days), Muted / On your watchlist, and
-  Star / Starred and Details; a source row: name, kind, health in plain words, stats, Muted, and Mute / Unmute and
-  Details.
-- Details open the `company` or `source` dialog (registered here). Mute, unmute and star go through the card-action
-  dialogs of `actions` (preview first, a toast, undo); Unmute takes the inspector's full mute reference (kind, ref,
-  label). A dialog cannot open another one, so these dialogs close themselves before opening the next. "Request
-  coverage" opens the `request` dialog of `radar_view`, prefilled.
+- the area's title and one-sentence description;
+- How it works: four steps with this area's live numbers. Watch (companies and sources, and the kinds of sources),
+  Collect (stories this week), Score (the ZENUX editor scores every story 0 to 100; its next run), Brief (what made
+  your briefings this week, and the bar and size of a briefing from "How much");
+- one line on source health ("All 151 sources are working", or which are not responding, with Show them);
+- What ZENUX watches: a search box, Companies or Sources, a filter (watchlist, muted, by name only; not responding,
+  turned off, muted) and one sortable table. Clicking a row opens its details (the `company` or `source` dialog,
+  registered here), where Star, Mute and Request coverage live; Mute, unmute and star go through the card-action
+  dialogs of `actions` (preview first, a toast, undo). A dialog cannot open another one, so these dialogs close
+  themselves before opening the next.
 
-Every mute surface says it: muted sources and companies are still collected, kept out of the briefing. Below the
-columns, `radar_view.render_requests(ws, module_id)` draws the coverage requests. While the workspace is staging, a
-banner asks the analyst to review this page and What ZENUX looks for, then sign off.
+Every mute surface says it: muted sources and companies are still collected, kept out of the briefing. Below,
+`radar_view.render_requests(ws, module_id)` draws the coverage requests. While the workspace is staging, a banner asks
+the analyst to review this page and What ZENUX looks for, then sign off.
 """
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any, Mapping
 
 import streamlit as st
 
-from . import actions, api, data, labels, links, radar_view, ui
+from . import actions, api, data, labels, links, radar_view, status, ui
 from .config import Workspace, load_config
-from .fmt import (as_int, as_list, chip, dicts, domain_of, empty_state, esc, fmt_date, label_of, link, md_label,
-                  one_line, pick, plural, safe_url)
+from .fmt import (MIN_TIME, as_int, as_list, chip, dicts, domain_of, empty_state, esc, fmt_clock, fmt_date, join_and,
+                  label_of, link, md_label, one_line, parse_time, pick, plural, safe_url)
 
 AREA_KEY = "cv_area"
 SEARCH_KEY = "cv_search"
-SHOW_KEY = "cv_show"
-SHOW_CHOICES = {"all": "All", "starred": "On your watchlist", "muted": "Muted", "name_only": "Name only (gaps)",
-                "failing": "Not responding"}
-PUBLIC = "public"
+LIST_KEY = "cv_list"
+FILTER_KEYS = {"companies": "cv_filter_companies", "sources": "cv_filter_sources"}
+TABLE_N_KEY = "cv_table_n"  # bumped after a row opens its details, so the table's selection starts fresh
+LISTS = {"companies": "Companies", "sources": "Sources"}
+FILTERS = {
+    "companies": {"all": "All", "starred": "On your watchlist", "muted": "Muted", "name_only": "By name only"},
+    "sources": {"all": "All", "failing": "Not responding", "off": "Turned off", "muted": "Muted"},
+}
 PROGRAM_ROLE = "program"
 PROGRAM_GROUP = "Programs and agencies"
-GOVERNMENT = "government"
 OTHER_COMPANIES = "Other companies"
 OTHER_SOURCES = "Other sources"
 CATALOG_MISSING = "catalog_missing"
@@ -52,6 +51,11 @@ UNKNOWN_MODULE = "unknown_module"
 STAR_MUTED_HELP = "{name} is muted. Unmute it first."
 MUTE_STARRED_HELP = "{name} is on your watchlist. Remove the star first."
 ASK_JUMP = "Ask for a source, a company or a topic ↓"
+TABLE_HINT = ("Click a row for its details: star a company, mute a source or company, or ask for more coverage. "
+              "Muted: " + labels.STILL_COLLECTED)
+COLLECT_TEXT = "Clearly off-topic items are dropped as they arrive. Everything else waits for the editor."
+FOLLOWS = {"own_feed": "Own news", "sec_filings": "SEC filings", "federal_contracts": "Contracts",
+           "news_search": "News search"}
 
 
 # ---------------------------------------------------------------------------------------------- shapes (pure)
@@ -66,21 +70,6 @@ def modules_of(body: Any) -> list[dict]:
             seen.add(mid)
             out.append(m)
     return out
-
-
-def entity_column(entity: Mapping) -> str:
-    """public | private | government: programs and agencies are public record, every other company by ownership
-    (private, subsidiary, government-owned or missing: Private and state-owned)."""
-    if one_line(entity.get("role")).lower() == PROGRAM_ROLE:
-        return GOVERNMENT
-    return "public" if one_line(entity.get("ownership")).lower() == PUBLIC else "private"
-
-
-def source_column(source: Mapping) -> str | None:
-    """industry | government for the area's own sources; None for a company's own feeds (shown in its details)."""
-    if one_line(source.get("origin")).lower() == "entity":
-        return None
-    return GOVERNMENT if one_line(source.get("column")).lower() == GOVERNMENT else "industry"
 
 
 def entity_group(entity: Mapping) -> str:
@@ -117,6 +106,28 @@ def is_starred(row: Mapping) -> bool:
     return isinstance(row.get("starred"), Mapping)
 
 
+def is_off(source: Mapping) -> bool:
+    return source.get("enabled") is False or state_of(source) == "off"
+
+
+def listed(entity: Mapping) -> str:
+    """'Public', 'Private' or 'Program or agency'."""
+    if one_line(entity.get("role")).lower() == PROGRAM_ROLE:
+        return "Program or agency"
+    return "Public" if one_line(entity.get("ownership")).lower() == "public" else "Private"
+
+
+def follows_text(entity: Mapping) -> str:
+    """How ZENUX follows a company: 'Own news, SEC filings', or 'By name only' when nothing reads it directly."""
+    flags = [flag for flag, _, _ in coverage_flags(entity)]
+    parts = [FOLLOWS[f] for f in flags if f in FOLLOWS]
+    return ", ".join(parts) if parts else ("By name only" if "name_only" in flags else "")
+
+
+def you_text(row: Mapping) -> str:
+    return "★ Watchlist" if is_starred(row) else "Muted" if is_muted(row) else ""
+
+
 def entity_text(entity: Mapping) -> str:
     return " ".join([one_line(entity.get("name")), tickers_of(entity), entity_group(entity),
                      " ".join(one_line(a) for a in as_list(entity.get("aliases")))]).casefold()
@@ -130,63 +141,147 @@ def terms_of(query: Any) -> list[str]:
     return [t for t in one_line(query).casefold().split(" ") if t]
 
 
-def shown(row: Mapping, is_entity: bool, terms: list[str], show: str) -> bool:
-    """Search (every term in the row's name, tickers, category, kind or lane) and the Show filter."""
-    text = entity_text(row) if is_entity else source_text(row)
+def matches(row: Mapping, kind: str, terms: list[str], filter_: str) -> bool:
+    """Search (every term in the row's name, tickers, group or kind) and the list's filter."""
+    text = entity_text(row) if kind == "companies" else source_text(row)
     if any(term not in text for term in terms):
         return False
-    if show == "starred":
-        return is_entity and is_starred(row)
-    if show == "muted":
+    if filter_ == "starred":
+        return is_starred(row)
+    if filter_ == "muted":
         return is_muted(row)
-    if show == "name_only":
-        return is_entity and bool(pick(row, "coverage.name_only"))
-    if show == "failing":
-        return not is_entity and state_of(row) == "failing"
+    if filter_ == "name_only":
+        return bool(pick(row, "coverage.name_only"))
+    if filter_ == "failing":
+        return state_of(row) == "failing"
+    if filter_ == "off":
+        return is_off(row)
     return True
 
 
-def build_columns(insp: Mapping, terms: list[str] | None = None, show: str = "all") -> dict[str, list[tuple[str, list]]]:
-    """{column: [(group label, [(index, row, is_entity)])]}: groups by size (largest first), then label. `index` is the
-    row's position in the inspector's entities or sources list (stable within a read: widget keys use it)."""
-    terms = terms or []
-    buckets: dict[str, dict[str, list]] = {code: {} for code, _ in labels.COLUMNS}
-    for n, entity in enumerate(dicts(insp.get("entities"))):
-        if shown(entity, True, terms, show):
-            buckets[entity_column(entity)].setdefault(entity_group(entity), []).append((n, entity, True))
-    for n, source in enumerate(dicts(insp.get("sources"))):
-        column = source_column(source)
-        if column and shown(source, False, terms, show):
-            buckets[column].setdefault(source_group(source), []).append((n, source, False))
-    return {code: sorted(groups.items(), key=lambda g: (-len(g[1]), g[0].casefold())) for code, groups in buckets.items()}
+def stats_of(row: Mapping) -> Mapping:
+    return row.get("stats") if isinstance(row.get("stats"), Mapping) else {}
 
 
-def counts_line(insp: Mapping, card: Mapping | None) -> str:
-    """'142 companies · 160 sources on (28 off) · 1840 stories this week (12 in your briefings) · 61 in your briefings
-    (30 days)'."""
+def company_rows(insp: Mapping, terms: list[str], filter_: str) -> tuple[list[str], list[dict]]:
+    """(entity ids, table rows) of the companies that match, in the hub's order."""
+    ids, rows = [], []
+    for entity in dicts(insp.get("entities")):
+        if not one_line(entity.get("id")) or not matches(entity, "companies", terms, filter_):
+            continue
+        stats = stats_of(entity)
+        ids.append(one_line(entity.get("id")))
+        rows.append({"Company": one_line(entity.get("name")) or "Unnamed company", "Group": entity_group(entity),
+                     "Listed": listed(entity), "Ticker": tickers_of(entity), "How ZENUX follows it": follows_text(entity),
+                     "This week": as_int(stats.get("items_7d")) or 0,
+                     "In briefings, 30 days": as_int(stats.get("briefing_30d")) or 0, "You": you_text(entity)})
+    return ids, rows
+
+
+def source_rows(insp: Mapping, terms: list[str], filter_: str, tz: str) -> tuple[list[str], list[dict]]:
+    """(source keys, table rows) of the sources that match: the area's own and the companies' own feeds."""
+    ids, rows = [], []
+    for source in dicts(insp.get("sources")):
+        if not one_line(source.get("key")) or not matches(source, "sources", terms, filter_):
+            continue
+        stats = stats_of(source)
+        ids.append(one_line(source.get("key")))
+        rows.append({"Source": one_line(source.get("label")) or "Unnamed source", "What it is": one_line(source.get("kind")),
+                     "Group": source_group(source), "Status": health_text(source, tz),
+                     "This week": as_int(stats.get("items_7d")) or 0,
+                     "In briefings, 30 days": as_int(stats.get("briefing_30d")) or 0,
+                     "You": "Muted" if is_muted(source) else ""})
+    return ids, rows
+
+
+def counts_of(insp: Mapping, card: Mapping | None) -> dict[str, int]:
+    """companies, sources on and off, stories this week and in briefings (this week, else 30 days)."""
     counts = card.get("counts") if isinstance((card or {}).get("counts"), Mapping) else {}
     entities, sources = dicts(insp.get("entities")), dicts(insp.get("sources"))
-    n_entities = as_int(counts.get("entities"))
-    n_on = as_int(counts.get("sources_enabled"))
-    n_off = as_int(counts.get("sources_off"))
-    if n_on is None:
-        n_on = sum(1 for s in sources if s.get("enabled") is not False)
-    if n_off is None:
-        n_off = sum(1 for s in sources if s.get("enabled") is False)
     totals = insp.get("totals") if isinstance(insp.get("totals"), Mapping) else {}
-    return " · ".join(p for p in [
-        plural(len(entities) if n_entities is None else n_entities, "company", "companies"),
-        f"{plural(n_on, 'source')} on ({n_off} off)",
-        f"{as_int(totals.get('items_7d')) or 0} stories this week{week_briefings(totals, ' in your briefings')}",
-        month_briefings(totals),
-    ] if p)
+    on = as_int(counts.get("sources_enabled"))
+    off = as_int(counts.get("sources_off"))
+    return {
+        "companies": as_int(counts.get("entities")) if as_int(counts.get("entities")) is not None else len(entities),
+        "on": on if on is not None else sum(1 for s in sources if not is_off(s)),
+        "off": off if off is not None else sum(1 for s in sources if is_off(s)),
+        "week": as_int(totals.get("items_7d")) or 0,
+        "briefing_7d": as_int(totals.get("briefing_7d")) if as_int(totals.get("briefing_7d")) is not None else -1,
+        "briefing_30d": as_int(totals.get("briefing_30d")) or 0,
+    }
 
 
-def month_briefings(stats: Mapping) -> str:
-    """'61 in your briefings in 30 days', or '' when it would only repeat this week's figure (WF5 AW-12)."""
-    month = as_int(stats.get("briefing_30d")) or 0
-    week = as_int(stats.get("briefing_7d"))
-    return "" if week is not None and week == month else f"{month} in your briefings in 30 days"
+def lane_words(insp: Mapping) -> str:
+    """'Company news and filings, trade press and news search': the kinds of sources, by size, in plain words."""
+    lanes = sorted(dicts(insp.get("lanes")), key=lambda lane: -(as_int(lane.get("source_count")) or 0))
+    words = [one_line(lane.get("label")) for lane in lanes if one_line(lane.get("label"))]
+    words = [w if n == 0 else w[:1].lower() + w[1:] for n, w in enumerate(words)]
+    if len(words) > 2:  # the labels hold "and" themselves ("Power and grid"): a serial comma keeps them apart
+        return ", ".join(words[:-1]) + ", and " + words[-1]
+    return join_and(words)
+
+
+def number(n: int) -> str:
+    return f"{n:,}"
+
+
+def flow_steps(insp: Mapping, card: Mapping | None, bar: int | None, cap: int | None, how_much: str,
+               next_text: str) -> list[tuple[str, str, str]]:
+    """The four steps (title, the big line, the explanation) with this area's numbers."""
+    c = counts_of(insp, card)
+    kinds = lane_words(insp)
+    watch = (f"{kinds}, checked around the clock." if kinds else "Checked around the clock.")
+    if c["briefing_7d"] >= 0:
+        brief_big = f"{number(c['briefing_7d'])} in your briefings this week"
+    else:
+        brief_big = f"{number(c['briefing_30d'])} in your briefings in 30 days"
+    if bar is not None:
+        brief = (f"Stories scoring {bar} or more make your briefing"
+                 + (f", up to {cap} at a time" if cap else "") + (f" (How much: {how_much})" if how_much else "")
+                 + ". The rest stay under Filtered out.")
+    else:
+        brief = "Stories that clear your bar make your briefing. The rest stay under Filtered out."
+    score = ("It reads every new story, drops repeats and old news, checks the facts and writes up the ones that "
+             "matter." + (f" Next run: {next_text}." if next_text else ""))
+    return [
+        ("Watch", f"{plural(c['companies'], 'company', 'companies')} · "
+                  f"{plural(c['on'] + c['off'], 'source')}" + (f" ({c['on']} on)" if c["off"] else ""), watch),
+        ("Collect", f"{number(c['week'])} stories this week", COLLECT_TEXT),
+        ("Score", "The ZENUX editor scores each one 0 to 100", score),
+        ("Brief", brief_big, brief),
+    ]
+
+
+def flow_html(steps: list[tuple[str, str, str]]) -> str:
+    cells = []
+    for n, (title, big, text) in enumerate(steps, start=1):
+        if n > 1:
+            cells.append('<div class="cov-arrow" aria-hidden="true">→</div>')
+        cells.append(f'<div class="cov-step"><div class="cov-step-k"><span class="cov-step-n">{n}</span>'
+                     f'{esc(title)}</div><div class="cov-step-big">{esc(big)}</div>'
+                     f'<div class="cov-step-d">{esc(text)}</div></div>')
+    return f'<div class="cov-flow" role="list" aria-label="How ZENUX works">{"".join(cells)}</div>'
+
+
+def health_line(insp: Mapping, card: Mapping | None) -> tuple[str, str, list[str]]:
+    """(css, sentence, names of the failing sources) for the source-health line."""
+    sources = dicts(insp.get("sources"))
+    failing = [one_line(s.get("label")) or "A source" for s in sources if state_of(s) == "failing" and not is_off(s)]
+    c = counts_of(insp, card)
+    off = (f" {plural(c['off'], 'source is', 'sources are')} turned off on purpose: sites that block automated "
+           "reading or no longer work." if c["off"] else "")
+    if failing:
+        names = join_and(failing[:3]) + (f" and {len(failing) - 3} more" if len(failing) > 3 else "")
+        verb = "isn't" if len(failing) == 1 else "aren't"
+        return ("warn", f"{plural(len(failing), 'source')} {verb} responding right now: {names}. ZENUX keeps trying; "
+                        f"everything else is collected as usual.{off}", failing)
+    return "ok", f"All {plural(c['on'], 'source')} on are working.{off}", []
+
+
+def stats_text(row: Mapping) -> str:
+    stats = stats_of(row)
+    return (f"{as_int(stats.get('items_7d')) or 0} this week{week_briefings(stats)} · "
+            f"{as_int(stats.get('briefing_30d')) or 0} in briefings (30 days)")
 
 
 def week_briefings(stats: Mapping, words: str = " in briefings") -> str:
@@ -194,22 +289,6 @@ def week_briefings(stats: Mapping, words: str = " in briefings") -> str:
     does not say."""
     n = as_int(stats.get("briefing_7d")) if isinstance(stats, Mapping) else None
     return f" ({n}{words})" if n is not None else ""
-
-
-def tuning_line(insp: Mapping, card: Mapping | None) -> str:
-    """'2 muted · 1 on your watchlist' when the area has any, else ''."""
-    mutes, stars = as_int((card or {}).get("mutes")), as_int((card or {}).get("stars"))
-    if mutes is None:
-        mutes = sum(1 for r in dicts(insp.get("entities")) + dicts(insp.get("sources")) if is_muted(r))
-    if stars is None:
-        stars = sum(1 for r in dicts(insp.get("entities")) if is_starred(r))
-    return f"{mutes} muted · {stars} on your watchlist" if mutes or stars else ""
-
-
-def stats_text(row: Mapping) -> str:
-    stats = row.get("stats") if isinstance(row.get("stats"), Mapping) else {}
-    return (f"{as_int(stats.get('items_7d')) or 0} this week{week_briefings(stats)} · "
-            f"{as_int(stats.get('briefing_30d')) or 0} in briefings (30 days)")
 
 
 def health_text(source: Mapping, tz: str) -> str:
@@ -223,31 +302,9 @@ def health_text(source: Mapping, tz: str) -> str:
     return text
 
 
-def chips_html(entity: Mapping) -> str:
-    return "".join(f'<span class="cov-chip cov-chip-{esc(flag)}" title="{esc(help_)}">{esc(label)}</span>'
-                   for flag, label, help_ in coverage_flags(entity))
-
-
 def state_chips(row: Mapping) -> str:
     return ((chip("Muted", "chip-state chip-muted") if is_muted(row) else "")
             + (chip("On your watchlist", "chip-state chip-starred") if is_starred(row) else ""))
-
-
-def entity_row_html(entity: Mapping) -> str:
-    tickers = tickers_of(entity)
-    return (f'<div class="cov-row"><div class="cov-name">{esc(one_line(entity.get("name")) or "Unnamed company")}'
-            + (f' <span class="cov-tickers">{esc(tickers)}</span>' if tickers else "") + "</div>"
-            + (f'<div class="cov-chips">{chips_html(entity)}</div>' if coverage_flags(entity) else "")
-            + f'<div class="cov-stats">{esc(stats_text(entity))}</div>'
-            + (f"<div>{state_chips(entity)}</div>" if state_chips(entity) else "") + "</div>")
-
-
-def source_row_html(source: Mapping, tz: str) -> str:
-    kind = one_line(source.get("kind"))
-    return (f'<div class="cov-row"><div class="cov-name">{esc(one_line(source.get("label")) or "Unnamed source")}</div>'
-            f'<div class="cov-stats">{esc(" · ".join(p for p in (kind, health_text(source, tz)) if p))}</div>'
-            f'<div class="cov-stats">{esc(stats_text(source))}</div>'
-            + (f"<div>{state_chips(source)}</div>" if state_chips(source) else "") + "</div>")
 
 
 def catalog_missing_sentence(name: str) -> str:
@@ -295,9 +352,6 @@ def entity_mute_fallback(entity: Mapping) -> dict:
             "label": one_line(entity.get("name")) or one_line(entity.get("id"))}
 
 
-# ---------------------------------------------------------------------------------------------- rows
-
-
 def mute_source(ws: Workspace, module_id: str, source: Mapping) -> None:
     """Open the mute dialog (preview first) or the unmute dialog of `actions` for one of the area's sources."""
     label = one_line(source.get("label")) or one_line(source.get("key"))
@@ -307,54 +361,83 @@ def mute_source(ws: Workspace, module_id: str, source: Mapping) -> None:
         actions.open_mute(ws, kind="source", ref=one_line(source.get("key")), label=label, module=module_id)
 
 
-def render_entity_row(ws: Workspace, module_id: str, n: int, entity: Mapping) -> None:
-    st.markdown(entity_row_html(entity), unsafe_allow_html=True)
-    eid, name = one_line(entity.get("id")), one_line(entity.get("name")) or one_line(entity.get("id"))
-    with st.container(horizontal=True, key=f"zx_actions_cv_e_{n}"):
-        if is_starred(entity):
-            if ui.write_button("Starred", ws=ws, key=f"cv_star_{n}", type="tertiary", icon=":material/star:",
-                               help=f"Remove {name} from your watchlist"):
-                actions.unstar(ws, eid, name)
-        elif is_muted(entity):
-            st.button("Star", key=f"cv_star_{n}", type="tertiary", icon=":material/star_border:", disabled=True,
-                      help=STAR_MUTED_HELP.format(name=name))
-        elif ui.write_button("Star", ws=ws, key=f"cv_star_{n}", type="tertiary", icon=":material/star_border:"):
-            actions.open_star(ws, eid, name)
-        if st.button("Details", key=f"cv_details_e_{n}", type="tertiary"):
-            ui.open_dialog("company", workspace_id=ws.id, module_id=module_id, entity_id=eid)
+# ---------------------------------------------------------------------------------------------- the lists
 
 
-def render_source_row(ws: Workspace, module_id: str, n: int, source: Mapping) -> None:
-    st.markdown(source_row_html(source, ws.timezone), unsafe_allow_html=True)
-    with st.container(horizontal=True, key=f"zx_actions_cv_s_{n}"):
-        if ui.write_button("Unmute" if is_muted(source) else "Mute", ws=ws, key=f"cv_mute_s_{n}", type="tertiary"):
-            mute_source(ws, module_id, source)
-        if st.button("Details", key=f"cv_details_s_{n}", type="tertiary"):
-            ui.open_dialog("source", workspace_id=ws.id, module_id=module_id,
-                           source_key=one_line(source.get("key")))
+def table_key(kind: str) -> str:
+    return f"cv_table_{kind}_{as_int(st.session_state.get(TABLE_N_KEY)) or 0}"
 
 
-def render_columns(ws: Workspace, module_id: str, insp: Mapping, terms: list[str], show: str) -> int:
-    """The four columns; returns how many rows match."""
-    active = bool(terms) or show != "all"
-    columns = build_columns(insp, terms, show)
-    total = sum(len(rows) for groups in columns.values() for _, rows in groups)
-    for (code, title), col in zip(labels.COLUMNS, st.columns(4)):
-        groups = columns[code]
-        with col:
-            st.markdown(f'<div class="cov-col"><span>{esc(title)}</span>'
-                        f'<span> · {sum(len(rows) for _, rows in groups)}</span></div>', unsafe_allow_html=True)
-            if not groups:
-                st.caption("No matches." if active else "None in this coverage area.")
-            for index, (label, rows) in enumerate(groups):
-                group = st.expander(md_label(f"{label} · {len(rows)}"), expanded=active, key=f"cv_g_{code}_{index}",
-                                    on_change="rerun")
-                if not group.open:
-                    continue  # lazy: rows are drawn only while the group is open
-                with group:
-                    for n, row, is_entity in rows:
-                        (render_entity_row if is_entity else render_source_row)(ws, module_id, n, row)
-    return total
+def open_details(workspace_id: str, module_id: str, kind: str, ids: list[str], key: str) -> None:
+    """A table row was clicked (the table's on_select callback): open its details, and start the next table with no
+    selection (a new key), so the same row can be clicked again after the dialog closes."""
+    state = st.session_state.get(key)
+    selection = state.get("selection") if isinstance(state, Mapping) else getattr(state, "selection", None)
+    rows = selection.get("rows") if isinstance(selection, Mapping) else getattr(selection, "rows", None)
+    index = as_int(rows[0]) if rows else None
+    if index is None or not 0 <= index < len(ids):
+        return
+    if kind == "companies":
+        ui.open_dialog("company", workspace_id=workspace_id, module_id=module_id, entity_id=ids[index])
+    else:
+        ui.open_dialog("source", workspace_id=workspace_id, module_id=module_id, source_key=ids[index])
+    st.session_state[TABLE_N_KEY] = (as_int(st.session_state.get(TABLE_N_KEY)) or 0) + 1
+
+
+def show_failing() -> None:
+    """Show them: the Sources list, filtered to the sources not responding."""
+    st.session_state[LIST_KEY] = "sources"
+    st.session_state[FILTER_KEYS["sources"]] = "failing"
+
+
+def filter_label(kind: str, code: str, insp: Mapping) -> str:
+    """'On your watchlist · 1': each filter with how many rows it keeps (before the search)."""
+    if code == "all":
+        return FILTERS[kind][code]
+    rows = dicts(insp.get("entities" if kind == "companies" else "sources"))
+    return f"{FILTERS[kind][code]} · {sum(1 for r in rows if matches(r, kind, [], code))}"
+
+
+def render_lists(ws: Workspace, module_id: str, insp: Mapping) -> None:
+    """What ZENUX watches: the search box, Companies or Sources, its filter, and one table whose rows open details."""
+    ui.section("What ZENUX watches")
+    entities, sources = dicts(insp.get("entities")), dicts(insp.get("sources"))
+    if st.session_state.get(LIST_KEY) not in LISTS:
+        st.session_state[LIST_KEY] = "companies"
+    pick_col, search_col = st.columns([2, 3], vertical_alignment="center")
+    with pick_col:
+        counts = {"companies": len(entities), "sources": len(sources)}
+        kind = st.segmented_control("Show", list(LISTS), key=LIST_KEY, required=True, label_visibility="collapsed",
+                                    format_func=lambda k: f"{LISTS[k]} · {counts[k]}") or "companies"
+    with search_col:
+        query = st.text_input("Search companies and sources", key=SEARCH_KEY, label_visibility="collapsed",
+                              placeholder="Search by name, ticker, group or kind of source",
+                              icon=":material/search:")
+    filter_key = FILTER_KEYS[kind]
+    if st.session_state.get(filter_key) not in FILTERS[kind]:
+        st.session_state[filter_key] = "all"
+    filter_ = st.pills("Filter", list(FILTERS[kind]), key=filter_key, selection_mode="single", label_visibility="collapsed",
+                       format_func=lambda code: filter_label(kind, code, insp)) or "all"
+    terms = terms_of(query)
+    if kind == "companies":
+        ids, rows = company_rows(insp, terms, filter_)
+        config = {"This week": st.column_config.NumberColumn(help="Stories that named it in the last 7 days"),
+                  "In briefings, 30 days": st.column_config.NumberColumn(help="Of those, how many made your briefings")}
+    else:
+        ids, rows = source_rows(insp, terms, filter_, ws.timezone)
+        config = {"Status": st.column_config.TextColumn(width="medium"),
+                  "This week": st.column_config.NumberColumn(help="Stories it brought in the last 7 days"),
+                  "In briefings, 30 days": st.column_config.NumberColumn(help="Of those, how many made your briefings")}
+    if not rows:
+        st.markdown(empty_state("Nothing matches. Try another word or filter, or ask for coverage below."),
+                    unsafe_allow_html=True)
+        return
+    key = table_key(kind)
+    st.dataframe(rows, key=key, hide_index=True, width="stretch", height=min(38 + 35 * len(rows), 460),
+                 column_config=config, selection_mode="single-row",
+                 on_select=partial(open_details, ws.id, module_id, kind, ids, key))
+    noun = ("company", "companies") if kind == "companies" else ("source", "sources")
+    st.caption(f"{plural(len(rows), *noun)} shown. {TABLE_HINT}")
 
 
 # ---------------------------------------------------------------------------------------------- page
@@ -396,13 +479,41 @@ def render_head(insp: Mapping, card: Mapping | None, name: str) -> None:
     mod = insp.get("module") if isinstance(insp.get("module"), Mapping) else {}
     title = one_line(mod.get("title")) or one_line((card or {}).get("title")) or name
     description = one_line(mod.get("description"))  # plain: the hub drops the manifest's file references (gap 33)
-    tuning = tuning_line(insp, card)
-    st.markdown(
-        f'<div class="cov-head"><div class="cov-title">{esc(title)}</div>'
-        + (f'<div class="cov-desc">{esc(description)}</div>' if description else "")
-        + f'<div class="cov-stats">{esc(counts_line(insp, card))}</div>'
-        + (f'<div class="cov-stats">{esc(tuning)}</div>' if tuning else "") + "</div>",
-        unsafe_allow_html=True)
+    st.markdown(f'<div class="cov-head"><div class="cov-title">{esc(title)}</div>'
+                + (f'<div class="cov-desc">{esc(description)}</div>' if description else "") + "</div>",
+                unsafe_allow_html=True)
+
+
+def volume_of(ws: Workspace) -> tuple[int | None, int | None, str]:
+    """(bar, briefing size, the How much label) from GET /settings; Nones when it cannot be read."""
+    try:
+        volume = pick(data.settings(ws.id), "volume")
+    except api.ApiError:
+        return None, None, ""
+    volume = volume if isinstance(volume, Mapping) else {}
+    return as_int(volume.get("bar")), as_int(volume.get("cap")), one_line(volume.get("label"))
+
+
+def next_run_text(ws: Workspace) -> str:
+    """'4:30 PM ET' (the editor's next scheduled run), or '' when it is not known."""
+    try:
+        when = status.summary(ws).get("next_at")
+    except Exception:  # the status line already said what it could; this page still renders
+        return ""
+    return fmt_clock(when, ws.timezone) if when is not None and parse_time(when) != MIN_TIME else ""
+
+
+def render_flow(ws: Workspace, insp: Mapping, card: Mapping | None) -> None:
+    """How it works: the four steps with this area's numbers, then the source-health line."""
+    ui.section("How ZENUX covers this area")
+    bar, cap, how_much = volume_of(ws)
+    st.markdown(flow_html(flow_steps(insp, card, bar, cap, how_much, next_run_text(ws))), unsafe_allow_html=True)
+    css, sentence, failing = health_line(insp, card)
+    with st.container(horizontal=True, key="zx_cov_health", vertical_alignment="center", gap="small"):
+        st.markdown(f'<div class="cov-health {css}">{esc(sentence)}</div>', unsafe_allow_html=True)
+        if failing:
+            st.button("Show them", key="cv_show_failing", type="tertiary", icon=":material/arrow_downward:",
+                      on_click=show_failing)
 
 
 def render_area(ws: Workspace, module_id: str, card: Mapping | None) -> None:
@@ -418,27 +529,14 @@ def render_area(ws: Workspace, module_id: str, card: Mapping | None) -> None:
             ui.error_box(f"the details of {name}", exc, key="coverage_area")
         return
     render_head(insp, card, name)
-    search_col, filter_col = st.columns([5, 1], vertical_alignment="bottom")
-    query = search_col.text_input("Search companies and sources", key=SEARCH_KEY, label_visibility="collapsed",
-                                  placeholder="Search companies and sources: name, ticker, category or source name")
-    show = st.session_state.get(SHOW_KEY) if st.session_state.get(SHOW_KEY) in SHOW_CHOICES else "all"
-    with filter_col, ui.filters(0 if show == "all" else 1, key="cv_filters"):
-        show = st.radio("Show", list(SHOW_CHOICES), key=SHOW_KEY, format_func=SHOW_CHOICES.get) or "all"
-    terms = terms_of(query)
-    if terms or show != "all":
-        matches = sum(len(rows) for groups in build_columns(insp, terms, show).values() for _, rows in groups)
-        st.caption(f"{plural(matches, 'match', 'matches')}"
-                   + ("" if matches else ". Try another word, or ask for coverage below."))
-    else:
-        st.caption("Open a group to see who is in it. Star a company to put it on your watchlist; mute a source or "
-                   "company you don't want. Muted: " + labels.STILL_COLLECTED)
-    render_columns(ws, module_id, insp, terms, show)
+    render_flow(ws, insp, card)
+    render_lists(ws, module_id, insp)
 
 
 def render(ws: Workspace) -> None:
-    """Coverage: pick a coverage area, its header, search and filters, the four columns, then coverage requests."""
+    """Coverage: pick a coverage area, how ZENUX covers it, what it watches, then coverage requests."""
     render_staging(ws)
-    # The request form sits under every company and source group; a jump to it at the top (WF5 AW-13).
+    # The request form sits at the bottom; a jump to it at the top (WF5 AW-13).
     st.markdown(f'<div class="zx-jump"><a href="#{radar_view.REQUESTS_ANCHOR}">{esc(ASK_JUMP)}</a></div>',
                 unsafe_allow_html=True)
     area = None

@@ -14,7 +14,7 @@ import unittest
 import fixtures_filtered as ff
 from helpers import AppCase, FakeResponse, OWNER, PILOT_HUB, PIN, READ, hub_defaults
 
-from zenux_dashboard import filtered_view, labels
+from zenux_dashboard import actions, filtered_view, labels
 from zenux_dashboard.fmt import esc
 
 REJECTED = PILOT_HUB + "/rejected"
@@ -316,19 +316,24 @@ class CountSearchFilterTests(FilteredCase):
     def test_true_totals_and_paging_past_the_first_500(self):
         self.http.on("GET", REJECTED, ff.many_rows(620))
         at = self.filtered()
-        # the hub's true total; the near-miss order covers the stories loaded so far
-        self.assertEqual(self.count_line(at), "Showing 50 of 620 stories · last 3 days · best first among the newest "
-                                              "500")
+        # near misses sort best first over the whole window: every page is read first, so the order is exact
+        self.assertEqual(at.selectbox(key="fo_sort").value, "high")
+        self.assertEqual(self.count_line(at), "Showing 50 of 620 stories · last 3 days")
+        self.assertEqual([int(c.params.get("offset") or 0) for c in self.reads()], [0, 500])
         self.assertEqual(len(self.rows_shown(at)), 50)
-        self.assertEqual([int(c.params.get("offset") or 0) for c in self.reads()], [0])
         more = at.button(key="fo_more")
         self.assertEqual(more.label, "Show 50 more")
         more.click().run()
         self.assert_clean(at)
         self.assertEqual(len(self.rows_shown(at)), 100)
         self.assertTrue(self.count_line(at).startswith("Showing 100 of 620 stories"))
-        # past the first page: Show 50 more reads the next one from the hub
-        at.session_state["fo_limit"] = (("pilot", "near", 3, "", ""), 500)
+        # newest first reads page by page: past the first page, Show 50 more reads the next one from the hub
+        self.fresh()
+        self.http.calls.clear()
+        at.selectbox(key="fo_sort").set_value("newest").run()
+        self.assert_clean(at)
+        self.assertEqual([int(c.params.get("offset") or 0) for c in self.reads()], [0])
+        at.session_state["fo_limit"] = (("pilot", "near", 3, "", "", "newest"), 500)
         at.run()
         at.button(key="fo_more").click().run()
         self.assert_clean(at)
@@ -336,6 +341,34 @@ class CountSearchFilterTests(FilteredCase):
         self.assertEqual(len(self.rows_shown(at)), 550)
         self.assertEqual(self.count_line(at), "Showing 550 of 620 stories · last 3 days")
         self.assert_clean(at)
+
+    def test_sort_by_score(self):
+        self.http.on("GET", REJECTED, ff.many_rows(620))
+        at = self.filtered(view="all")
+        self.assertEqual(at.selectbox(key="fo_sort").value, "newest")  # every view but near misses: newest first
+        self.assertEqual(list(at.selectbox(key="fo_sort").options),
+                         ["Newest first", "Highest score first", "Lowest score first"])
+        for sort, first, last in (("high", 69, 69), ("low", 60, 60)):  # 62 stories score 69, 62 score 60
+            at.selectbox(key="fo_sort").set_value(sort).run()
+            self.assert_clean(at)
+            scores = [int(m) for m in re.findall(r"Score (\d+) of 100", self.html(at))]
+            shown = self.rows_shown(at)
+            self.assertEqual(len(shown), 50)
+            self.assertEqual(self.count_line(at), "Showing 50 of 620 stories · last 3 days")
+            order = sorted(scores, reverse=sort == "high")
+            self.assertEqual(scores, order, sort)
+            self.assertEqual((scores[0], scores[-1]), (first, last), sort)
+        # a new view starts in its own order
+        at.segmented_control(key="fo_view").set_value("near").run()
+        self.assert_clean(at)
+        self.assertEqual(at.selectbox(key="fo_sort").value, "high")
+
+    def test_unscored_stories_come_last_in_a_score_order(self):
+        rows = [{"event_id": 1, "score": None}, {"event_id": 2, "score": 41}, {"event_id": 3, "score": 66}]
+        self.assertEqual([r["event_id"] for r in filtered_view.view_rows("all", rows, "high")], [3, 2, 1])
+        self.assertEqual([r["event_id"] for r in filtered_view.view_rows("all", rows, "low")], [2, 3, 1])
+        self.assertEqual([r["event_id"] for r in filtered_view.view_rows("all", rows, "newest")], [1, 2, 3])
+        self.assertEqual([r["event_id"] for r in filtered_view.view_rows("near", rows)], [3, 2, 1])
 
     def test_search_is_sent_to_the_hub(self):
         at = self.filtered()
@@ -545,9 +578,9 @@ class RowActionTests(FilteredCase):
     def test_rate_a_filtered_out_story(self):
         self.http.on("POST", PILOT_HUB + "/feedback", FakeResponse(201, ff.feedback_stored()))
         at = self.filtered(pin=PIN)
-        self.menu_click(at, "r7201", "act_rate_r7201")
+        self.click(at, "act_rate_r7201")  # beside Less like this, not in a menu
         self.assertEqual(at.radio(key="dlg_choice").value, "watch")
-        self.assertIn(labels.RATING_HONEST, self.visible_text(at))
+        self.assertIn(actions.RATE_SCALE_NOTE, self.visible_text(at))
         at.radio(key="dlg_choice").set_value("lead")
         at.button(key="dlg_save").click().run()
         self.assert_clean(at)
@@ -671,6 +704,7 @@ class WhyAndPlainWordsTests(FilteredCase):
         self.assert_clean(at)
 
     def test_jargon_guard_with_every_menu_open(self):
+        self.more_menu_on()
         for view, rows in (("near", ff.near_rows()), ("all", ff.all_rows()), ("same", ff.same_rows()),
                            ("muted", ff.muted_rows()), ("old", ff.old_rows())):
             state = {}

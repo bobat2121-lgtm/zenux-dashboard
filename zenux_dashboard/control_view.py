@@ -9,8 +9,11 @@ Builder vocabulary is allowed here (source keys, lanes, routines by role); sente
    the routines table, silent sources, biggest disagreements with the Grader, recent hub errors and dead letters, and a
    footer with the hub's build, the last delivery check and the last clean-up. An older hub without severity gets a
    conservative local estimate (a dead configured module is never green).
-   Each workspace card is drawn by its own display-only fragment that refreshes every 60 s. Under it, outside the
-   fragment (nothing with an input field reruns on a timer):
+   Each workspace card is drawn by its own fragment that refreshes every 60 s: its top (status, reasons, tiles), one
+   row per module, then the routines and the footer. A module that is not ok has a clickable status light ("Degraded",
+   "Down"...) that opens "Sources not working": each failing source of that module with what is wrong in plain words
+   (the HTTP answer, the failure streak, the last error the module reported), when it last worked, and the
+   acknowledged and quiet ones. Under the card, outside the fragment (nothing with an input field reruns on a timer):
    - failing sources with Acknowledge (a note; POST /admin/sources/ack) and acknowledged sources with Remove
      acknowledgement (POST /admin/sources/unack), both through ui.write with a toast and undo;
    - the stage line and its switch (POST /admin/stage, after a confirmation, with undo);
@@ -64,6 +67,14 @@ BUILDER_PIN_TEXT = {"builder_pin": "set (builder_pin)", "owner_pin": "set (owner
                     "workspace": "set (owner PIN fallback)"}
 NOT_BUILDER = "The Control room is for the builder. Unlock it under Sign in to edit."
 SOURCE_STATE_CSS = {"ok": "ok", "failing": "bad", "quiet": "warn", "off": "idle", "new": "idle", "retired": "idle"}
+DIALOG_FAILING = "failing_sources"
+QUIET_LIGHT = ("ok", "unknown", "retired")  # module statuses without a clickable light
+MODULE_COLUMNS = ("Module", "Status", "Last run", "Events 24h", "Events 7d", "Failing", "Silent", "Backfill")
+MODULE_WIDTHS = (1.6, 2.6, 1.5, 0.9, 0.9, 0.8, 0.8, 1.1)
+HEALTH_WORDS = {"backoff": "retrying less often", "quarantined": "set aside after repeated failures",
+                "degraded": "some checks failing"}
+ACK_HINT = ("A problem you already know about can be acknowledged under the card (failing sources): it then stops "
+            "colouring the status until the source recovers or fails in a new way.")
 
 
 # ---------------------------------------------------------------------------------------------- shapes
@@ -135,6 +146,7 @@ def _source_row(module_id: str, row: Mapping) -> dict:
         "last_ok_at": pick(row, "last_ok_at"),
         "last_new_at": pick(row, "last_new_at"),
         "warnings": [one_line(w) for w in as_list(row.get("warnings")) if one_line(w)],
+        "error": one_line(pick(row, "last_error", "error")),  # the module's own health has it; the hub's has not
         # schema v7: which problem it is (failing, structural_empty, quota_streak), its streaks, and the owner's
         # acknowledgement while the problem is unchanged ({acked_at, note, ...} or null)
         "kind": one_line(row.get("kind")),
@@ -472,6 +484,13 @@ def stage_of(settings: Any) -> tuple[str, Any]:
 def builder_pin_line(conf: Config) -> str:
     """Where the builder PIN comes from, never its value."""
     return "Builder PIN: " + BUILDER_PIN_TEXT.get(conf.builder_pin_source, "not set")
+
+
+def open_access_line(conf: Config) -> str:
+    if conf.open_access:
+        return ("Open access: on. No PIN is asked; anyone with the link can edit. Add open_access = false to the "
+                "secrets to require the PINs again.")
+    return "Open access: off. Editing needs the PIN."
 
 
 # ---------------------------------------------------------------------------------------------- backfill
@@ -852,6 +871,168 @@ def hub_line_html(s: dict) -> str:
     return f'<div class="rejected-rationale"><strong>{esc(what)}</strong> · {esc(s["hub_error"])}</div>'
 
 
+def failure_reason(row: Mapping) -> str:
+    """Why a source is failing, in plain words, from its problem kind, HTTP answer, status and the module's error."""
+    kind = one_line(row.get("kind"))
+    http = as_int(row.get("http"))
+    status = one_line(row.get("status")).lower()
+    if kind == "structural_empty":
+        n = as_int(row.get("empty_streak")) or 0
+        text = ("The page loads, but ZENUX found no stories on it"
+                + (f" {n} runs in a row" if n else "") + ". The site's layout may have changed.")
+    elif kind == "quota_streak":
+        n = as_int(row.get("quota_streak")) or 0
+        text = "The daily allowance for this source's service was used up" + (f" {n} runs in a row" if n else "") + "."
+    elif http in (401, 403):
+        text = f"The site refused ZENUX's request (HTTP {http}). It may block automated readers."
+    elif http == 404:
+        text = "The page wasn't found (HTTP 404). It may have moved."
+    elif http == 429:
+        text = "The site asked ZENUX to slow down (HTTP 429, too many requests)."
+    elif http is not None and 500 <= http < 600:
+        text = f"The site's server had an error (HTTP {http})."
+    elif "timeout" in status or "timed out" in one_line(row.get("error")).lower():
+        text = "The site didn't answer in time."
+    elif http is not None:
+        text = f"The last check failed (HTTP {http})."
+    else:
+        text = "The last check failed."
+    error = one_line(row.get("error"))
+    return f"{text} Last error: {clip(error, 200)}" if error else text
+
+
+def light_css(m: Mapping) -> str:
+    """The colour of a module's status light: the module pill's (warn for degraded, bad for down, failed, stale)."""
+    match = re.search(r'status-pill (\w+)', module_pill(m))
+    return match.group(1) if match else "idle"
+
+
+def light_label(m: Mapping) -> str:
+    """'Degraded · 1 failing source': the status in words and its reason, the text of the clickable light."""
+    status = label_of(m["status"]) or "unknown"
+    reason = clip(one_line(m.get("reason")), 60)
+    return (status[:1].upper() + status[1:]) + (f" · {reason}" if reason else "")
+
+
+def open_failing(workspace_id: str, module_id: str) -> None:
+    ui.open_dialog(DIALOG_FAILING, workspace_id=workspace_id, module_id=module_id)
+
+
+def module_cells(m: Mapping) -> list[str]:
+    """The HTML of a module row's cells but the status (the status is a light, or a pill when it is ok)."""
+    backfill = m["backfill"]
+    bf = "—"
+    if backfill:
+        done, total = job_counts(backfill)
+        bf = f'{pill(backfill.get("status") or "unknown")} {esc(done)}/{esc(total)}'
+    last = (f'{esc(relative_time(m["last_run_at"]))} {pill(m["last_run_status"]) if m["last_run_status"] else ""}'
+            if m["last_run_at"] else "never")
+    if m.get("running"):
+        last += ' <span class="tile-d">running now</span>'
+    name = f'<span class="mono">{esc(m["id"])}</span>' + ("" if m["configured"] else ' <span class="tile-d">(hub only)</span>')
+    return [name, last, esc(_total(m["events_24h"])), esc(_total(m["events_7d"])), esc(m["failing"]), esc(m["silent"]),
+            bf]
+
+
+def render_module_rows(ws: Workspace, s: dict) -> None:
+    """One row per module; a module that is not ok has a clickable status light that opens Sources not working."""
+    if not s["modules"]:
+        st.markdown('<div class="refine-note">No modules configured or reported.</div>', unsafe_allow_html=True)
+        return
+    with st.container(key=f"zx_modrows_{ws.id}"):
+        head = st.columns(MODULE_WIDTHS, vertical_alignment="center")
+        for col, title in zip(head, MODULE_COLUMNS):
+            col.markdown(f'<div class="mod-th">{esc(title)}</div>', unsafe_allow_html=True)
+        for m in s["modules"]:
+            cells = module_cells(m)
+            cols = st.columns(MODULE_WIDTHS, vertical_alignment="center")
+            cols[0].markdown(f'<div class="mod-td">{cells[0]}</div>', unsafe_allow_html=True)
+            with cols[1]:
+                if m["status"] in QUIET_LIGHT:
+                    st.markdown(f'<div class="mod-td">{module_pill(m)}'
+                                + (f' <span class="tile-d">{esc(clip(m["reason"], 60))}</span>' if m["reason"] else "")
+                                + '</div>', unsafe_allow_html=True)
+                elif st.button(light_label(m), key=f"cr_light_{light_css(m)}_{ws.id}_{m['id']}",
+                               help="See which sources are not working, and why"):
+                    open_failing(ws.id, m["id"])
+                    st.rerun(scope="app")  # the shell draws the dialog at the end of a full run
+            for col, cell in zip(cols[2:], cells[1:]):
+                col.markdown(f'<div class="mod-td">{cell}</div>', unsafe_allow_html=True)
+
+
+def source_names(workspace_id: str, module_id: str) -> dict[str, str]:
+    """{source key: plain name} from the module's catalog (empty when it cannot be read)."""
+    try:
+        insp = data.inspect(workspace_id, module_id)
+    except api.ApiError:
+        return {}
+    return {one_line(src.get("key")): one_line(src.get("label")) for src in dicts(pick(insp, "sources", default=[]))
+            if one_line(src.get("key")) and one_line(src.get("label"))}
+
+
+def failing_source_html(row: Mapping, name: str, tz: str) -> str:
+    """One failing source: its name and key, then what is wrong, since when, the streak and its health."""
+    health = one_line(row.get("health"))
+    facts = [("What's wrong", failure_reason(row)),
+             ("Last worked", fmt_short(row.get("last_ok_at"), tz) if row.get("last_ok_at") else "not yet")]
+    if as_int(row.get("failures")):
+        facts.append(("Failed checks in a row", str(as_int(row.get("failures")))))
+    if health:
+        facts.append(("Health", label_of(health) + (f" ({HEALTH_WORDS[health]})" if health in HEALTH_WORDS else "")))
+    title = (f'<span class="failing-name">{esc(name)}</span> ' if name else "") + \
+        f'<span class="mono">{esc(row.get("key"))}</span>'
+    rows = "".join(f'<div class="why-row"><span class="why-label">{esc(k)}</span><span>{esc(v)}</span></div>'
+                   for k, v in facts if v)
+    return f'<div class="failing-source"><div class="failing-title">{title}</div><div class="why-block">{rows}</div></div>'
+
+
+def failing_dialog(workspace_id: str, module_id: str) -> None:
+    """Sources not working in one module: the module's status and reason, each failing source and why, then the
+    acknowledged and the quiet ones (the same cached health read the card used)."""
+    ws = data.config().workspace(workspace_id)
+    if ws is None:
+        st.info("This workspace is no longer configured.")
+        return
+    s = summarize(ws, data.workspace_health(ws.id))
+    m = next((x for x in s["modules"] if x["id"] == module_id), None)
+    if m is None:
+        st.info(f"{module_id} is no longer listed in this workspace.")
+        return
+    st.markdown(f'<div class="health-head">{module_pill(m)}'
+                + (f'<span class="health-sub">{esc(m["reason"])}</span>' if m["reason"] else "") + "</div>",
+                unsafe_allow_html=True)
+    names = source_names(ws.id, module_id)
+    failing = [r for r in s["failing"] if r["module"] == module_id]
+    if failing:
+        st.markdown("".join(failing_source_html(r, names.get(r["key"], ""), ws.timezone) for r in failing),
+                    unsafe_allow_html=True)
+    elif m["status"] == "down":
+        st.markdown(f"ZENUX could not reach {module_id} itself: {m['reason'] or 'no answer'}. Its sources are not "
+                    "being checked until it answers again.")
+    elif m["status"] == "stale":
+        st.markdown(f"{module_id} has stopped reporting runs ({m['reason']}). No single source is to blame: the module "
+                    "itself is not running.")
+    else:
+        st.markdown(f"No single source is failing. {m['reason'][:1].upper() + m['reason'][1:] if m['reason'] else ''}")
+    acked = [a for a in s["acknowledged"] if a["module"] == module_id]
+    if acked:
+        st.markdown('<div class="refine-label">Known problems you acknowledged</div>', unsafe_allow_html=True)
+        st.markdown(acknowledged_table(acked, ws.timezone), unsafe_allow_html=True)
+    silent = [r for r in s["silent"] if r["module"] == module_id]
+    if silent:
+        st.markdown('<div class="refine-label">Quiet lately (working, but no new stories)</div>', unsafe_allow_html=True)
+        st.markdown(silent_table(silent, ws.timezone), unsafe_allow_html=True)
+    if failing:
+        st.caption(ACK_HINT)
+    if st.button("Close", key="dlg_cancel"):
+        ui.close_dialog()
+        st.rerun()
+
+
+def failing_title(module_id: str = "", **_: Any) -> str:
+    return f"Sources not working · {module_id}" if module_id else "Sources not working"
+
+
 def health_card_html(ws: Workspace, s: dict) -> str:
     level = s["level"]
     css = LEVEL_CSS[level]
@@ -890,33 +1071,15 @@ def health_card_html(ws: Workspace, s: dict) -> str:
         tile("Silent sources", len(s["silent"]), "", "warn" if s["silent"] else ""),
         storage_tile(s.get("storage")),
     ])
-    rows = []
-    for m in s["modules"]:
-        backfill = m["backfill"]
-        bf = "—"
-        if backfill:
-            done, total = job_counts(backfill)
-            bf = f'{pill(backfill.get("status") or "unknown")} {esc(done)}/{esc(total)}'
-        last = (f'{esc(relative_time(m["last_run_at"]))} {pill(m["last_run_status"]) if m["last_run_status"] else ""}'
-                if m["last_run_at"] else "never")
-        if m.get("running"):
-            last += ' <span class="tile-d">running now</span>'
-        rows.append([
-            f'<span class="mono">{esc(m["id"])}</span>' + ("" if m["configured"] else ' <span class="tile-d">(hub only)</span>'),
-            module_pill(m) + (f' <span class="tile-d">{esc(clip(m["reason"], 60))}</span>' if m["reason"] else ""),
-            last,
-            esc(_total(m["events_24h"])),
-            esc(_total(m["events_7d"])),
-            esc(m["failing"]),
-            esc(m["silent"]),
-            bf,
-        ])
-    modules_table = (table(["Module", "Status", "Last run", "Events 24h", "Events 7d", "Failing", "Silent", "Backfill"], rows)
-                     if rows else '<div class="refine-note">No modules configured or reported.</div>')
-    routines = routines_html(s.get("routines"), ws.timezone, [r["code"] for r in s["reasons"]])
     return (f'<div class="health-card {css}">{head}{reasons_html(s["reasons"])}{hub_line}'
-            f'<div class="tile-grid">{tiles}</div>{modules_table}{routines}'
-            f'{footer_html(s)}</div>')
+            f'<div class="tile-grid">{tiles}</div></div>')
+
+
+def health_tail_html(ws: Workspace, s: dict) -> str:
+    """The card's end, under the module rows: the routines table and the footer."""
+    routines = routines_html(s.get("routines"), ws.timezone, [r["code"] for r in s["reasons"]])
+    return f'<div class="health-tail">{routines}{footer_html(s)}</div>'
+
 
 
 def failing_table(rows: list[dict], tz: str) -> str:
@@ -1039,8 +1202,12 @@ def render_unack_controls(ws: Workspace, rows: list[dict]) -> None:
 
 
 def render_card_display(ws: Workspace, s: dict) -> None:
-    """The health card and its display-only lists (the part the 60-second fragment redraws)."""
-    st.markdown(health_card_html(ws, s), unsafe_allow_html=True)
+    """The health card (its top, the module rows with their status lights, the routines and footer) and its
+    display-only lists (the part the 60-second fragment redraws)."""
+    with st.container(key=f"zx_hcard_{LEVEL_CSS[s['level']]}_{ws.id}"):
+        st.markdown(health_card_html(ws, s), unsafe_allow_html=True)
+        render_module_rows(ws, s)
+        st.markdown(health_tail_html(ws, s), unsafe_allow_html=True)
     if s["silent"]:
         with st.expander(f"{ws.id} · silent sources · {len(s['silent'])}"):
             st.markdown(silent_table(s["silent"], ws.timezone), unsafe_allow_html=True)
@@ -1059,7 +1226,8 @@ def render_card_display(ws: Workspace, s: dict) -> None:
 
 @st.fragment(run_every=HEALTH_REFRESH_SECONDS)
 def health_card_live(workspace_id: str) -> None:
-    """One workspace's card, redrawn every 60 s. Display only: no input field lives in here."""
+    """One workspace's card, redrawn every 60 s. No input field lives in here (the status lights only open a
+    window)."""
     ws = data.config().workspace(workspace_id)
     if ws is not None:
         render_card_display(ws, summarize(ws, data.workspace_health(ws.id)))
@@ -1369,6 +1537,7 @@ def render_config(conf: Config) -> None:
         st.markdown(table(["Workspace / module", "Kind", "URL", "Read or run token", "Owner token and PIN"],
                           config_rows(conf)), unsafe_allow_html=True)
         st.caption(builder_pin_line(conf))
+        st.caption(open_access_line(conf))
         for problem in conf.problems:
             st.caption(problem)
         st.caption("Values come from st.secrets and are never shown here.")
@@ -1383,3 +1552,6 @@ def render(conf: Config, ws: Workspace) -> None:
     render_backfill(conf, ws)
     radar_view.render_review(conf)
     render_config(conf)
+
+
+ui.register_dialog(DIALOG_FAILING, failing_title, failing_dialog, width="large")
