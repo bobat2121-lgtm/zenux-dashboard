@@ -451,12 +451,18 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 /* Ctrl/Cmd+click on More / Less like this lands on these hidden twins (actions.CTRL_CLICK_JS); the page script that
    forwards it takes no room either. */
 [class*="st-key-act_morefull_"], [class*="st-key-act_lessfull_"], .st-key-zx_ctrl_click { display: none !important; }
-/* The story buttons are compact so the headline stays the focus (owner, 2026-10-04). */
+/* The story buttons are compact (20px, under the 22px headline) so the headline stays the focus (owner, 2026-10-04). */
 .st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] {
-  min-height: 26px !important; height: 26px; padding: 0 11px !important; gap: 4px; border-radius: 999px !important; background: var(--zx-raised) !important;
+  min-height: 20px !important; height: 20px !important; padding: 0 8px !important; gap: 3px; border-radius: 999px !important; background: var(--zx-raised) !important;
 }
-.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] :is(p, span) { font-size: 12px !important; line-height: 16px !important; }
-.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] [data-testid="stIconMaterial"] { font-size: 14px !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] :is(p, span) { font-size: 12px !important; line-height: 14px !important; margin: 0 !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] [data-testid="stIconMaterial"] { font-size: 12px !important; }
+/* Phones: the headline is 19px there, so the buttons drop to 18px (after the rules above, so it wins). */
+@media (max-width: 760px) {
+  .st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] {
+    min-height: 18px !important; height: 18px !important; padding: 0 7px !important;
+  }
+}
 .st-key-zx_view [class*="st-key-act_more_"] button[kind] { border: 1px solid rgba(52,211,153,.6) !important; }
 .st-key-zx_view [class*="st-key-act_more_"] button[kind] :is(p, span) { color: var(--zx-ok) !important; }
 .st-key-zx_view [class*="st-key-act_more_"] button[kind]:hover { background: rgba(52,211,153,.14) !important; border-color: var(--zx-ok) !important; }
