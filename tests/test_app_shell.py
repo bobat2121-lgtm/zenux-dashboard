@@ -17,7 +17,7 @@ from helpers import (AppCase, BETA_HUB, BETA_PIN, BETA_READ, BUILDER_PIN, DASHBO
                      hub_defaults, one_workspace, pilot_secrets, stub_views, two_workspaces)
 from zenux_dashboard import labels, links, owner, ui
 
-ANALYST = ["Briefing", "Filtered out", "My preferences", "Coverage"]
+ANALYST = ["Briefing", "Tuning", "Coverage"]  # docs/SPEC-SIMPLIFY.md 2.1
 WITH_CONTROL = ANALYST + ["Control room"]
 
 
@@ -58,7 +58,7 @@ class ShellCase(AppCase):
 
 
 class TabTests(ShellCase):
-    def test_four_analyst_tabs_while_locked(self):
+    def test_three_analyst_tabs_while_locked(self):
         self.stub()
         at = self.app()
         self.assert_clean(at)
@@ -72,7 +72,7 @@ class TabTests(ShellCase):
     def test_each_tab_renders_its_view(self):
         self.stub()
         at = self.app()
-        for slug in ("filtered", "preferences", "coverage"):
+        for slug in ("tuning", "coverage"):
             at.radio(key=links.TAB_KEY).set_value(slug).run()
             self.assert_clean(at)
             self.assertIn(f"stub {slug}", self.html(at))
@@ -329,10 +329,10 @@ class SignInTests(ShellCase):
 class DeepLinkTests(ShellCase):
     def test_tab_and_workspace_from_the_query(self):
         self.stub()
-        at = self.app(query={"tab": "filtered"})
+        at = self.app(query={"tab": "tuning"})
         self.assert_clean(at)
-        self.assertEqual(at.radio(key=links.TAB_KEY).value, "filtered")
-        self.assertIn("stub filtered", self.html(at))
+        self.assertEqual(at.radio(key=links.TAB_KEY).value, "tuning")
+        self.assertIn("stub tuning", self.html(at))
         at = self.app(two_workspaces(), query={"ws": "beta", "tab": "coverage"})
         self.assertEqual(at.selectbox(key="workspace").value, "beta")
         self.assertEqual(at.query_params, {"tab": "coverage", "ws": "beta"})
@@ -345,11 +345,11 @@ class DeepLinkTests(ShellCase):
             st.markdown("stub briefing")
 
         self.stub(briefing=briefing)
-        at = self.app(query={"tab": "briefing", "edition": "12", "item": "1201", "view": "muted"})
+        at = self.app(query={"tab": "briefing", "edition": "12", "item": "1201", "rules": "muted"})
         self.assertEqual(seen, {"edition": 12, "item": 1201})
         self.assertEqual(at.query_params, {"tab": "briefing", "edition": "12", "item": "1201"})
-        at.radio(key=links.TAB_KEY).set_value("filtered").run()
-        self.assertEqual(at.query_params, {"tab": "filtered", "view": "muted"})  # each tab mirrors its own
+        at.radio(key=links.TAB_KEY).set_value("tuning").run()
+        self.assertEqual(at.query_params, {"tab": "tuning", "rules": "muted"})  # each tab mirrors its own
 
     def test_invalid_values_are_ignored(self):
         seen = {}
@@ -360,7 +360,7 @@ class DeepLinkTests(ShellCase):
 
         self.stub(briefing=briefing)
         at = self.app(two_workspaces(), query={
-            "tab": "nope", "ws": "zzz", "edition": "abc", "item": "-1", "view": "bad", "section": "x",
+            "tab": "nope", "ws": "zzz", "edition": "abc", "item": "-1", "rules": "bad", "section": "x",
             "pref": "X-1", "module": "Bad Id", "request": "0"})
         self.assert_clean(at)
         self.assertEqual(at.radio(key=links.TAB_KEY).value, "briefing")
@@ -380,22 +380,50 @@ class DeepLinkTests(ShellCase):
 
     def test_go_switches_tab_and_focus(self):
         def briefing(ws):
-            if st.button("Open the sign-off", key="probe_go"):
-                links.go("preferences", section="looks_for")
+            if st.button("See your mutes", key="probe_go"):
+                links.go("tuning", rules="muted")
 
-        self.stub(briefing=briefing,
-                  preferences=lambda ws: st.markdown(f"stub preferences {links.focus('section')}"))
+        self.stub(briefing=briefing, tuning=lambda ws: st.markdown(f"stub tuning {links.focus('rules')}"))
         at = self.app()
         at.button(key="probe_go").click().run()
         self.assert_clean(at)
-        self.assertEqual(at.radio(key=links.TAB_KEY).value, "preferences")
-        self.assertIn("stub preferences looks_for", self.html(at))
-        self.assertEqual(at.query_params, {"tab": "preferences", "section": "looks_for"})
+        self.assertEqual(at.radio(key=links.TAB_KEY).value, "tuning")
+        self.assertIn("stub tuning muted", self.html(at))
+        self.assertEqual(at.query_params, {"tab": "tuning", "rules": "muted"})
+
+    def test_old_links_open_their_successors(self):
+        # docs/SPEC-SIMPLIFY.md 2.1: My preferences became Tuning (a pref= link still highlights its rule; What ZENUX
+        # looks for moved to Coverage) and Filtered out went (its links open Briefing)
+        seen = {}
+
+        def tuning(ws):
+            seen.update(pref=links.focus("pref"), rules=links.focus("rules"))
+            st.markdown("stub tuning")
+
+        self.stub(tuning=tuning)
+        for query, tab, query_after in (
+                ({"tab": "preferences"}, "tuning", {"tab": "tuning"}),
+                ({"tab": "preferences", "section": "active", "pref": "R-0012"}, "tuning",
+                 {"tab": "tuning", "pref": "R-0012"}),
+                ({"tab": "preferences", "section": "muted"}, "tuning", {"tab": "tuning", "rules": "muted"}),
+                ({"tab": "preferences", "section": "watchlist"}, "tuning", {"tab": "tuning", "rules": "watchlist"}),
+                ({"tab": "preferences", "section": "looks_for"}, "coverage", {"tab": "coverage"}),
+                ({"tab": "filtered"}, "briefing", {"tab": "briefing"}),
+                ({"tab": "filtered", "view": "muted"}, "briefing", {"tab": "briefing"})):
+            with self.subTest(query=query):
+                seen.clear()
+                at = self.app(query=query)
+                self.assert_clean(at)
+                self.assertEqual(at.radio(key=links.TAB_KEY).value, tab)
+                self.assertEqual(at.query_params, query_after)
+                self.assertEqual(self.tabs(at), ANALYST)
+        at = self.app(query={"tab": "preferences", "pref": "R-0012"})
+        self.assertEqual(seen, {"pref": "R-0012", "rules": None})
 
     def test_the_query_never_holds_a_secret(self):
         self.stub()
         at = self.app(two_workspaces(), pin=PIN, query={"tab": "coverage", "ws": "pilot", "module": "ai-infra"})
-        for slug in ("briefing", "filtered", "preferences", "coverage"):
+        for slug in ("briefing", "tuning", "coverage"):
             at.radio(key=links.TAB_KEY).set_value(slug).run()
             for secret in SECRETS:
                 self.assertNotIn(secret, str(at.query_params))
@@ -425,10 +453,10 @@ class PageErrorTests(ShellCase):
         import sys
 
         self.stub()
-        previous = sys.modules.get("zenux_dashboard.filtered_view")
-        sys.modules["zenux_dashboard.filtered_view"] = None  # importing it raises ImportError
-        self.addCleanup(lambda: sys.modules.__setitem__("zenux_dashboard.filtered_view", previous))
-        at = self.app(tab="filtered")
+        previous = sys.modules.get("zenux_dashboard.tuning_view")
+        sys.modules["zenux_dashboard.tuning_view"] = None  # importing it raises ImportError
+        self.addCleanup(lambda: sys.modules.__setitem__("zenux_dashboard.tuning_view", previous))
+        at = self.app(tab="tuning")
         self.assertEqual([e.value for e in at.exception], [])
         self.assertIn("Couldn't load this page.", self.visible_text(at))
         at.radio(key=links.TAB_KEY).set_value("briefing").run()
@@ -526,7 +554,7 @@ class BrandAndConfigTests(ShellCase):
 
     def test_footer_on_every_tab(self):
         self.stub()
-        for tab in ("briefing", "filtered", "preferences", "coverage"):
+        for tab in ("briefing", "tuning", "coverage"):
             with self.subTest(tab=tab):
                 at = self.app(tab=tab)
                 self.assert_clean(at)

@@ -1,4 +1,4 @@
-"""Unit tests: the pure helpers of My preferences and What ZENUX looks for (no Streamlit run)."""
+"""Unit tests: the pure helpers of Tuning (docs/SPEC-SIMPLIFY.md 2.3) and What ZENUX looks for (no Streamlit run)."""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ import unittest
 from datetime import date, datetime, timedelta, timezone
 from unittest.mock import patch
 
-import fixtures_preferences as fp
+import fixtures_tuning as fp
 import helpers  # noqa: F401  (puts dashboard/ on sys.path)
 
 from zenux_dashboard import api, labels
 from zenux_dashboard import brief_view as bv
-from zenux_dashboard import preferences_view as pv
+from zenux_dashboard import tuning_view as pv
 
 NOW = datetime(2026, 10, 4, 16, 0, tzinfo=timezone.utc)
 
@@ -44,13 +44,11 @@ class SummaryAndStatsTests(unittest.TestCase):
         for line in (more, less, exact, legacy):
             self.assertNotIn("suppress", line.lower())
 
-    def test_card_head_example_and_offers(self):
+    def test_row_meta_example_and_offers(self):
         rows = {p["id"]: p for p in fp.preference_rows()}
-        self.assertEqual(pv.head_meta({"scope": "similar", "status": "active"}, fp.TZ), "Stories like this · Active")
-        paused = pv.head_meta(rows["I-0007"], fp.TZ)
-        self.assertTrue(paused.startswith("Stories like this · Paused since "), paused)
-        self.assertIn(" · until ", paused)
-        self.assertEqual(pv.head_meta({"scope": None, "status": "paused"}, fp.TZ), "Standing preference · Paused")
+        self.assertEqual(pv.rule_meta({"scope": "similar", "status": "active"}, fp.TZ), "Stories like this")
+        self.assertEqual(pv.rule_meta({"scope": None, "status": "paused"}, fp.TZ), "Standing preference")
+        self.assertIn(" · until ", pv.rule_meta(rows["I-0007"], fp.TZ))
         self.assertEqual(pv.example_line(rows["R-0012"]), "Example: Shares jump 8% on AI <hopes> (Yahoo Finance)")
         self.assertEqual(pv.example_line({"example": {"title": "Only a title"}}), "Example: Only a title")
         self.assertEqual(pv.example_line({"example": None}), "")
@@ -59,8 +57,6 @@ class SummaryAndStatsTests(unittest.TestCase):
                          f"91% of what it kept out came from {fp.MUTE_LABEL}. Mute it instead?")
         self.assertEqual(pv.looks_like_mute_text({"label": "Example Co", "share": None}),
                          "Most of what it kept out came from Example Co. Mute it instead?")
-        self.assertEqual(pv.mostly_kept_out(rows["R-0012"]["stats"]), f"{fp.MUTE_LABEL}, Example Co")
-        self.assertEqual(pv.mostly_kept_out({}), "")
 
     def test_ended_reasons_and_bring_back(self):
         for reason, text in (("owner", "You removed it"), ("undone", "Undone"),
@@ -107,21 +103,29 @@ class NeedsYourOkShapeTests(unittest.TestCase):
                          (["A story · you: Top story · editor: in the briefing"], 0))
         self.assertEqual(pv.grade_lines({"context": None}), ([], 0))
 
-    def test_preview_line(self):
-        self.assertEqual(pv.preview_text(fp.grades_draft()), "+2 / -1 in the last 14 days")
-        self.assertEqual(pv.preview_caption(fp.grades_draft()),
-                         "Would have added 2 stories to your briefings and removed 1.")
-        draft = {"proposal": {"preview_summary": {"window_days": 7, "added": 1, "removed": 0}}}
-        self.assertEqual(pv.preview_text(draft), "+1 / -0 in the last 7 days")
-        self.assertEqual(pv.preview_caption(draft), "Would have added 1 story to your briefings and removed 0.")
-        self.assertEqual(pv.preview_text(fp.brief_draft()), "No preview yet.")
-        self.assertEqual(pv.preview_caption(fp.brief_draft()), "")
+    def test_impact_line(self):
+        self.assertEqual(pv.impact_line(fp.grades_draft()),
+                         "Would have brought 2 stories in and kept 1 out over the last 14 days.")
+        self.assertEqual(pv.impact_line({"proposal": {"preview_summary": {"window_days": 7, "added": 1, "removed": 0}}}),
+                         "Would have brought 1 story in over the last 7 days.")
+        self.assertEqual(pv.impact_line(fp.wording_draft()), "Would have kept 9 stories out over the last 14 days.")
+        self.assertEqual(pv.impact_line(fp.merge_draft()), "Would not have changed your briefings over the last 14 days.")
+        self.assertEqual(pv.impact_line(fp.brief_draft()), "No preview yet.")
+        for draft in (fp.grades_draft(), fp.wording_draft(), fp.merge_draft(), fp.radar_draft()):
+            self.assertEqual(labels.find_jargon(pv.impact_line(draft)), [])
 
     def test_suggestion_html_is_escaped_and_plain(self):
         by_id = pv.preferences_by_id(fp.preferences())
         html = pv.suggestion_html(fp.grades_draft(), by_id, fp.TZ)
-        self.assertIn("Conference webcast notice 0 &lt;live&gt;", html)
-        self.assertNotIn("<live>", html)
+        self.assertNotIn("Conference webcast notice", html)  # the ratings behind it are in Details
+        self.assertIn('<div class="preview-line">Would have brought 2 stories in and kept 1 out over the last 14 days.'
+                      '</div>', html)
+        details = pv.details_html(fp.grades_draft())
+        self.assertIn("Conference webcast notice 0 &lt;live&gt;", details)
+        self.assertNotIn("<live>", details)
+        self.assertIn("Would come in · 2", details)
+        self.assertIn("A story no longer available", details)
+        self.assertEqual(pv.details_html(fp.legacy_draft()), "")
         for draft in (fp.merge_draft(), fp.wording_draft(), fp.brief_draft(), fp.radar_draft(), fp.legacy_draft()):
             html = pv.suggestion_html(draft, by_id, fp.TZ)
             self.assertEqual(labels.find_jargon(re.sub(r"<[^>]+>", " ", html)), [], html)
@@ -159,6 +163,8 @@ class NeedsYourOkShapeTests(unittest.TestCase):
                          "Six of your ratings downgraded conference notices, e.g. another story.")
 
     def test_which_stories_lines(self):
+        more = dict(fp.grades_draft(), preview_more=7)
+        self.assertIn("and 7 more stories", pv.details_html(more))
         items = fp.grades_draft()["preview_items"]
         self.assertEqual(pv.preview_item_line(items[0]),
                          "Miner monthly production update · Miner Co. investor relations")
@@ -188,16 +194,57 @@ class NeedsYourOkShapeTests(unittest.TestCase):
             self.assertEqual(pv.active_stars(empty), [])
 
 
+class RulesListTests(unittest.TestCase):
+    def test_one_list_preferences_mutes_watchlist(self):
+        rules = pv.rules_of(fp.preferences(), fp.mutes(), fp.stars())
+        self.assertEqual([(r["kind"], r["id"], r["filter"]) for r in rules],
+                         [("pref", "R-0012", "less"), ("pref", "R-0010", "less"), ("pref", "I-0007", "more"),
+                          ("pref", "R-0001", ""), ("mute", "4", "muted"), ("mute", "5", "muted"), ("mute", "6", "muted"),
+                          ("star", "2", "watchlist"), ("star", "3", "watchlist")])
+        self.assertEqual(pv.filter_counts(rules), {"all": 9, "more": 1, "less": 2, "muted": 3, "watchlist": 2})
+        self.assertEqual([pv.filter_label(c, pv.filter_counts(rules)) for c, _ in pv.RULE_FILTERS],
+                         ["All · 9", "More · 1", "Less · 2", "Muted · 3", "Watchlist · 2"])
+        self.assertEqual(pv.filter_label("muted", {"muted": None}), "Muted")  # a read that failed
+        self.assertEqual([r["id"] for r in pv.filtered_rules(rules, "less")], ["R-0012", "R-0010"])
+        self.assertEqual([r["id"] for r in pv.filtered_rules(rules, "all", "I-0007")][:2], ["I-0007", "R-0012"])
+        self.assertEqual(pv.rules_of(None, None, None), [])
+
+    def test_kind_meta_impact_and_hints(self):
+        rows = {p["id"]: p for p in fp.preference_rows()}
+        self.assertEqual([pv.kind_label(rows[pid]) for pid in ("R-0012", "I-0007", "R-0001")],
+                         ["Less like this", "More like this", "Exactly as I write it"])
+        self.assertEqual(pv.rule_meta(rows["R-0012"], fp.TZ), "Standing preference")
+        self.assertTrue(pv.rule_meta(rows["I-0007"], fp.TZ).startswith("Stories like this · until "))
+        self.assertTrue(pv.preference_hint(rows["I-0007"], fp.TZ).startswith("Paused since "))
+        self.assertEqual(pv.preference_hint(rows["R-0012"], fp.TZ), "A clearer wording is waiting under Needs your OK.")
+        # the wording hint needs its card under Needs your OK; then the next hint shows
+        self.assertEqual(pv.preference_hint(rows["R-0012"], fp.TZ, waiting={"19"}),
+                         f"91% of what it kept out came from {fp.MUTE_LABEL}. Mute it instead?")
+        self.assertEqual(pv.preference_hint(rows["R-0001"], fp.TZ), "Not used in 30 days. Still useful?")
+        self.assertEqual(pv.preference_hint(rows["R-0010"], fp.TZ), "")
+        self.assertEqual(pv.mute_impact(fp.mutes()["mutes"][0]), "Hid 12 stories this week (30 in all)")
+        self.assertEqual(pv.mute_impact({"hidden_7d": 1, "hidden_total": 1}), "Hid 1 story this week (1 in all)")
+        self.assertTrue(pv.mute_meta(fp.mutes()["mutes"][1], fp.TZ).endswith(" · Not part of the <thesis>"))
+        self.assertEqual(pv.star_impact(fp.stars()["stars"][0]), "9 stories this week, 2 in your briefing")
+        self.assertEqual(pv.looks_like_mute(rows["R-0012"])["ref"], "gn-themes")
+        self.assertIsNone(pv.looks_like_mute(rows["R-0010"]))
+
+    def test_rule_rows_are_escaped_and_plain(self):
+        for rule in pv.rules_of(fp.preferences(), fp.mutes(), fp.stars()):
+            html = pv.rule_html(rule, fp.TZ)
+            self.assertEqual(labels.find_jargon(re.sub(r"<[^>]+>", " ", html)), [], html)
+            self.assertNotIn("<thesis>", html)
+            self.assertNotIn("suppress", html.lower())
+        focused = pv.rule_html(pv.rules_of(fp.preferences(), None, None)[0], fp.TZ, focused=True)
+        self.assertTrue(focused.startswith('<div class="tn-rule zx-focus">'))
+
+    def test_ended_rows_mix_preferences_and_mutes_newest_first(self):
+        self.assertEqual([(k, r["id"]) for k, r in pv.ended_rows(fp.preferences(), fp.mutes())],
+                         [("pref", "R-0005"), ("pref", "I-0003"), ("mute", 2), ("mute", 1), ("pref", "R-0009")])
+        self.assertEqual(pv.ended_rows(None, None), [])
+
+
 class SectionAndDateTests(unittest.TestCase):
-    def test_section_labels_and_default(self):
-        counts = {"ok": 3, "active": 5, "muted": 0, "watchlist": None}
-        self.assertEqual([pv.section_label(s, counts) for s in pv.SECTIONS],
-                         ["Needs your OK · 3", "Active · 5", "What ZENUX looks for", "Muted · 0", "Watchlist",
-                          "How much"])
-        self.assertEqual(pv.default_section(counts), "ok")
-        self.assertEqual(pv.default_section({"ok": 0}), "active")
-        self.assertEqual(pv.default_section({"ok": None}), "active")
-        self.assertEqual(pv.SECTIONS, ("ok", "active", "looks_for", "muted", "watchlist", "how_much"))
 
     def test_end_dates_are_local_midnight_across_daylight_saving(self):
         self.assertEqual(pv.expires_iso(date(2026, 10, 31), "America/New_York"), "2026-10-31T04:00:00.000Z")
@@ -209,14 +256,6 @@ class SectionAndDateTests(unittest.TestCase):
         earliest, default, latest = pv.day_bounds("America/New_York", NOW)
         self.assertEqual((earliest, default, latest), (date(2026, 10, 5), date(2026, 11, 3), date(2027, 10, 5)))
 
-    def test_mute_and_star_lines(self):
-        mute = fp.mutes()["mutes"][1]
-        meta = pv.mute_meta(mute, fp.TZ)
-        self.assertTrue(meta.startswith("since "), meta)
-        self.assertTrue(meta.endswith("hid 1 this week (3 in all) · Not part of the <thesis>"), meta)
-        self.assertEqual(pv.star_meta(fp.stars()["stars"][0]), "9 stories this week, 2 in your briefing")
-        self.assertEqual(pv.star_meta(fp.stars()["stars"][1]),
-                         "1 story this week, 0 in your briefing · Watch the Finland build")
 
     def test_volume_modes_and_labels(self):
         modes, caps, names = pv.volume_modes(fp.volume())
@@ -245,7 +284,17 @@ class BriefShapeTests(unittest.TestCase):
         self.assertEqual(bv.signoff_status(None, fp.TZ),
                          "Not signed off yet. Read below and press Sign off when it matches what you want.")
 
-    def test_parts_tuning_and_coverage(self):
+    def test_expander_label_says_the_sign_off(self):
+        body = fp.brief()
+        day = bv.fmt_date(body["signoff"]["last"]["signed_at"], fp.TZ)
+        self.assertEqual(bv.expander_label(body, fp.TZ), f"What ZENUX looks for · signed off by you on {day}")
+        self.assertEqual(bv.expander_label(fp.brief(signed_by="admin"), fp.TZ),
+                         f"What ZENUX looks for · signed off by the builder on {day}")
+        for unsigned in (fp.brief(signed_by=None), fp.brief(signed_by="migration"), None):
+            self.assertEqual(bv.expander_label(unsigned, fp.TZ), "What ZENUX looks for · not signed off yet")
+        self.assertEqual(labels.find_jargon(bv.expander_label(body, fp.TZ)), [])
+
+    def test_parts(self):
         body = fp.brief()
         part = body["sections"][1]["parts"][1]
         self.assertEqual(bv.part_html(part), '<div class="brief-part"><div class="refine-label">What is ignored</div>'
@@ -257,13 +306,8 @@ class BriefShapeTests(unittest.TestCase):
         self.assertIn('<div class="refine-label">Always</div>', bv.part_html(repeated, "Scores"))
         self.assertEqual(bv.section_lines({"lines": [{"id": "L-1", "text": " a "}, {"id": "", "text": "b"},
                                                      {"id": "L-3", "text": ""}]}), [{"id": "L-1", "text": "a"}])
-        self.assertEqual(bv.tuning_summary(body),
-                         "3 active preferences · 3 mutes · 2 on your watchlist · How much: Standard")
-        self.assertEqual(bv.tuning_summary({}), "0 active preferences · 0 mutes · 0 on your watchlist · How much: Standard")
-        html = bv.coverage_html(body)
-        self.assertIn("Who is covered · AI infrastructure", html)
-        self.assertIn("Bitcoin miners: IREN, Cipher &lt;Mining&gt;", html)
-        self.assertEqual(bv.coverage_html({}), "")
+        # the "Your tuning" read-out is gone (docs/SPEC-SIMPLIFY.md 2.3): Tuning is where the tuning is
+        self.assertFalse(hasattr(bv, "tuning_summary"))
 
     def test_catalog_missing_names_areas_and_toasts(self):
         exc = api.ApiError("http", "HTTP 409: catalog_missing", 409, "catalog_missing",

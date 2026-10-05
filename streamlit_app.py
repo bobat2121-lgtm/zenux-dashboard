@@ -1,8 +1,8 @@
 """ZENUX: the Zenux news-intelligence dashboard (Streamlit).
 
-Five tabs over a workspace's hub (docs/SPEC-PHASE03-UI.md): Briefing, Filtered out, My preferences and Coverage for
-the analyst, and the Control room for the builder (in the tab list only while the builder is unlocked; it spans every
-configured workspace). Configuration comes only from st.secrets (dashboard/.streamlit/secrets.toml locally, App
+Four tabs over a workspace's hub (docs/SPEC-SIMPLIFY.md 2.1): Briefing (daily), Tuning (weekly) and Coverage (setup)
+for the analyst, and the Control room for the builder (in the tab list only while the builder is unlocked; it spans
+every configured workspace). Old links to the removed tabs land on their successors (links.TAB_ALIASES). Configuration comes only from st.secrets (dashboard/.streamlit/secrets.toml locally, App
 settings -> Secrets on Streamlit Community Cloud); see .streamlit/secrets.example.toml. Changes need "Sign in to
 edit" (the workspace PIN, once per browser session), which unlocks the workspace's owner_token, unless open access
 is on (the beta default; `open_access = false` in the secrets turns the PIN back on).
@@ -44,9 +44,8 @@ LOG = logging.getLogger("zenux_dashboard.app")
 
 # Every view module is imported at startup, even for tabs not shown, so every dialog is registered before
 # ui.render_dialog() runs. `actions` (the card actions) registers the dialogs the other views share.
-VIEW_MODULES = ("actions", "feed_view", "filtered_view", "preferences_view", "coverage_view", "control_view")
-TAB_VIEWS = {"briefing": "feed_view", "filtered": "filtered_view", "preferences": "preferences_view",
-             "coverage": "coverage_view", "control": "control_view"}
+VIEW_MODULES = ("actions", "feed_view", "tuning_view", "coverage_view", "control_view")
+TAB_VIEWS = {"briefing": "feed_view", "tuning": "tuning_view", "coverage": "coverage_view", "control": "control_view"}
 
 
 def load_views() -> tuple[dict, dict]:

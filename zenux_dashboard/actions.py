@@ -1,4 +1,5 @@
-"""Card actions shared by Briefing, Filtered out, My preferences and Coverage (docs/SPEC-PHASE03-UI.md 5.4).
+"""Card actions shared by Briefing (its stories, shelves, left-out rows and search), Tuning and Coverage
+(docs/SPEC-PHASE03-UI.md 5.4; docs/SPEC-SIMPLIFY.md 2.2).
 
 A story's actions are icons (docs/SPEC-ICON-ACTIONS.md): thumb up (More like this), thumb down (Less like this), a star
 (Rate this story) and, where the caller offers it, an arrow up (Should have been in). They sit on the right of one row
@@ -6,8 +7,8 @@ under the headline, with the story's tags on the left (action_bar). The words ar
 readers (feed.css hides them), and its tooltip. An icon glows Northland green while the story holds what it stands
 for, and a click on a glowing icon undoes that, at any time (story_icons says what selects each icon). The lazy "More"
 popover (Wrong facts, Mute source, Mute company or Unmute company, Star or Remove from watchlist, Mute this story) is
-off for now (SHOW_MORE_MENU). A filtered-out row has one lazy "Why" expander; a briefing lists every story's Why in one
-section under the editor's notes (feed_view). Lazy means the popover and the expanders draw their contents only while
+off for now (SHOW_MORE_MENU). A left-out row has one lazy "Why was it left out?" expander (left_out); a briefing lists
+every story's Why in one section under the editor's notes (feed_view). Lazy means the popover and the expanders draw their contents only while
 open (`on_change="rerun"` and `.open`), so a page of 60 cards stays light.
 
 Every write button goes through `ui.write_button` (drawn disabled with "Unlock to edit" while the workspace is
@@ -27,8 +28,8 @@ What each write does (docs/SPEC-PHASE02.md; the copy below says exactly this and
   every option (just this story, the analyst's own words, an end date; set to replace what the story holds):
   Streamlit buttons do not report modifier keys, so the page script (CTRL_CLICK_JS, drawn by ctrl_click_support)
   forwards such a click to the story's hidden twin button (act_morefull_<key> / act_lessfull_<key>, hidden in
-  feed.css). Phones and tablets have no Ctrl key: a tap saves or undoes, and a preference's options are in My
-  preferences (Edit, End date). The preference is active at once (the wording assistant may later suggest a clearer
+  feed.css). Phones and tablets have no Ctrl key: a tap saves or undoes, and a preference's options are in Tuning
+  (its row's menu: Edit, End date). The preference is active at once (the wording assistant may later suggest a clearer
   wording, which the analyst approves or not). The Undo bar after a save retires it; after a switch it also brings
   back the preference the switch replaced (POST /rules/<id>/reactivate).
 - Wrong facts: POST /feedback {verdict: "factual_error", item_id, note} on a briefing item. The ZENUX editor
@@ -46,7 +47,7 @@ What each write does (docs/SPEC-PHASE02.md; the copy below says exactly this and
 - Mute (source, company, story): the 7-day preview (GET /mutes/preview) is the confirmation step, then POST /mutes
   {action: "add"}. Muted stories are still collected and kept out of the briefing. Undo: remove the mute and bring
   back the last 7 days. A briefing story offers every company it is about (why.companies: subjects, vendors and
-  buyers); a filtered-out story its subject companies.
+  buyers); a left-out story its subject companies.
 - Unmute: GET /mutes/bring-back-preview says how many stories would come back, then POST /mutes {action: "remove",
   bring_back_days: 7 or 0}. Undo: mute it again.
 - Star / Remove from watchlist: GET /stars/preview, then POST /stars {action: "add" | "remove"}. Undo reverses.
@@ -109,7 +110,7 @@ RATING_SCORES = {"lead": 95, "digest": 80, "watch": 55, "reject": 20}
 SCORE_SCALE = (
     ("90–100", "Top story", "A major, confirmed event. Leads the briefing."),
     ("70–89", "In the briefing", "Material news worth reporting."),
-    ("40–69", "Near miss", "Relevant, but not enough to report. Listed under Filtered out."),
+    ("40–69", "Near miss", "Relevant, but not enough to report. Listed under the briefing as left out."),
     ("0–39", "Not relevant", "Off-topic, minor or old news."),
 )
 RATE_SCALE_NOTE = ("Your rating and score go to the editor beside its own score. When your band differs from the "
@@ -181,7 +182,7 @@ DIALOG_STAR = "star"
 
 @dataclass(frozen=True)
 class Target:
-    """What a card action is about: a published briefing story or a filtered-out story."""
+    """What a card action is about: a published briefing story or a story that was left out."""
     workspace_id: str
     title: str
     event_id: int | None
@@ -324,7 +325,7 @@ def newest_rating(feedback: Any) -> str | None:
 
 
 def requested_of(raw: Any) -> dict | None:
-    """An open "Should have been in" request (a filtered-out row's `requested`: reason promote, not cancelled), else
+    """An open "Should have been in" request (a left-out row's `requested`: reason promote, not cancelled), else
     None."""
     if isinstance(raw, Mapping) and one_line(raw.get("reason")) == "promote" and not one_line(raw.get("cancelled_at")):
         return dict(raw)
@@ -421,7 +422,7 @@ def action_bar(ws: Workspace, target: Target, *, key: str, promote: bool = False
     caller built and escaped), then `extra` (the caller's own widgets for this row: Show it), and the story icons on
     the right (story_icons), in one horizontal container that wraps on a narrow screen while the icons stay together.
     The lazy More menu (Wrong facts, mutes, star) is drawn only while SHOW_MORE_MENU is on; it is off for now (the
-    owner's call, 2026-10-04): mutes and stars stay in Coverage and My preferences."""
+    owner's call, 2026-10-04): mutes and stars stay in Coverage and Tuning."""
     with st.container(horizontal=True, key=f"zx_actions_{key}", gap="small", vertical_alignment="center"):
         if tags:
             st.markdown(tags, unsafe_allow_html=True)
@@ -522,7 +523,7 @@ def company_buttons(ws: Workspace, subject: Mapping, key: str, n: int, *, event_
         mute = active_mute(ws, "entity", entity_id)
         if mute is None:
             st.button(md_label(f"Unmute company: {name}"), key=mute_key, type="tertiary", disabled=True,
-                      help="Find it in My preferences › Muted.")
+                      help="Find it in Tuning, under Your rules.")
         else:
             ui.menu_item(f"Unmute company: {name}", ws=ws, key=mute_key, popover_key=pop, action=open_unmute,
                          args=(ws, mute))
@@ -573,8 +574,8 @@ def active_mute(ws: Workspace, kind: str, ref: str) -> dict | None:
 
 def why_expander(ws: Workspace, target: Target, why: Mapping | None, *, key: str, expanded: bool = False,
                  extra: list[tuple[str, str]] | None = None) -> None:
-    """"Why am I seeing this?" (briefing items) or "Why was it left out?" (filtered-out rows), lazy: its rows are
-    built only while it is open. `why` is the hub's why object, or a filtered-out row (rules as ids)."""
+    """"Why am I seeing this?" (briefing items) or "Why was it left out?" (left-out rows), lazy: its rows are built
+    only while it is open. `why` is the hub's why object, or a left-out row as left_out.why_of maps it."""
     label = "Why am I seeing this?" if target.published else "Why was it left out?"
     box = st.expander(label, expanded=expanded, key=f"zx_why_{key}", on_change="rerun")
     with box:
@@ -584,13 +585,16 @@ def why_expander(ws: Workspace, target: Target, why: Mapping | None, *, key: str
 
 def why_rows(target: Target, why: Mapping, tz: str | None = None) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
     """The rows before and after "Your preferences that applied", each (label, text), only those with content. tz:
-    the workspace's time zone, for when a "Should have been in" was asked."""
+    the workspace's time zone, for when a "Should have been in" was asked. A left-out story's first row also gives
+    the bar in force for its briefing (`bar`): "Near miss · score 64 of 100 · bar 70"."""
     first: list[tuple[str, str]] = []
     reason = labels.reason_label(why.get("reason_code"), why.get("reason")) if (
         one_line(why.get("reason_code")) or one_line(why.get("reason"))) else ""
     score = as_int(why.get("score"))
+    bar = as_int(why.get("bar")) if not target.published else None
     if reason or score is not None:
         line = reason + (f" · score {score} of 100" if score is not None else "")
+        line += f" · bar {bar}" if bar is not None and score is not None else ""
         first.append(("Why it's here" if target.published else "Why it was left out", line.lstrip(" ·")))
     # the hub's plain reasoning (rationale_plain); clean_rationale stays the last guard (and drops the calibration note
     # the "Calibrated" row says)
@@ -633,7 +637,7 @@ def rows_html(rows: list[tuple[str, str]]) -> str:
 
 def applied_preferences(ws: Workspace, why: Mapping) -> list[tuple[str, str, str]]:
     """[(preference id, its words, its plain status)] for why.rules: hub entries {id, text, plain_text, status} (a
-    briefing item's rules, a filtered-out row's rules_detail). A bare id, or an entry without text or status (a
+    briefing item's rules, a left-out row's rules_detail). A bare id, or an entry without text or status (a
     preference that no longer exists), is looked up in GET /preferences."""
     out: list[tuple[str, str, str]] = []
     lookup: dict[str, Mapping] | None = None
@@ -678,9 +682,9 @@ def why_body(ws: Workspace, target: Target, why: Mapping, key: str, extra: list[
                 st.markdown(f'<div class="why-row"><span>{esc(words)}</span>'
                             + (f'<span class="why-label">{esc(status)}</span>' if status else "") + '</div>',
                             unsafe_allow_html=True)
-                if PREFERENCE_ID_RE.match(pid) and st.button("See it in My preferences", key=f"why_pref_{key}_{n}",
+                if PREFERENCE_ID_RE.match(pid) and st.button("See it in Tuning", key=f"why_pref_{key}_{n}",
                                                              type="tertiary"):
-                    links.go("preferences", section="active", pref=pid)
+                    links.go("tuning", pref=pid)
     html = rows_html(after + [(one_line(label), one_line(text)) for label, text in extra])
     if html:
         st.markdown(html, unsafe_allow_html=True)
@@ -770,7 +774,7 @@ def undo_preferences(ws: Workspace, direction: str, pref_ids: list[str]) -> None
     """A glowing thumb's click (in its callback): end the story's preference(s) in this direction as undone (POST
     /rules/<id>/retire {reason: "undone"}); they stop applying from the next briefing. Undoing a version that replaced
     another (an edited one, an approved wording) brings that one back (the answer's `restored`), so it is ended too,
-    and the thumb goes plain. One more click saves a new one; My preferences can bring the old one back. An Undo bar
+    and the thumb goes plain. One more click saves a new one; Tuning (Ended) can bring the old one back. An Undo bar
     that would have done just this is dropped quietly."""
     refs = {f"pref:{pid}" for pid in pref_ids}
 

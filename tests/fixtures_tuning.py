@@ -1,7 +1,8 @@
-"""Hub bodies for the My preferences tests (docs/SPEC-PHASE02.md 5.6-5.13, the shapes hub/src/preferences.js and
-hub/src/tuning.js return). Fresh copies per call; markup in a few texts checks the escaping.
+"""Hub bodies for the Tuning tests and What ZENUX looks for (docs/SPEC-PHASE02.md 5.6-5.13, the shapes
+hub/src/preferences.js and hub/src/tuning.js return; the page is docs/SPEC-SIMPLIFY.md 2.3). Fresh copies per call;
+markup in a few texts checks the escaping.
 
-`route_reads(http)` routes every read the tab makes to these bodies (on top of helpers.hub_defaults), so the tests do
+`route_reads(http)` routes every read the page makes to these bodies (on top of helpers.hub_defaults), so the tests do
 not depend on the shared fixtures' contents.
 """
 
@@ -296,7 +297,7 @@ def brief(stage: str = "live", signed_by: str | None = "owner") -> dict:
             {"id": "s-scores", "heading": "How stories are scored", "module": None,
              "parts": [{"kind": "scores", "title": "Scores", "lines": [
                  {"id": "L-0a1b2c3d4e", "text": "90+: Top story", "original": "90+: Lead item"},
-                 {"id": "L-0b1c2d3e4f", "text": "40-69: Near miss; shows under Filtered out",
+                 {"id": "L-0b1c2d3e4f", "text": "40-69: Near miss; listed under each briefing in Left out",
                   "original": "40-69: Watch; shows on the Rejected tab"},
                  {"id": "L-0c1d2e3f40", "text": "Your coverage, Read-through, Industry and policy",
                   "original": "Tier 1, Tier 2, Tier 3"}]}]},
@@ -395,7 +396,7 @@ def refusal(http_status: int, code: str, message: str, **extra: Any):
 
 
 def route_reads(http, base: str = HUB) -> None:
-    """Every read My preferences makes, routed to the bodies above."""
+    """Every read Tuning (and What ZENUX looks for) makes, routed to the bodies above."""
     http.on("GET", base + "/preferences", preferences())
     http.on("GET", base + "/rules", rules())
     http.on("GET", base + "/mutes", mutes())

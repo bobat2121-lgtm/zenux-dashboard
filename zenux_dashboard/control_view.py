@@ -21,6 +21,11 @@ Builder vocabulary is allowed here (source keys, lanes, routines by role); sente
    reruns on a timer):
    - failing sources with Acknowledge (a note; POST /admin/sources/ack) and acknowledged sources with Remove
      acknowledgement (POST /admin/sources/unack), both through ui.write with a toast and undo;
+   - the routines (docs/SPEC-SIMPLIFY.md 2.5): per routine, what its last 7 days of scheduled fires did (`slots_7d`:
+     ran, skipped as not due, catch-ups, by hand), a one-time allowance that is still open, and "Allow one extra run"
+     (POST /admin/routines/allow-once: the next due check of that routine answers due, for 2 hours, so a run started
+     by hand from claude.ai goes ahead); the routines table in the card says each one's prompt in plain words
+     (`prompt_state`: current, "picks up its updated instructions at its next run, 7:30 AM ET", out of date);
    - the stage line and its switch (POST /admin/stage, after a confirmation, with undo);
    - "Open a module" pills: the technical module view right below (GET /modules/<id>/inspect, GET /modules, and the
      module snapshot from GET /snapshot: counts by lane and the latest 20 events).
@@ -44,9 +49,9 @@ import streamlit as st
 
 from . import api, data, labels, links, owner, radar_view, repairs_view, ui
 from .config import Config, Module, Workspace
-from .fmt import (as_int, as_list, clip, count_of, dicts, empty_state, esc, every_text, fmt_day, fmt_short, label_of,
-                  link, one_line, parse_time, pick, pill, plural, relative_time, safe_url, section_label, table, zone,
-                  zone_label, MIN_TIME, UTC)
+from .fmt import (as_int, as_list, clip, count_of, dicts, empty_state, esc, every_text, fmt_clock, fmt_day, fmt_short,
+                  label_of, link, one_line, parse_time, pick, pill, plural, relative_time, safe_url, section_label,
+                  table, zone, zone_label, MIN_TIME, UTC)
 
 HEALTH_REFRESH_SECONDS = 60
 BACKFILL_POLL_SECONDS = 10
@@ -63,6 +68,9 @@ LEVELS = ("red", "amber", "green")
 LEVEL_TEXT = {"red": "needs action", "amber": "needs attention", "green": "healthy"}
 LEVEL_CSS = {"red": "bad", "amber": "warn", "green": "ok"}
 ROLES = (("grader", "Grader"), ("refiner", "Rule refiner"), ("scout", "Radar scout"))
+# prompt_state (docs/SPEC-SIMPLIFY.md 1.1) -> (plain words, pill colour); updates_next_run is said with its next run
+PROMPT_STATES = {"current": ("current", "ok"), "outdated": ("ran with an old copy of its instructions", "warn"),
+                 "unknown": ("not known yet", "idle")}
 TOKEN_NAMES = {"REVIEW_TOKEN": "review", "READ_TOKEN": "read", "OWNER_TOKEN": "owner", "HUB_TOKEN": "hub",
                "ANY": "unknown"}
 PROBLEM_TEXT = {"failing": "failing", "structural_empty": "empty", "quota_streak": "quota used up"}
@@ -824,11 +832,59 @@ def schedule_text(times: Any, tz_name: str) -> str:
 
 
 def prompt_pill(current: Any) -> str:
+    """An older hub's `prompt_current` (true, false or unknown)."""
     if current is True:
         return pill("current")
     if current is False:
         return pill("out_of_date", "out of date")
     return pill("unknown")
+
+
+def prompt_text(r: Mapping, tz: str) -> str:
+    """The routine's prompt in plain words, from `prompt_state` (schema 11, docs/SPEC-SIMPLIFY.md 1.1): current;
+    updates_next_run: "picks up its updated instructions at its next run, 7:30 AM ET" (the routines fetch their prompt
+    from the hub on every run, so a deploy that changed it needs nothing from the builder); outdated: it ran with an
+    old copy after the update (the reasons say what to check); unknown: nothing to compare yet. '' for an older hub."""
+    state = one_line(r.get("prompt_state")).lower()
+    if state == "updates_next_run":
+        when = r.get("next_due_at")
+        clock = fmt_clock(when, tz) if parse_time(when) != MIN_TIME else ""
+        return "picks up its updated instructions at its next run" + (f", {clock}" if clock else "")
+    return PROMPT_STATES.get(state, ("", ""))[0]
+
+
+def prompt_cell(r: Mapping, tz: str) -> str:
+    """The Prompt column: `prompt_state` in plain words (a pill for current and out of date), else the older
+    `prompt_current` pill."""
+    state = one_line(r.get("prompt_state")).lower()
+    if state == "updates_next_run":
+        return f'<span class="tile-d">{esc(prompt_text(r, tz))}</span>'
+    if state in PROMPT_STATES:
+        text, css = PROMPT_STATES[state]
+        return pill(state, text, css=css)
+    return prompt_pill(r.get("prompt_current"))
+
+
+def slots_text(r: Mapping, tz: str) -> str:
+    """'Last 7 days: 7 ran, 7 skipped as not due, 1 catch-up, 0 by hand · last skipped 3h ago · one extra run allowed
+    until 3:15 PM ET' from `slots_7d`, `last_skipped_at` and `allow_once_until` (schema 11); '' for an older hub."""
+    parts = []
+    slots = _block(r.get("slots_7d"))
+    if slots:
+        n = {k: max(as_int(slots.get(k)) or 0, 0) for k in ("ran", "skipped", "catch_ups", "manual")}
+        parts.append(f"Last 7 days: {n['ran']} ran, {n['skipped']} skipped as not due, "
+                     f"{plural(n['catch_ups'], 'catch-up')}, {n['manual']} by hand")
+    if parse_time(r.get("last_skipped_at")) != MIN_TIME:
+        parts.append(f"last skipped {relative_time(r.get('last_skipped_at'))}")
+    until = r.get("allow_once_until")
+    if parse_time(until) != MIN_TIME and parse_time(until) > datetime.now(UTC):
+        parts.append(f"one extra run allowed until {fmt_clock(until, tz)}")
+    return " · ".join(parts)
+
+
+def has_slots(r: Mapping) -> bool:
+    """A routine read from a schema 11 hub (the due check, and so the allowance, exist)."""
+    return any(k in r for k in ("slots_7d", "allow_once_until", "prompt_state"))
 
 
 def routine_row(name: str, r: Mapping, schedule_zone: str, tz: str, flagged: bool = False) -> list[str]:
@@ -850,7 +906,7 @@ def routine_row(name: str, r: Mapping, schedule_zone: str, tz: str, flagged: boo
         esc(relative_time(r.get("last_seen_at"))),
         last,
         esc(f"{fmt_short(next_due, tz)} ({relative_time(next_due)})") if next_due else "—",
-        prompt_pill(r.get("prompt_current")),
+        prompt_cell(r, tz),
         f'<span class="mono">{esc(one_line(r.get("cli_version")) or "—")}</span>',
     ]
 
@@ -1402,9 +1458,47 @@ def render_module_pills(ws: Workspace, s: dict, mirror: bool) -> None:
         render_module_view(ws, choice)
 
 
+def allow_toast(name: str, result: Any, tz: str) -> str:
+    """'One extra Grader run is allowed until 3:15 PM ET. Start it from claude.ai/code/routines within 2 hours.'"""
+    until = pick(result, "until")
+    when = f" until {fmt_clock(until, tz)}" if parse_time(until) != MIN_TIME else ""
+    return f"One extra {name} run is allowed{when}. Start it from claude.ai/code/routines within 2 hours."
+
+
+def allow_once(ws: Workspace, role: str, name: str) -> None:
+    """Allow one extra run (a button callback): POST /admin/routines/allow-once {role}; no undo route (it lapses after
+    2 hours). The health read is cleared so the card shows the allowance."""
+    def call(token: str) -> Any:
+        try:
+            return api.allow_once(ws, token, role)
+        finally:
+            data.clear_health()
+
+    ui.write(ws, call, toast=lambda result: allow_toast(name, result, ws.timezone), in_callback=True)
+
+
+def render_routine_controls(ws: Workspace, s: dict) -> None:
+    """Under the card: one line per routine with what its scheduled fires did in 7 days, and Allow one extra run (only
+    from a hub with the due check, schema 11)."""
+    routines = s.get("routines")
+    if not isinstance(routines, Mapping):
+        return
+    rows = [(role, name, _block(routines.get(role))) for role, name in ROLES]
+    rows = [(role, name, r) for role, name, r in rows if has_slots(r)]
+    for role, name, r in rows:
+        with st.container(horizontal=True, key=f"zx_routine_{ws.id}_{role}", vertical_alignment="center", gap="small"):
+            text = slots_text(r, ws.timezone) or "No scheduled fires in the last 7 days."
+            st.markdown(f'<div class="refine-note"><b>{esc(name)}</b> · {esc(text)}</div>', unsafe_allow_html=True)
+            ui.write_button("Allow one extra run", ws=ws, key=f"cr_allow_{ws.id}_{role}", type="tertiary",
+                            help=f"For a {name} run you start by hand from claude.ai/code/routines: its due check "
+                                 "lets it run once in the next 2 hours.",
+                            on_click=allow_once, args=(ws, role, name))
+
+
 def render_workspace_controls(ws: Workspace, mirror: bool) -> None:
-    """Under one workspace card, outside its fragment: acknowledgements, the stage, the module view."""
+    """Under one workspace card, outside its fragment: the routines, acknowledgements, the stage, the module view."""
     s = summarize(ws, data.workspace_health(ws.id))  # the same cached read the card used
+    render_routine_controls(ws, s)
     if s["failing"]:
         with st.expander(f"{ws.id} · failing sources · {len(s['failing'])}"):
             st.markdown(failing_table(s["failing"], ws.timezone), unsafe_allow_html=True)

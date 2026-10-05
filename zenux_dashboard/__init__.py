@@ -1,5 +1,5 @@
 """ZENUX dashboard package: config, hub client, sign-in, the shared shell modules (labels, ui, links, status) and the
-five tabs (Briefing, Filtered out, My preferences, Coverage and the builder's Control room).
+four tabs (Briefing, Tuning, Coverage and the builder's Control room; docs/SPEC-SIMPLIFY.md).
 
 Everything here is Zenux-made and separate from the legacy PHYSAI news dashboard.
 """

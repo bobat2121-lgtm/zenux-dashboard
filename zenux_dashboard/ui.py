@@ -3,7 +3,8 @@
 
 - **Toasts.** A write queues its toast with notify() and reruns; the shell shows the queue at the top of the next run
   (flush_toasts), so a toast survives st.rerun(). The text says what changed and when it takes effect
-  (effective_text, built from the write answer's `effective`).
+  (effective_text, built from the write answer's `effective`). A toast goes away by itself after TOAST_SECONDS
+  (Streamlit pauses the countdown while the pointer rests on it, so it can be read; its X closes it at once).
 - **Undo.** Toasts cannot hold buttons, so a write the hub can reverse also leaves one pending Undo (offer_undo); the
   shell draws it as a slim bar that floats at the bottom of the screen (undo_bar), so it is in view wherever the
   analyst acted. It lasts until the next write, Dismiss, or UNDO_SECONDS, and belongs to one workspace; a newer write
@@ -47,6 +48,7 @@ from .fmt import UTC, MIN_TIME, clock_text, esc, fmt_day, md_label, one_line, pa
 LOG = logging.getLogger(__name__)
 
 TOAST_KEY = "zx_toasts"
+TOAST_SECONDS = 9  # how long a toast shows before it goes away by itself (the owner's call, 2026-10-05)
 TOAST_SLOT_KEY = "zx_toast_slot"  # where the next toast goes (flush_toasts)
 TOAST_SLOTS = 12  # toasts take turns over this many places, so a new one never lands where one still shows
 TOAST_SPACER = "<style></style>"  # takes a place in Streamlit's event area and no room (flush_toasts)
@@ -56,8 +58,8 @@ WRITE_KEY = "zx_last_write"  # "ok" | "failed": what the last ui.write() in this
 DIALOG_PREFIX = "dlg_"
 CONFIRM = "confirm"
 UNDO_SECONDS = 600
-REPLACED_UNDO = ("Undo now reverses only your newest change. Your earlier change ({earlier}) stays; My preferences "
-                 "lists your mutes, watchlist and preferences if you want to change it back.")
+REPLACED_UNDO = ("Undo now reverses only your newest change. Your earlier change ({earlier}) stays; Tuning lists your "
+                 "rules, mutes and watchlist if you want to change it back.")
 
 
 @dataclass(frozen=True)
@@ -98,7 +100,7 @@ def flush_toasts() -> None:
     for _ in range(start):
         st.html(TOAST_SPACER)
     for text, icon in queue:
-        st.toast(md_label(text), icon=icon, duration="long")
+        st.toast(md_label(text), icon=icon, duration=TOAST_SECONDS)
     st.session_state[TOAST_SLOT_KEY] = (start + len(queue)) % TOAST_SLOTS
 
 
@@ -172,10 +174,10 @@ def effective_text(effective: Mapping | None, tz: str, *, now: datetime | None =
     """When a change takes effect, from a write answer's `effective` ({applies_from, next_briefing_at, timezone}),
     in the workspace's time zone: "Applies from the 12:30 PM briefing." (today), "Applies from tomorrow's 7:30 AM
     briefing.", "Applies from the Mon Oct 6 7:30 AM briefing.", "Applies from the next briefing." (unknown), or
-    "Takes effect once you approve the wording in My preferences." (after_approval)."""
+    "Takes effect once you approve the wording in Tuning." (after_approval)."""
     eff = effective if isinstance(effective, Mapping) else {}
     if eff.get("applies_from") == "after_approval":
-        return "Takes effect once you approve the wording in My preferences."
+        return "Takes effect once you approve the wording in Tuning."
     at = parse_time(eff.get("next_briefing_at"))
     clock = parse_time(now or datetime.now(UTC))
     if at == MIN_TIME or at <= clock:

@@ -1,8 +1,11 @@
-"""Coverage: how ZENUX covers each coverage area, in four steps, and who and what it watches (GET /modules, GET
-/modules/<id>/inspect, with GET /settings and GET /status for the editor's bar and next run).
+"""Coverage: what ZENUX looks for (with the sign-off), how ZENUX covers each coverage area, in four steps, and who and
+what it watches (GET /brief, GET /modules, GET /modules/<id>/inspect, with GET /settings and GET /status for the
+editor's bar and next run).
 
 Built to be read cold by a new analyst (owner, 2026-10-04: "simple and efficient ... intuitively process how this
-engine runs"). Pick a coverage area (a module: `cv_area`, mirrored as `module` in the page's link), then:
+engine runs"). At the top, "What ZENUX looks for" (brief_view.render_brief, docs/SPEC-SIMPLIFY.md 2.4): one expander
+titled with its sign-off state, open while the workspace is staging (then a banner says so), with Sign off and Suggest
+a change. Then pick a coverage area (a module: `cv_area`, mirrored as `module` in the page's link), then:
 
 - the area's title and one-sentence description;
 - How it works: four steps with this area's live numbers. Watch (companies and sources, and the kinds of sources),
@@ -17,8 +20,8 @@ engine runs"). Pick a coverage area (a module: `cv_area`, mirrored as `module` i
   themselves before opening the next.
 
 Every mute surface says it: muted sources and companies are still collected, kept out of the briefing. Below,
-`radar_view.render_requests(ws, module_id)` draws the coverage requests. While the workspace is staging, a banner asks
-the analyst to review this page and What ZENUX looks for, then sign off.
+`radar_view.render_requests(ws, module_id)` draws the coverage requests. The Briefing's staging links (the status line,
+the empty Briefing) open this page.
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ from typing import Any, Mapping
 import pandas as pd
 import streamlit as st
 
-from . import actions, api, data, labels, links, radar_view, status, ui
+from . import actions, api, brief_view, data, labels, links, radar_view, status, ui
 from .config import Workspace, load_config
 from .fmt import (MIN_TIME, as_int, as_list, chip, dicts, domain_of, empty_state, esc, fmt_clock, fmt_date, join_and,
                   label_of, link, md_label, one_line, parse_time, pick, plural, safe_url)
@@ -56,6 +59,7 @@ ASK_JUMP = "Ask for a source, a company or a topic ↓"
 TABLE_HINT = ("Click a row for its details: star a company, mute a source or company, or ask for more coverage. "
               "Muted: " + labels.STILL_COLLECTED)
 COLLECT_TEXT = "Clearly off-topic items are dropped as they arrive. Everything else waits for the editor."
+LEFT_OUT_TEXT = "The rest show under each briefing, in Left out of this briefing."
 # The name column of each table stands out (owner, 2026-10-04): pinned at the left, bold, in the link green.
 NAME_COLUMNS = {"companies": "Company", "sources": "Source"}
 NAME_STYLE = {"color": "#6EF2B6", "font-weight": "700"}
@@ -262,9 +266,9 @@ def flow_steps(insp: Mapping, card: Mapping | None, bar: int | None, cap: int | 
     if bar is not None:
         brief = (f"Stories scoring {bar} or more make your briefing"
                  + (f", up to {cap} at a time" if cap else "") + (f" (How much: {how_much})" if how_much else "")
-                 + ". The rest stay under Filtered out.")
+                 + ". " + LEFT_OUT_TEXT)
     else:
-        brief = "Stories that clear your bar make your briefing. The rest stay under Filtered out."
+        brief = "Stories that clear your bar make your briefing. " + LEFT_OUT_TEXT
     score = ("It reads every new story, drops repeats and old news, checks the facts and writes up the ones that "
              "matter." + (f" Next run: {next_text}." if next_text else ""))
     return [
@@ -505,19 +509,6 @@ def pick_area(modules: list[dict]) -> str:
                                 format_func=lambda m: labels.area_name(m, titles.get(m))) or ids[0]
 
 
-def render_staging(ws: Workspace) -> None:
-    try:
-        stage = one_line(pick(data.settings(ws.id), "stage.stage")).lower()
-    except api.ApiError:
-        return  # a failing settings read never blocks the page
-    if stage != "staging":
-        return
-    text_col, button_col = st.columns([5, 1], vertical_alignment="center")
-    text_col.info("Review who and what ZENUX covers here and in My preferences › What ZENUX looks for, then sign off.")
-    if button_col.button("Go to sign-off", key="cv_signoff", type="primary"):
-        links.go("preferences", section="looks_for")
-
-
 def render_head(insp: Mapping, card: Mapping | None, name: str) -> None:
     mod = insp.get("module") if isinstance(insp.get("module"), Mapping) else {}
     title = one_line(mod.get("title")) or one_line((card or {}).get("title")) or name
@@ -577,8 +568,9 @@ def render_area(ws: Workspace, module_id: str, card: Mapping | None) -> None:
 
 
 def render(ws: Workspace) -> None:
-    """Coverage: pick a coverage area, how ZENUX covers it, what it watches, then coverage requests."""
-    render_staging(ws)
+    """Coverage: what ZENUX looks for (and the sign-off), then pick a coverage area, how ZENUX covers it, what it
+    watches, then coverage requests."""
+    brief_view.render_brief(ws)
     # The request form sits at the bottom; a jump to it at the top (WF5 AW-13).
     st.markdown(f'<div class="zx-jump"><a href="#{radar_view.REQUESTS_ANCHOR}">{esc(ASK_JUMP)}</a></div>',
                 unsafe_allow_html=True)

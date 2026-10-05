@@ -88,6 +88,12 @@ class ToastAndUndoTests(UiCase):
         at.run()
         self.assertEqual(self.toasts(at), [])
 
+    def test_a_toast_goes_away_by_itself_after_nine_seconds(self):
+        at = self.app()
+        at.button(key="probe_notify").click().run()
+        self.assertEqual([t.proto.duration for t in at.toast], [ui.TOAST_SECONDS])
+        self.assertEqual(ui.TOAST_SECONDS, 9)
+
     def test_a_toast_right_after_another_takes_the_next_place(self):
         # Streamlit draws every toast in its event area and skips one drawn at the place of a toast still showing (a
         # run's first toast always takes the first place there); empty style blocks, which take no room, move each
@@ -344,7 +350,7 @@ class PureTests(unittest.TestCase):
         self.assertEqual(ui.effective_text(eff("2026-10-04T10:00:00.000Z"), TZ, now=now),
                          "Applies from the next briefing.")  # a time already past
         self.assertEqual(ui.effective_text({"applies_from": "after_approval", "next_briefing_at": None}, TZ, now=now),
-                         "Takes effect once you approve the wording in My preferences.")
+                         "Takes effect once you approve the wording in Tuning.")
 
     def test_effective_text_across_the_dst_change(self):
         # 2026-11-01: clocks go back at 2 AM. The evening before (EDT) the next slot is tomorrow 7:30 AM EST.

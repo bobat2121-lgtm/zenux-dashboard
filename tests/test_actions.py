@@ -322,11 +322,13 @@ class FeedbackTests(ActionCase):
         self.assertIn("Rating saved with your score of 90. " + labels.RATING_HONEST, self.toasts(at))
 
     def test_should_have_been_in_from_a_shelf(self):
+        # a shelf row is the shared left-out row: Should have been in is its up arrow (docs/SPEC-SIMPLIFY.md 2.2)
         self.http.on("GET", EDITIONS, fb.with_shelves())
         answer = fb.promoted()
         self.http.on("POST", PROMOTE, FakeResponse(201, answer))
         at = self.briefing()
-        self.click(at, "br_promote_0_near_1301")
+        self.assertEqual(at.button(key="act_promote_n0_1301").proto.type, "tertiary")
+        self.click(at, "act_promote_n0_1301")
         self.assert_clean(at)
         self.assertIn("Left out: Near miss", self.texts(at, "caption"))
         self.assertEqual(at.text_area(key="dlg_text").label, actions.PROMOTE_LABEL)
@@ -347,7 +349,7 @@ class FeedbackTests(ActionCase):
         self.http.on("POST", PROMOTE, FakeResponse(409, {"error": "already_in_briefing",
                                                          "message": "This story is already in a briefing."}))
         at = self.briefing()
-        self.click(at, "br_promote_0_watchlist_1300")
+        self.click(at, "act_promote_w0_1300")
         at.text_area(key="dlg_text").input("It is about CoreWeave")
         at.button(key="dlg_save").click().run()
         self.assert_clean(at)
@@ -837,11 +839,11 @@ class LockTests(ActionCase):
         at = self.briefing(pin=None, popover="zx_more_i1201")
         # the icons show no words, so their tooltips keep them
         icons = {"act_more_i1201": "More like this.", "act_less_i1201": "Less like this.",
-                 "act_rate_i1201": "You rated it: Top story."}
+                 "act_rate_i1201": "You rated it: Top story.", "act_promote_n0_1301": "Should have been in."}
         for key in ("act_more_i1201", "act_less_i1201", "act_morefull_i1201", "act_lessfull_i1201", "act_wrong_i1201",
                     "act_rate_i1201", "act_ratefull_i1201", "act_mute_source_i1201",
                     "act_mute_co_i1201_0", "act_star_i1201_0", "act_unstar_i1201_1", "act_mute_story_i1201",
-                    "br_promote_0_near_1301"):
+                    "act_promote_n0_1301"):
             with self.subTest(key=key):
                 button = at.button(key=key)
                 self.assertTrue(button.disabled)

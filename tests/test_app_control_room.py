@@ -377,6 +377,44 @@ class HealthPanelTests(ControlCase):
         self.assertIn('<div class="tile-n">free</div><div class="tile-l">Grader lease</div>', html)
         self.assertEqual([e.label for e in at.expander if "failing" in e.label], [])
 
+    def test_routines_with_the_due_check(self):
+        # docs/SPEC-SIMPLIFY.md 2.5: prompt_state in plain words, slots_7d as a caption, Allow one extra run
+        diag = fx.diagnostics()
+        diag["routines"]["grader"].update(
+            prompt_state="updates_next_run", slots_7d={"ran": 14, "skipped": 14, "catch_ups": 1, "manual": 0},
+            last_skipped_at=fx.iso(3), allow_once_until=None)
+        diag["routines"]["refiner"].update(prompt_state="current",
+                                           slots_7d={"ran": 7, "skipped": 7, "catch_ups": 0, "manual": 1})
+        diag["routines"]["scout"].update(prompt_state="outdated", slots_7d={"ran": 0, "skipped": 0, "catch_ups": 0,
+                                                                            "manual": 0})
+        self.http.on("GET", PILOT_HUB + "/diagnostics", diag)
+        until = fx.iso(-2)
+        self.http.on("POST", PILOT_HUB + "/admin/routines/allow-once",
+                     {"allowed": True, "role": "grader", "until": until})
+        at = self.control()
+        self.assert_clean(at)
+        html = self.html(at)
+        clock = control_view.fmt_clock(diag["routines"]["grader"]["next_due_at"], "America/New_York")
+        self.assertIn(f'<span class="tile-d">picks up its updated instructions at its next run, {clock}</span>', html)
+        self.assertIn('<span class="status-pill warn">ran with an old copy of its instructions</span>', html)
+        self.assertIn("<b>Grader</b> · Last 7 days: 14 ran, 14 skipped as not due, 1 catch-up, 0 by hand · last "
+                      "skipped 3h ago", html)
+        self.assertIn("<b>Rule refiner</b> · Last 7 days: 7 ran, 7 skipped as not due, 0 catch-ups, 1 by hand", html)
+        self.assertEqual([at.button(key=f"cr_allow_pilot_{r}").label for r in ("grader", "refiner", "scout")],
+                         ["Allow one extra run"] * 3)
+        at.button(key="cr_allow_pilot_grader").click().run()
+        self.assert_clean(at)
+        post = self.http.find("POST", PILOT_HUB + "/admin/routines/allow-once")[-1]
+        self.assertEqual((post.bearer, post.body), (OWNER, {"role": "grader"}))
+        self.assertIn(f"One extra Grader run is allowed until {control_view.fmt_clock(until, 'America/New_York')}. "
+                      "Start it from claude.ai/code/routines within 2 hours.", self.toasts(at))
+
+    def test_an_older_hub_offers_no_extra_run(self):
+        at = self.control()
+        self.assert_clean(at)
+        self.assertEqual([b.key for b in at.button if str(b.key).startswith("cr_allow_")], [])
+        self.assertIn('<span class="status-pill warn">out of date</span>', self.html(at))  # prompt_current
+
     def test_schema_7_card_tiles_routines_and_footer(self):
         at = self.control()
         self.assert_clean(at)

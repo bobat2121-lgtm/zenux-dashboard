@@ -346,7 +346,7 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 .correction-note b, .correction-note strong { color: var(--zx-white); }
 .filtered-row { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .filtered-row .rejected-title { font-size: 17px; }
-/* ------------------------------------------------------------------ My preferences and What ZENUX looks for */
+/* ------------------------------------------------------------------ Tuning and What ZENUX looks for */
 .pref-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .pref-text { color: var(--zx-text); font: 400 15px/23px var(--zx-font); overflow-wrap: anywhere; }
 .pref-stats { color: var(--zx-text-soft); font: 400 12px/18px var(--zx-font); }
@@ -385,7 +385,7 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 .rq-card .refine-label { margin-top: 0; }
 .timeline-step span { display: block; color: var(--zx-muted); font-weight: 400; }
 .timeline-step.current span { color: var(--zx-text-soft); }
-/* ------------------------------------------------------------------ story titles that are links (shelves, Filtered out) */
+/* ------------------------------------------------------------------ story titles that are links (shelves, left-out rows) */
 .shelf-row .source-link, .filtered-row .rejected-title a, .filtered-link { display: inline; min-height: 0; color: var(--zx-white) !important; font: 600 15px/1.45 var(--zx-font); text-decoration: none !important; overflow-wrap: anywhere; }
 .filtered-row .rejected-title a, .filtered-row .filtered-link { font-size: 17px; font-weight: 700; }
 .shelf-row .source-link:hover, .filtered-row .rejected-title a:hover, .filtered-link:hover { color: var(--zx-white) !important; text-decoration: underline !important; text-decoration-color: rgba(255,255,255,.5) !important; text-underline-offset: 4px; }
@@ -393,7 +393,7 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 .filtered-mute { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .filtered-mute .rejected-title { font-size: 16px; }
 .filtered-mute .rejected-rationale { margin-top: 4px; }
-/* ------------------------------------------------------------------ segmented controls (Filtered out views, My preferences sections, coverage areas) */
+/* ------------------------------------------------------------------ segmented controls (How much, coverage areas, lists) */
 .stApp button[data-variant="segmented_control"] { border-color: var(--zx-line-strong) !important; }
 .stApp button[data-variant="segmented_control"] { background: transparent !important; color: var(--zx-text) !important; }
 .stApp button[data-variant="segmented_control"] p { color: var(--zx-text) !important; }
@@ -446,7 +446,7 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 /* The story's row under its headline (owner, 2026-10-04; docs/SPEC-ICON-ACTIONS.md): its tags on the left, its icons
    on the right. On a briefing story the row lines up with the headline, the story number keeping its gutter (the number
    column and its gap: 30px + 14px; phones 22px + 10px), close under the headline; the story ends with the dashed line
-   under it, and the whole story lights up on hover. A filtered-out story is its own card. */
+   under it, and the whole story lights up on hover. A left-out story is its own line (a card in the search's list). */
 [class*="st-key-zx_item_"] { transition: background .16s; }
 [class*="st-key-zx_item_"]:hover { background: #181818; }
 [class*="st-key-zx_item_"] .feed-item { padding-bottom: 0; }
@@ -484,18 +484,6 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
   [class*="st-key-zx_item_"] [class*="st-key-zx_actions_"] { padding-left: 32px; }
   .st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind] { width: 18px !important; min-width: 18px !important; height: 18px !important; min-height: 18px !important; }
   .st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind] [data-testid="stIconMaterial"] { font-size: 12px !important; }
-}
-/* The watchlist and near-miss shelves keep Should have been in as a compact outlined pill (20px; 18px on phones). */
-.st-key-zx_view [class*="st-key-br_promote_"] button[kind] {
-  min-height: 20px !important; height: 20px !important; padding: 0 8px !important; gap: 3px; border-radius: 999px !important; background: var(--zx-raised) !important; border: 1px solid rgba(56,189,248,.6) !important;
-}
-.st-key-zx_view [class*="st-key-br_promote_"] button[kind] :is(p, span) { font-size: 12px !important; line-height: 14px !important; margin: 0 !important; color: var(--zx-sky) !important; }
-.st-key-zx_view [class*="st-key-br_promote_"] button[kind] [data-testid="stIconMaterial"] { font-size: 12px !important; }
-.st-key-zx_view [class*="st-key-br_promote_"] button[kind]:hover { background: rgba(56,189,248,.14) !important; border-color: var(--zx-sky) !important; }
-.st-key-zx_view [class*="st-key-br_promote_"] button[kind]:disabled { border-color: var(--zx-line-strong) !important; background: transparent !important; }
-.st-key-zx_view [class*="st-key-br_promote_"] button[kind]:disabled :is(p, span) { color: var(--zx-muted) !important; }
-@media (max-width: 760px) {
-  .st-key-zx_view [class*="st-key-br_promote_"] button[kind] { min-height: 18px !important; height: 18px !important; padding: 0 7px !important; }
 }
 /* "Why am I seeing this?" under the editor's notes: one entry per story, headed by its number. */
 .why-item-head { display: flex; align-items: baseline; gap: 12px; margin: 12px 0 8px; }
@@ -549,4 +537,72 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 @media (max-width: 900px) {
   .cov-flow { grid-template-columns: minmax(0,1fr); gap: 0; }
   .cov-arrow { height: 22px; transform: rotate(90deg); }
+}
+/* ------------------------------------------------------------------ docs/SPEC-SIMPLIFY.md: Briefing, Tuning, Coverage */
+/* The Briefing's one-line banners (suggestions that need your OK, the weekly tune-up) and the tune-up's panel. */
+:is(.st-key-zx_ok_banner, .st-key-zx_tuneup_banner, .st-key-zx_tuneup_head) { flex-wrap: wrap !important; align-items: center; gap: 4px 12px !important; padding: 8px 10px 8px 16px; background: var(--zx-card); border: 1px solid var(--zx-line-strong); border-left: 3px solid var(--zx-green-light); border-radius: 8px; }
+:is(.st-key-zx_ok_banner, .st-key-zx_tuneup_banner, .st-key-zx_tuneup_head) [data-testid="stElementContainer"]:has(.zx-banner-text) { flex: 1 1 260px; width: auto !important; min-width: 0; }
+:is(.st-key-zx_ok_banner, .st-key-zx_tuneup_banner, .st-key-zx_tuneup_head) button p { font-size: 13px !important; }
+.zx-banner-text { color: var(--zx-white); font: 500 14px/20px var(--zx-font); overflow-wrap: anywhere; }
+.st-key-zx_tuneup { gap: 8px !important; margin-bottom: 6px; }
+[class*="st-key-zx_tu_"]:not([class*="st-key-zx_tu_choices_"]) { gap: 6px !important; padding: 10px 14px; background: var(--zx-card); border: 1px solid var(--zx-line); border-radius: 8px; }
+[class*="st-key-zx_tu_choices_"] { flex-wrap: wrap !important; gap: 6px !important; }
+[class*="st-key-zx_tu_choices_"] [data-testid="stElementContainer"] { width: auto !important; }
+[class*="st-key-zx_tu_choices_"] button { min-height: 30px; padding: 2px 12px !important; }
+[class*="st-key-zx_tu_choices_"] button p { font-size: 13px !important; }
+.tu-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tu-title, .tu-title .filtered-link { font-size: 15px; }
+.tu-editor { color: var(--zx-text-soft); font: 500 13px/20px var(--zx-font); }
+.tu-done { color: var(--zx-ok); font: 600 13px/20px var(--zx-font); }
+/* The tuning receipt under a briefing's summary. */
+.edition-receipt { margin-top: 8px; color: var(--zx-text-soft); font: 400 14px/21px var(--zx-font); overflow-wrap: anywhere; }
+/* The search's two groups ("In your briefings · N", "Left out · N") and the left-out groups of a briefing. */
+.zx-group-title { margin: 14px 0 6px; color: var(--zx-text); font: 700 13px/18px var(--zx-font); letter-spacing: .6px; text-transform: uppercase; }
+.zx-group-empty { padding: 10px 0; color: var(--zx-muted); font: 400 14px/21px var(--zx-font); }
+/* "Left out of this briefing": a quiet band at the foot of the briefing card, like the shelves. */
+[class*="st-key-zx_leftout_"]:not([class*="st-key-zx_leftout_auto_"]):not([class*="st-key-zx_leftout_open_"]):not(.st-key-zx_leftout_search) { gap: 4px !important; padding: 8px 24px 10px; background: #111111; border-top: 1px solid var(--zx-line); }
+[class*="st-key-zx_edition_"] [class*="st-key-zx_leftout_"] [data-testid="stExpander"] details { border-top: 0; }
+[class*="st-key-zx_leftout_auto_"] { flex-wrap: wrap !important; align-items: center; gap: 2px 10px !important; padding-top: 6px; }
+[class*="st-key-zx_leftout_auto_"] [data-testid="stElementContainer"]:has(.zx-leftout-auto) { flex: 1 1 240px; width: auto !important; min-width: 0; }
+.zx-leftout-auto { color: var(--zx-muted); font: 400 13px/20px var(--zx-font); }
+/* A left-out row on a shelf or in a briefing's left-out list is a flat line; in the search's list it stays a card. */
+:is([class*="st-key-zx_shelf_"], [class*="st-key-zx_leftout_"]:not(.st-key-zx_leftout_search)) [class*="st-key-zx_row_"] { margin: 0; padding: 10px 0 6px; background: transparent; border: 0; border-bottom: 1px solid var(--zx-line); border-radius: 0; }
+:is([class*="st-key-zx_shelf_"], [class*="st-key-zx_leftout_"]) .filtered-row .filtered-link { font-size: 15px; font-weight: 600; }
+/* A left-out row's "Why was it left out?" sits close under its line, without a frame of its own. */
+[class*="st-key-zx_row_"] [data-testid="stExpander"] details { background: transparent !important; border: 0 !important; border-radius: 0 !important; }
+[class*="st-key-zx_row_"] [data-testid="stExpander"] summary { padding-top: 2px !important; padding-bottom: 2px !important; padding-left: 0 !important; }
+/* Tuning: the title and summary, the How much row, the rules bar, one card per rule with its menu on the right. */
+.tn-head { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tn-title { color: var(--zx-white); font: 700 24px/32px var(--zx-font); letter-spacing: -.2px; }
+.st-key-zx_tuning_head { flex-wrap: wrap !important; align-items: flex-start; }
+.st-key-zx_tuning_head [data-testid="stElementContainer"]:has(.tn-head) { flex: 1 1 260px; width: auto !important; min-width: 0; }
+:is(.st-key-zx_how_much, .st-key-zx_rules_bar) { flex-wrap: wrap !important; align-items: center; gap: 8px 14px !important; }
+:is(.st-key-zx_how_much, .st-key-zx_rules_bar) [data-testid="stElementContainer"] { width: auto !important; max-width: 100%; }
+.st-key-zx_how_much [data-testid="stElementContainer"]:has(.tn-preview) { flex: 1 1 220px; min-width: 0; }
+.tn-preview { font-weight: 500; }
+[class*="st-key-zx_rule_"] { flex-wrap: nowrap !important; gap: 8px !important; margin-bottom: 8px; padding: 12px 10px 12px 16px; background: var(--zx-card); border: 1px solid var(--zx-line); border-radius: 10px; }
+[class*="st-key-zx_rule_"] [data-testid="stElementContainer"]:has(.tn-rule) { flex: 1 1 0; width: auto !important; min-width: 0; }
+[class*="st-key-zx_rule_"]:has(.zx-focus) { outline: 2px solid var(--zx-white); outline-offset: -2px; }
+[class*="st-key-zx_rule_"] [data-testid="stPopover"] button { min-height: 30px; padding: 0 8px !important; gap: 2px; }
+/* The ⋯ menu shows its icon; its word ("Options") stays for screen readers, visually hidden. */
+[class*="st-key-zx_rule_"] [data-testid="stPopover"] button [data-testid="stMarkdownContainer"] { position: absolute !important; width: 1px !important; height: 1px !important; margin: -1px !important; overflow: hidden !important; clip-path: inset(50%) !important; white-space: nowrap !important; }
+/* A chosen pill (Your rules' filter, Coverage's filters) reads white on the brand green, like a chosen segment. */
+.stApp button[data-variant="pills"][aria-checked="true"] { background: var(--zx-green) !important; border-color: var(--zx-green) !important; color: var(--zx-white) !important; }
+.stApp button[data-variant="pills"][aria-checked="true"] p { color: var(--zx-white) !important; font-weight: 600 !important; }
+.tn-rule { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tn-hint { color: var(--zx-warn); font: 500 13px/20px var(--zx-font); overflow-wrap: anywhere; }
+[class*="st-key-zx_ended_"] { flex-wrap: wrap !important; align-items: center; gap: 4px 12px !important; padding: 8px 0; border-bottom: 1px solid var(--zx-line); }
+[class*="st-key-zx_ended_"] [data-testid="stElementContainer"]:has(.pref-card) { flex: 1 1 240px; width: auto !important; min-width: 0; }
+/* Coverage: What ZENUX looks for, the expander at the top. */
+.brief-title { margin: 6px 0 2px; color: var(--zx-white); font: 700 17px/1.35 var(--zx-font); overflow-wrap: anywhere; }
+.st-key-zx_brief_signoff { flex-wrap: wrap !important; align-items: center; gap: 4px 12px !important; }
+.st-key-zx_brief_signoff [data-testid="stElementContainer"]:has(.pref-meta) { flex: 1 1 240px; width: auto !important; min-width: 0; }
+/* Control room: one line per routine under the card, with Allow one extra run. */
+[class*="st-key-zx_routine_"] { flex-wrap: wrap !important; align-items: center; gap: 2px 12px !important; }
+[class*="st-key-zx_routine_"] [data-testid="stElementContainer"]:has(.refine-note) { flex: 1 1 260px; width: auto !important; min-width: 0; }
+[class*="st-key-zx_routine_"] .refine-note { margin-top: 0; }
+@media (max-width: 760px) {
+  [class*="st-key-zx_leftout_"]:not([class*="st-key-zx_leftout_auto_"]):not([class*="st-key-zx_leftout_open_"]):not(.st-key-zx_leftout_search) { padding-inline: 18px; }
+  [class*="st-key-zx_rule_"] { padding: 10px 6px 10px 12px; }
+  .tn-title { font-size: 22px; line-height: 28px; }
 }

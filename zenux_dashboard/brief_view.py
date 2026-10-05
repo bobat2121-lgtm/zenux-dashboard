@@ -1,13 +1,14 @@
 """What ZENUX looks for: the analyst's one-pager in plain sections, "Suggest a change", and the sign-off
-(docs/SPEC-PHASE03-UI.md section 7.4). Drawn by preferences_view as the `looks_for` section of My preferences.
+(docs/SPEC-PHASE03-UI.md section 7.4). Drawn by coverage_view at the top of Coverage, above the coverage-area picker
+(docs/SPEC-SIMPLIFY.md 2.4): one expander titled with its sign-off state ("What ZENUX looks for · signed off by you on
+Oct 3" / "· not signed off yet"), open while the workspace is staging, under the staging banner.
 
     GET  /brief           (READ_TOKEN)  sections -> parts -> lines {id, text}, in the approved vocabulary (Top story,
-                                        In the briefing, Near miss, Filtered out, Your coverage ...; the hub maps the
-                                        rubric's words and keeps them in `original`, docs/SPEC-PHASE05.md 3.1); the
-                                        analyst's tuning (preferences, mutes, stars, volume), what each coverage area
-                                        covers, the sign-off and the stage
-    POST /brief/suggest   (OWNER_TOKEN) {line_id, text}: a draft for the wording assistant; it comes back under
-                                        Needs your OK (404 unknown_line when the line left the page)
+                                        In the briefing, Near miss, Your coverage ...; the hub maps the rubric's words
+                                        and keeps them in `original`, docs/SPEC-PHASE05.md 3.1), the sign-off and the
+                                        stage
+    POST /brief/suggest   (OWNER_TOKEN) {line_id, text}: a draft for the wording assistant; it comes back under Needs
+                                        your OK in Tuning (404 unknown_line when the line left the page)
     POST /signoff         (OWNER_TOKEN) {rubric_version, catalog_versions, note?}: the versions of the brief as drawn
                                         (409 changed_since_viewed: re-read and ask again; 409 catalog_missing)
 
@@ -15,7 +16,7 @@ The sign-off sends exactly the versions the analyst was looking at (the cached r
 made meanwhile is refused by the hub rather than signed off unseen. Neither write has an undo route (gap 8).
 
 `write_or_handle` is ui.write for a write whose particular refusals (a 409 that needs its own plain message) the caller
-answers itself; preferences_view uses it for approvals.
+answers itself; tuning_view uses it for approvals.
 """
 
 from __future__ import annotations
@@ -24,9 +25,9 @@ from typing import Any, Callable, Iterable, Mapping
 
 import streamlit as st
 
-from . import api, data, labels, links, ui
+from . import api, data, labels, ui
 from .config import Workspace, load_config
-from .fmt import clip, dicts, empty_state, esc, fmt_clock, fmt_date, fmt_day, md_label, one_line, pick, plural
+from .fmt import clip, dicts, empty_state, esc, fmt_clock, fmt_date, fmt_day, md_label, one_line, pick
 
 NOTICE_KEY = "br_notice"
 SUGGEST_MIN = 10
@@ -34,13 +35,14 @@ SUGGEST_MAX = 2000
 NOTE_MAX = 500
 LINE_CLIP = 120
 
-STAGING_BANNER = ("ZENUX is collecting but not publishing yet. Read this page and your Coverage, then sign off to "
-                  "start your briefings.")
+STAGING_BANNER = ("ZENUX is collecting but not publishing yet. Read What ZENUX looks for and your coverage below, "
+                  "then sign off to start your briefings.")
+LABEL = "What ZENUX looks for"
 CONFIRM = "Sign off on what ZENUX looks for and your coverage? This records the versions you are looking at."
 CONFIRM_STAGING = "Your briefings start at the next scheduled time."
 CHANGED = "Coverage or this page changed while you were reading. It has been reloaded; look again and sign off."
 UNKNOWN_LINE = "This page changed; reload and try again."
-SUGGEST_SENT = "Sent to the wording assistant. It comes back under Needs your OK for you to approve."
+SUGGEST_SENT = "Sent to the wording assistant. It comes back in Tuning, under Needs your OK, for you to approve."
 SUGGEST_SHORT = f"Write at least {SUGGEST_MIN} characters so the wording assistant knows what to change."
 NOT_SIGNED = "Not signed off yet. Read below and press Sign off when it matches what you want."
 EMPTY_BRIEF = "What ZENUX looks for isn't ready yet. The builder is setting it up."
@@ -124,34 +126,22 @@ def part_html(part: Mapping, heading: str = "") -> str:
             + "</ul></div>")
 
 
-def tuning_summary(brief: Any) -> str:
-    """'3 active preferences · 2 mutes · 1 on your watchlist · How much: Standard'."""
-    prefs = [p for p in dicts(pick(brief, "preferences", default=[]))
-             if one_line(p.get("status")).lower() in ("", "active")]
-    mutes = [m for m in dicts(pick(brief, "mutes", default=[])) if m.get("active") is not False]
-    stars = [s for s in dicts(pick(brief, "stars", default=[])) if s.get("active") is not False]
-    volume = pick(brief, "volume")
-    mode = one_line(pick(volume, "mode"))
-    how_much = labels.VOLUME_LABELS.get(mode) or one_line(pick(volume, "label")) or "Standard"
-    return (f"{plural(len(prefs), 'active preference')} · {plural(len(mutes), 'mute')} · "
-            f"{len(stars)} on your watchlist · How much: {how_much}")
-
-
-def coverage_html(brief: Any) -> str:
-    """'Who is covered' per coverage area: one line per category with its names."""
-    out = ""
-    for area in dicts(pick(brief, "coverage", default=[])):
-        groups = [(one_line(g.get("category_label")) or "Other",
-                   [one_line(n) for n in (g.get("names") or []) if one_line(n)]) for g in dicts(area.get("covered"))]
-        groups = [(label, names) for label, names in groups if names]
-        if not groups:
-            continue
-        name = labels.area_name(area.get("module"), area.get("title"))
-        out += (f'<div class="brief-part"><div class="refine-label">Who is covered · {esc(name)}</div>'
-                '<ul class="brief-lines">'
-                + "".join(f'<li class="brief-line">{esc(label)}: {esc(", ".join(names))}</li>' for label, names in groups)
-                + "</ul></div>")
-    return out
+def expander_label(brief: Any, tz: str) -> str:
+    """The expander's title with the sign-off state: 'What ZENUX looks for · signed off by you on Oct 3', '· signed
+    off by the builder on Oct 3', or '· not signed off yet' (also while briefings run on a sign-off recorded when the
+    workspace was set up, which the analyst has not given yet)."""
+    last = pick(brief, "signoff.last")
+    if isinstance(last, Mapping):
+        by = one_line(last.get("by")).lower()
+        day = fmt_date(last.get("signed_at"), tz)
+        known = day not in ("", "—")
+        if by == "owner" and known:
+            return f"{LABEL} · signed off by you on {day}"
+        if by == "admin" and known:
+            return f"{LABEL} · signed off by the builder on {day}"
+        if by not in ("owner", "admin", "migration") and known:
+            return f"{LABEL} · signed off on {day}"
+    return f"{LABEL} · not signed off yet"
 
 
 def catalog_missing_text(exc: api.ApiError) -> str:
@@ -188,6 +178,8 @@ def close_and_rerun() -> None:
 
 
 def render_brief(ws: Workspace) -> None:
+    """The staging banner (while ZENUX collects but does not publish yet) and the expander: the sign-off line with
+    Sign off, then the page's sections, each part with Suggest a change. Open while staging."""
     notice = st.session_state.pop(NOTICE_KEY, None)
     if notice:
         st.warning(notice)
@@ -200,19 +192,21 @@ def render_brief(ws: Workspace) -> None:
     staging = is_staging(brief)
     if staging:
         st.info(STAGING_BANNER)
-        if st.button("Open Coverage", key="br_open_coverage"):
-            links.go("coverage")
-    status_col, button_col = st.columns([4, 1], vertical_alignment="center")
-    status_col.markdown(f'<div class="pref-meta">{esc(signoff_status(brief, ws.timezone))}</div>',
-                        unsafe_allow_html=True)
-    with button_col:
+    with st.container(key="zx_brief"):
+        with st.expander(expander_label(brief, ws.timezone), expanded=staging or bool(notice)):
+            render_body(ws, brief, staging)
+
+
+def render_body(ws: Workspace, brief: Mapping, staging: bool) -> None:
+    with st.container(horizontal=True, key="zx_brief_signoff", vertical_alignment="center", gap="small"):
+        st.markdown(f'<div class="pref-meta">{esc(signoff_status(brief, ws.timezone))}</div>', unsafe_allow_html=True)
         if ui.write_button("Sign off" if staging else "Sign off again", ws=ws, key="br_signoff",
                            type="primary" if staging else "secondary"):
             ui.open_dialog("signoff", workspace_id=ws.id, rubric_version=brief.get("rubric_version"),
                            catalog_versions=dict(brief.get("catalog_versions") or {}), staging=staging)
     title = one_line(brief.get("title"))
     if title:
-        ui.section(title)
+        st.markdown(f'<div class="brief-title">{esc(title)}</div>', unsafe_allow_html=True)
     sections = dicts(brief.get("sections"))
     if not sections:
         st.markdown(empty_state(EMPTY_BRIEF), unsafe_allow_html=True)
@@ -228,9 +222,7 @@ def render_brief(ws: Workspace) -> None:
                                          type="tertiary"):
                 ui.open_dialog("brief_suggest", workspace_id=ws.id, section=heading, part=part_title(part),
                                lines=lines)
-    st.markdown('<div class="rules-section">Your tuning</div>'
-                f'<div class="pref-meta">{esc(tuning_summary(brief))}</div>' + coverage_html(brief),
-                unsafe_allow_html=True)
+    ui.locked_hint(ws)
 
 
 # ---------------------------------------------------------------------------------------------- dialogs

@@ -204,10 +204,12 @@ def _flag(params: dict | None, name: str) -> bool:
 
 
 def hub_defaults(http: FakeHttp, base: str = PILOT_HUB) -> FakeHttp:
-    """Route every hub read (docs/SPEC-PHASE03-UI.md 3.3, plus the WF5 reads of docs/SPEC-PHASE05.md and GET /repairs
-    of docs/SPEC-REPAIR-PHASE-B.md) to a fixtures.py body. Query-dependent reads answer by their parameters: /rejected
-    by filter and include_auto, /mutes by all=1, the previews by their target and mode, /modules/<id>/inspect for both
-    pilot modules, /editions/<id> for 10 to 12, /editions/search with no hits. Returns http for chaining."""
+    """Route every hub read (docs/SPEC-PHASE03-UI.md 3.3, plus the WF5 reads of docs/SPEC-PHASE05.md, GET /repairs of
+    docs/SPEC-REPAIR-PHASE-B.md and GET /tuneup of docs/SPEC-SIMPLIFY.md) to a fixtures.py body. Query-dependent reads
+    answer by their parameters: /rejected by filter and include_auto, /mutes by all=1, the previews by their target and
+    mode, /modules/<id>/inspect for both pilot modules, /editions/<id> for 10 to 12, /editions/search with no hits.
+    GET /tuneup answers "not due" (fixtures.tuneup), so no tune-up banner shows unless a test routes one. Returns http
+    for chaining."""
     http.on("GET", base + "/editions", fx.editions_v8())
     for edition_id in (12, 11, 10):
         http.on("GET", f"{base}/editions/{edition_id}", fx.edition_single(edition_id))
@@ -236,11 +238,11 @@ def hub_defaults(http: FakeHttp, base: str = PILOT_HUB) -> FakeHttp:
     http.on("GET", base + "/radar", fx.radar_v8())
     http.on("GET", base + "/repairs", fx.repairs_v9())
     http.on("GET", base + "/diagnostics", fx.diagnostics())
+    http.on("GET", base + "/tuneup", fx.tuneup())
     return http
 
 
-VIEW_STUBS = {"briefing": "feed_view", "filtered": "filtered_view", "preferences": "preferences_view",
-              "coverage": "coverage_view", "control": "control_view"}
+VIEW_STUBS = {"briefing": "feed_view", "tuning": "tuning_view", "coverage": "coverage_view", "control": "control_view"}
 
 
 def stub_views(case: unittest.TestCase, **renders: Callable) -> dict[str, Any]:

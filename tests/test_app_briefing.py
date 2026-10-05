@@ -200,6 +200,8 @@ class BriefingPageTests(BriefingCase):
         self.assertIn('<span class="zx-chip chip-state chip-upheld">Checked: stands</span>', self.tag_rows(at)[0])
 
     def test_watchlist_and_near_miss_shelves(self):
+        # the shelves use the shared left-out row: title, dateline with the area, one reason chip, the story icons
+        # with the up arrow, Why was it left out? (docs/SPEC-SIMPLIFY.md 2.2)
         self.http.on("GET", EDITIONS, fb.with_shelves())
         at = self.app()
         self.assert_clean(at)
@@ -208,16 +210,20 @@ class BriefingPageTests(BriefingCase):
                       html)
         self.assertIn('<div class="shelf"><div class="shelf-title">Near misses · just under your bar</div></div>', html)
         self.assertLess(html.index("On your watchlist · not in"), html.index("Near misses · just under"))
-        self.assertIn('<div class="shelf-row"><div class="feed-dateline">Oct 3 · Data Center Dynamics</div>'
-                      '<div><a class="source-link" href="https://example.com/story-1300" target="_blank" '
-                      'rel="noopener noreferrer">CoreWeave opens a &lt;new&gt; site in Texas</a></div>'
-                      '<div class="feed-tags"><span class="zx-chip tier">Near miss</span>'
-                      '<span class="zx-chip chip-state chip-starred">About CoreWeave</span></div></div>', html)
-        self.assertIn('<span class="zx-chip tier">Below your &quot;how much&quot; setting</span></div></div>', html)
-        self.assertEqual(html.count("About "), 1)  # company names only on the watchlist shelf
-        keys = [b.key for b in at.button if str(b.key).startswith("br_promote_")]
-        self.assertEqual(keys, ["br_promote_0_watchlist_1300", "br_promote_0_near_1301", "br_promote_0_near_1302"])
+        self.assertIn('<article class="filtered-row"><div class="rejected-title"><a class="filtered-link" '
+                      'href="https://example.com/story-1300" target="_blank" rel="noopener noreferrer">CoreWeave opens '
+                      'a &lt;new&gt; site in Texas</a></div><div class="feed-dateline">Oct 3 · Data Center Dynamics · '
+                      '<span class="module-tag"', html)
+        self.assertIn('<div class="rejected-signals"><span class="rejected-chip">Near miss</span></div>', html)
+        self.assertIn('<span class="rejected-chip">Below your &quot;how much&quot; setting</span>', html)
+        self.assertNotIn("About CoreWeave", html)  # one chip; the watchlist row says "Not about CoreWeave" instead
+        self.assertNotIn("Score", html)
+        keys = [b.key for b in at.button if str(b.key).startswith("act_promote_")]
+        self.assertEqual(keys, ["act_promote_w0_1300", "act_promote_n0_1301", "act_promote_n0_1302"])
         self.assertEqual({at.button(key=k).label for k in keys}, {"Should have been in"})
+        self.assertEqual(at.button(key="lo_not_about_w0_1300_0").label, "Not about CoreWeave")
+        self.assertEqual([e.label for e in at.expander if e.label == "Why was it left out?"],
+                         ["Why was it left out?"] * 3)
 
     def test_no_shelves_when_empty_or_off(self):
         body = fb.editions()
@@ -226,7 +232,7 @@ class BriefingPageTests(BriefingCase):
         at = self.app()
         self.assert_clean(at)
         self.assertNotIn("shelf-title", self.html(at))
-        self.assertEqual([b.key for b in at.button if str(b.key).startswith("br_promote_")], [])
+        self.assertEqual([b.key for b in at.button if str(b.key).startswith("act_promote_")], [])
 
     def test_editors_notes_are_collapsed_at_the_bottom(self):
         at = self.app()
@@ -255,20 +261,25 @@ class BriefingPageTests(BriefingCase):
 
 
 class SearchTests(BriefingCase):
-    def test_search_box_is_always_visible_and_says_what_it_covers(self):
+    def test_one_search_box_says_what_it_covers(self):
         at = self.app()
         self.assert_clean(at)
         box = at.text_input(key="br_search")
-        self.assertEqual((box.label, box.placeholder), ("Search your briefings", "Company, topic or source"))
-        self.assertIn("Searches headlines, story text and companies in your briefings of the last 90 days. Matches in "
-                      "the 2 briefings loaded below (back to Fri Oct 2) show in full.", self.texts(at, "caption"))
+        self.assertEqual((box.label, box.placeholder),
+                         ("Search your briefings and what was left out",
+                          "Search your briefings and what was left out (last 90 days)"))
+        self.assertEqual(len([t for t in at.text_input if t.key == "br_search"]), 1)
+        at.text_input(key="br_search").set_value("anduril").run()
+        self.assertIn("Matches in the 2 briefings loaded below (back to Fri Oct 2) show in full.",
+                      self.texts(at, "caption"))
 
     def test_search_results_and_no_hits(self):
         at = self.app()
         at.text_input(key="br_search").set_value("anduril").run()
         self.assert_clean(at)
         html = self.html(at)
-        self.assertIn('<div class="section-label"><span>2 matching stories</span></div>', html)
+        self.assertIn('<div class="zx-group-title">In your briefings · 2</div>', html)
+        self.assertIn('<div class="zx-group-title">Left out · ', html)  # the second group (test_app_left_out)
         self.assertEqual(len(self.cards(at)), 2)
         self.assertNotIn("CoreWeave signs", "".join(self.cards(at)))
         self.assertIn('<span>2 stories</span><span aria-hidden="true">·</span><span>1 matching</span>', html)
@@ -282,7 +293,7 @@ class SearchTests(BriefingCase):
                 self.assertEqual(len(self.cards(at)), hits)
         at.text_input(key="br_search").set_value("no such company").run()
         self.assert_clean(at)
-        self.assertIn("No matching stories in your briefings of the last 90 days. Try another word.", self.html(at))
+        self.assertIn("No matching stories in your briefings of the last 90 days.", self.html(at))
         self.assertEqual(self.cards(at), [])
         # every briefing is loaded here: the hub's search is not needed
         self.assertEqual(self.http.find("GET", PILOT_HUB + "/editions/search"), [])
@@ -307,7 +318,9 @@ class SearchTests(BriefingCase):
         self.assertIn(fx.search_hit(9, 901, "x", hours=400)["briefing_label"], html)
         self.assertIn(feed_view.EARLIER_MORE.format(n=2), self.texts(at, "caption"))
         cards = len(self.cards(at))
-        self.assertIn(f"<span>{cards + 2} matching stories</span>", html)
+        self.assertIn(f'<div class="zx-group-title">In your briefings · {cards + 2}</div>', html)
+        self.assertIn("; matches in earlier briefings are listed after them.", self.texts(at, "caption")[-1] +
+                      " ".join(self.texts(at, "caption")))
         self.assert_plain(at)
         self.http.on("GET", EDITIONS + "/9", {"edition": fb.edition(9, "2026-09-20T12:00:00Z")})
         at.button(key="br_hit_9_901").click().run()
@@ -335,14 +348,11 @@ class PagingTests(BriefingCase):
         at = self.app()
         self.assert_clean(at)
         self.assertEqual(len(self.edition_blocks(at)), 5)
-        self.assertTrue(any(c.endswith("Matches in earlier briefings are listed after them.")
-                            for c in self.texts(at, "caption")))
         at.button(key="br_more").click().run()
         self.assert_clean(at)
         self.assertEqual(len(self.edition_blocks(at)), 7)
         self.assertEqual([p.get("before") for p in self.editions_calls() if p.get("limit") == 5][-2:], [None, 16])
         self.assertEqual([b.key for b in at.button if b.key == "br_more"], [])
-        self.assertFalse(any("earlier briefings" in c for c in self.texts(at, "caption")))
 
 
 class DeepLinkTests(BriefingCase):
@@ -439,21 +449,22 @@ class WhyTests(BriefingCase):
             '</span></div>'
             '<div class="why-row"><span class="why-label">Companies</span><span>CoreWeave, Microsoft (on your watchlist)'
             '</span></div></div>'))
-        # each preference links to My preferences (AppTest forgets a keyed expander's open state: open it again)
-        self.assertEqual(at.button(key="why_pref_w0_0_0").label, "See it in My preferences")
+        # each preference links to Tuning (AppTest forgets a keyed expander's open state: open it again)
+        self.assertEqual(at.button(key="why_pref_w0_0_0").label, "See it in Tuning")
         self.open_expander(at, "zx_whyall_0")
         at.button(key="why_pref_w0_0_1").click().run()
         self.assert_clean(at)
-        self.assertEqual(at.session_state["zx_tab"], "preferences")
-        self.assertEqual({k: at.session_state["zx_focus"].get(k) for k in ("section", "pref")},
-                         {"section": "active", "pref": "I-0003"})
+        self.assertEqual(at.session_state["zx_tab"], "tuning")
+        self.assertEqual(at.session_state["zx_focus"].get("pref"), "I-0003")
+        self.assertEqual(at.query_params.get("pref"), "I-0003")
 
     def test_why_is_lazy(self):
         at = self.app()
         self.assert_clean(at)
         self.assertNotIn("why-block", self.html(at))
-        self.assertEqual(self.http.find("GET", PILOT_HUB + "/preferences"), [])
         self.assertEqual([b.key for b in at.button if str(b.key).startswith("why_pref_")], [])
+        # GET /preferences is read once, for the suggestions banner; Why's look-ups use that same read
+        self.assertEqual(len(self.http.find("GET", PILOT_HUB + "/preferences")), 1)
 
 
 class HubPlainWordsTests(AppCase):
@@ -510,12 +521,11 @@ class StateTests(BriefingCase):
             {"level": "amber", "code": "awaiting_signoff", "text": "Collecting. Briefings start after you sign off."}]))
         at = self.app()
         self.assert_clean(at)
-        self.assertIn("ZENUX is collecting. Briefings start after you sign off in My preferences › What ZENUX looks "
-                      "for.", self.html(at))
+        self.assertIn("ZENUX is collecting. Briefings start after you sign off on What ZENUX looks for, at the top "
+                      "of Coverage.", self.html(at))
         at.button(key="br_signoff").click().run()
         self.assert_clean(at)
-        self.assertEqual(at.session_state["zx_tab"], "preferences")
-        self.assertEqual(at.session_state["zx_focus"].get("section"), "looks_for")
+        self.assertEqual(at.session_state["zx_tab"], "coverage")
 
     def test_read_errors_are_plain(self):
         for handler, words in ((None, "be reached right now."),

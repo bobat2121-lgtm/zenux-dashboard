@@ -7,14 +7,18 @@ short technical line for the builder, and `detail` is the hub's own plain senten
 Hub routes (docs/SPEC-PHASE02.md section 5 for the shapes, docs/SPEC-PHASE05.md for the WF5 ones;
 docs/SPEC-PHASE03-UI.md 3.3 for these wrappers; docs/SPEC-REPAIR-PHASE-B.md 1.2 and 1.4 for the source repairs):
     reads  (bearer READ_TOKEN):  GET /editions, /editions/<id>, /editions/latest, /editions/search, /status,
-                                 /rejected, /modules, /modules/<id>/inspect, /mutes, /mutes/preview,
+                                 /rejected (also ?edition_id=), /modules, /modules/<id>/inspect, /mutes, /mutes/preview,
                                  /mutes/bring-back-preview, /stars, /stars/preview, /preferences, /rules, /settings,
-                                 /settings/volume/preview, /brief, /radar, /repairs, /diagnostics, /snapshot, /sources
+                                 /settings/volume/preview, /brief, /radar, /repairs, /tuneup, /diagnostics, /snapshot,
+                                 /sources
     writes (bearer OWNER_TOKEN): POST /preferences, /rules/<id>/<action> (reopen undoes turning a suggestion down),
                                  /feedback, /feedback/withdraw, /mutes, /stars, /promote, /promote/withdraw
                                  (docs/SPEC-ICON-ACTIONS.md), /settings/volume, /brief/suggest, /signoff,
-                                 /admin/stage, /radar/requests, /radar/<id>/{approve|reject},
-                                 /repairs/<id>/{approve|reject|withdraw}, /admin/sources/{ack|unack}
+                                 /tuneup/dismiss, /admin/stage, /admin/routines/allow-once, /radar/requests,
+                                 /radar/<id>/{approve|reject}, /repairs/<id>/{approve|reject|withdraw},
+                                 /admin/sources/{ack|unack}
+The schema 11 routes (docs/SPEC-SIMPLIFY.md section 1: /rejected?edition_id=, /tuneup, /tuneup/dismiss,
+/admin/routines/allow-once) answer 404 on an older hub; the callers treat that as "not there yet".
 
 A hub refusal is {error, message, ...details}: `message` is one plain sentence (docs/SPEC-PHASE05.md section 1), so
 `detail` can be shown as written once ui.looks_technical passes it; `data` keeps the details (`fields` on a validation
@@ -62,6 +66,7 @@ VOLUME_MODES = ("top", "standard", "broad")
 STAGES = ("staging", "live")
 RADAR_KINDS = ("track_source", "missed_story", "new_coverage")
 REPAIR_ACTIONS = ("approve", "reject", "withdraw")  # POST /repairs/<id>/<action>; no route reverses one
+ROUTINE_ROLES = ("grader", "refiner", "scout")  # POST /admin/routines/allow-once {role}
 REJECTED_FILTERS = ("all", "near_miss", "same_story", "muted", "old_news", "auto")
 REJECTED_LIMIT = 500        # the hub's page size cap for GET /rejected (BRAIN_LIMITS.rejectedMax)
 SEARCH_DAYS = 90            # GET /editions/search looks this far back by default
@@ -237,18 +242,34 @@ def status(ws: Workspace) -> dict:
     return _dict(hub_get(ws, "/status"), "status")
 
 
-def rejected(ws: Workspace, *, days: int = 3, filter: str = "all", include_auto: bool = False, q: str | None = None,
-             module: str | None = None, limit: int | None = None, offset: int = 0) -> dict:
-    """GET /rejected?days=&filter=&include_auto=1&q=&module=&limit=&offset=: one view of the filtered-out stories
-    (filter: all | near_miss | same_story | muted | old_news | auto), one row per story, with the true `total`, every
-    view's count (`views`) and `has_more` / `next_offset`."""
+def rejected(ws: Workspace, *, days: int | None = 3, filter: str = "all", include_auto: bool = False,
+             q: str | None = None, module: str | None = None, limit: int | None = None, offset: int = 0,
+             edition_id: int | None = None) -> dict:
+    """GET /rejected?days=&filter=&include_auto=1&q=&module=&limit=&offset=&edition_id=: stories left out of the
+    briefings (filter: all | near_miss | same_story | muted | old_news | auto), one row per story, with the true
+    `total`, every view's count (`views`) and `has_more` / `next_offset`. With `edition_id` (schema 11,
+    docs/SPEC-SIMPLIFY.md 1.3): the stories that briefing's run decided and left out, whatever `days` says, each with
+    its `group` (near_miss, below_bar, same_story); 404 unknown_edition. `days` goes up to 90 with a search (`q`)."""
     if filter not in REJECTED_FILTERS:
-        raise invalid("Choose a view of filtered-out stories.")
+        raise invalid("Choose which stories that were left out to show.")
     if module and not MODULE_ID_RE.match(module):
         raise invalid("That coverage area is not known.")
+    eid = None
+    if edition_id is not None:
+        eid = _id(edition_id)
+        if eid is None:
+            raise invalid("That briefing is not known.")
     params = {"days": days, "filter": filter, "include_auto": 1 if include_auto else None, "q": _text(q) or None,
-              "module": module or None, "limit": limit, "offset": offset or None}
+              "module": module or None, "limit": limit, "offset": offset or None, "edition_id": eid}
     return _dict(hub_get(ws, "/rejected", params), "rejected")
+
+
+def tuneup(ws: Workspace) -> dict:
+    """GET /tuneup (schema 11, docs/SPEC-SIMPLIFY.md 1.5): the weekly tune-up, {due, week, dismissed, rated_7d, target,
+    items: [{event_id, item_id, title, url, source_label, module, area_label, published_at, decision, score, bar,
+    reason_text}]}: up to 5 stories of the last 7 days' briefings whose scores sit closest to their bar. An older hub
+    answers 404."""
+    return _dict(hub_get(ws, "/tuneup"), "tune-up")
 
 
 def modules(ws: Workspace) -> dict:
@@ -532,6 +553,20 @@ def promote(ws: Workspace, token: str, event_id: int, note: str) -> dict:
     if len(words) > TEXT_MAX:
         raise invalid(f"Keep it to {TEXT_MAX} characters or fewer.")
     return hub_post(ws, "/promote", {"event_id": eid, "note": words}, token)
+
+
+def dismiss_tuneup(ws: Workspace, token: str) -> dict:
+    """POST /tuneup/dismiss {} (schema 11): skip this week's tune-up. Answers {dismissed: true, week}; idempotent."""
+    return hub_post(ws, "/tuneup/dismiss", {}, token)
+
+
+def allow_once(ws: Workspace, token: str, role: str) -> dict:
+    """POST /admin/routines/allow-once {role} (schema 11, docs/SPEC-SIMPLIFY.md 1.2): the next due check of that
+    routine (grader, refiner or scout) answers due, for 2 hours, so a run started by hand from claude.ai goes ahead.
+    Answers {allowed: true, role, until}."""
+    if role not in ROUTINE_ROLES:
+        raise invalid("Choose a routine.")
+    return hub_post(ws, "/admin/routines/allow-once", {"role": role}, token)
 
 
 def set_volume(ws: Workspace, token: str, mode: str, *, near_miss_shelf: bool | None = None) -> dict:

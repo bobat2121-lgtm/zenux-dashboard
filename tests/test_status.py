@@ -131,8 +131,7 @@ class StatusLineTests(AppCase):
             status.status_line(ws)
             status.new_briefing_watch(ws, st.session_state.get("probe_shown", 12))
 
-        stub_views(self, briefing=briefing,
-                   preferences=lambda ws: st.markdown(f"stub preferences {links.focus('section')}"))
+        stub_views(self, briefing=briefing, coverage=lambda ws: st.markdown("stub coverage"))
 
     def test_the_line_and_refresh(self):
         at = self.app()
@@ -163,8 +162,9 @@ class StatusLineTests(AppCase):
         self.assertIn("Collecting · briefings start after sign-off", self.html(at))
         at.button(key="zx_status_signoff").click().run()
         self.assert_clean(at)
-        self.assertEqual(at.radio(key=links.TAB_KEY).value, "preferences")
-        self.assertIn("stub preferences looks_for", self.html(at))
+        # What ZENUX looks for and its sign-off sit at the top of Coverage (docs/SPEC-SIMPLIFY.md 2.4)
+        self.assertEqual(at.radio(key=links.TAB_KEY).value, "coverage")
+        self.assertIn("stub coverage", self.html(at))
 
     def test_unreachable_offers_try_again(self):
         self.http.routes.pop(("GET", PILOT_HUB + "/status"))  # unrouted: unreachable

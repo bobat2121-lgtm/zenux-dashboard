@@ -11,7 +11,7 @@ from unittest.mock import patch
 import fixtures as fx
 import fixtures_coverage as fc
 from helpers import AppCase, FakeResponse, OWNER, PILOT_HUB, PIN, READ, hub_defaults
-from zenux_dashboard import coverage_view, labels, ui
+from zenux_dashboard import brief_view, coverage_view, labels, ui
 
 MODULES = PILOT_HUB + "/modules"
 INSPECT_AI = PILOT_HUB + "/modules/ai-infra/inspect"
@@ -87,7 +87,7 @@ class AreaTests(CoverageCase):
                       "Score", "The ZENUX editor scores each one 0 to 100", "Next run: ",
                       "Brief", "14 in your briefings this week",
                       "Stories scoring 70 or more make your briefing, up to 12 at a time (How much: Standard). The rest "
-                      "stay under Filtered out."):
+                      "show under each briefing, in Left out of this briefing."):
             self.assertIn(words, flow)
         self.assertEqual(flow.count('class="cov-step"'), 4)
         self.assertEqual(flow.count('class="cov-arrow"'), 3)
@@ -159,14 +159,18 @@ class AreaTests(CoverageCase):
         self.assert_clean(at)
         self.assertIn("No coverage areas yet.", self.html(at))
 
-    def test_staging_banner_leads_to_sign_off(self):
-        self.http.on("GET", PILOT_HUB + "/settings", fc.settings(stage="staging"))
+    def test_staging_shows_the_sign_off_here(self):
+        # docs/SPEC-SIMPLIFY.md 2.4: What ZENUX looks for sits above the area picker, open while staging
+        self.http.on("GET", PILOT_HUB + "/brief", fx.brief(stage="staging"))
         at = self.coverage()
         self.assert_clean(at)
-        self.assertIn("Review who and what ZENUX covers here and in My preferences › What ZENUX looks for, then sign "
-                      "off.", self.texts(at, "info"))
-        at.button(key="cv_signoff").click().run()
-        self.assertEqual(at.radio(key="zx_tab").value, "preferences")
+        self.assertIn(brief_view.STAGING_BANNER, self.texts(at, "info"))
+        box = next(e for e in at.expander if str(e.label).startswith("What ZENUX looks for"))
+        self.assertEqual(box.label, "What ZENUX looks for · not signed off yet")
+        self.assertTrue(box.proto.expanded)
+        self.assertEqual(at.button(key="br_signoff").label, "Sign off")
+        self.assertEqual([b.key for b in at.button if b.key == "cv_signoff"], [])  # no detour to another tab
+        self.assertNotIn("My preferences", self.visible_text(at))
 
     def test_a_failing_settings_read_never_blocks_the_page(self):
         self.http.on("GET", PILOT_HUB + "/settings", FakeResponse(503, {"error": "x"}))

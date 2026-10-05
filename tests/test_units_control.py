@@ -195,6 +195,50 @@ class DiagnosticsShapeTests(unittest.TestCase):
         self.assertEqual(control_view.routines_html(None, TZ), "")
         self.assertEqual(control_view.clock_label("00:05"), "12:05 AM")
 
+    def test_prompt_state_in_plain_words(self):
+        # docs/SPEC-SIMPLIFY.md 1.1 and 2.5: the hub's prompt_state, the older prompt_current as before
+        due = fx.iso(-1.5)
+        clock = control_view.fmt_clock(due, TZ)
+        cases = {
+            "current": '<span class="status-pill ok">current</span>',
+            "updates_next_run": f'<span class="tile-d">picks up its updated instructions at its next run, {clock}</span>',
+            "outdated": '<span class="status-pill warn">ran with an old copy of its instructions</span>',
+            "unknown": '<span class="status-pill idle">not known yet</span>',
+        }
+        for state, cell in cases.items():
+            with self.subTest(state=state):
+                self.assertEqual(control_view.prompt_cell({"prompt_state": state, "next_due_at": due}, TZ), cell)
+        self.assertEqual(control_view.prompt_text({"prompt_state": "updates_next_run"}, TZ),
+                         "picks up its updated instructions at its next run")
+        self.assertEqual(control_view.prompt_cell({"prompt_current": False}, TZ),
+                         '<span class="status-pill warn">out of date</span>')  # an older hub
+        self.assertEqual(control_view.prompt_cell({"prompt_current": True, "prompt_state": "odd"}, TZ),
+                         '<span class="status-pill ok">current</span>')
+        routines = fx.diagnostics()["routines"]
+        routines["refiner"].update(prompt_state="updates_next_run")
+        html = control_view.routines_html(routines, TZ)
+        self.assertIn("picks up its updated instructions at its next run, ", html)
+        self.assertNotIn("out of date", html.split("Rule refiner")[1].split("</tr>")[0])
+
+    def test_slots_7d_and_the_allowance(self):
+        r = {"slots_7d": {"ran": 7, "skipped": 7, "catch_ups": 1, "manual": 0}, "last_skipped_at": fx.iso(3),
+             "allow_once_until": fx.iso(-1.25)}
+        text = control_view.slots_text(r, TZ)
+        self.assertTrue(text.startswith("Last 7 days: 7 ran, 7 skipped as not due, 1 catch-up, 0 by hand · last skipped "
+                                        "3h ago · one extra run allowed until "), text)
+        self.assertEqual(control_view.slots_text({"slots_7d": {"ran": 2, "catch_ups": 2}}, TZ),
+                         "Last 7 days: 2 ran, 0 skipped as not due, 2 catch-ups, 0 by hand")
+        self.assertEqual(control_view.slots_text({"allow_once_until": fx.iso(1)}, TZ), "")  # it lapsed
+        self.assertEqual(control_view.slots_text(fx.diagnostics()["routines"]["grader"], TZ), "")  # an older hub
+        self.assertTrue(control_view.has_slots(r))
+        self.assertFalse(control_view.has_slots(fx.diagnostics()["routines"]["grader"]))
+        until = fx.iso(-2)
+        self.assertEqual(control_view.allow_toast("Grader", {"allowed": True, "until": until}, TZ),
+                         f"One extra Grader run is allowed until {control_view.fmt_clock(until, TZ)}. Start it from "
+                         "claude.ai/code/routines within 2 hours.")
+        self.assertEqual(control_view.allow_toast("Radar scout", {}, TZ),
+                         "One extra Radar scout run is allowed. Start it from claude.ai/code/routines within 2 hours.")
+
     def test_build_canary_and_lease(self):
         s = control_view.summarize(self.ws, self.report(fx.diagnostics()))
         self.assertIn("<span>cleaned up 5h ago</span>", control_view.footer_html(s))
@@ -403,7 +447,7 @@ class CoverageShapeTests(unittest.TestCase):
         self.assertTrue(steps[2][2].endswith("Next run: 4:30 PM ET."))
         self.assertEqual(steps[3][1], "14 in your briefings this week")
         self.assertEqual(steps[3][2], "Stories scoring 70 or more make your briefing, up to 12 at a time (How much: "
-                                      "Standard). The rest stay under Filtered out.")
+                                      "Standard). The rest show under each briefing, in Left out of this briefing.")
         older = coverage_view.flow_steps(fc.inspect_def(), fc.modules()["modules"][1], None, None, "", "")
         self.assertEqual(older[0][1], "1 company · 1 source")
         self.assertEqual(older[3][1], "4 in your briefings in 30 days")

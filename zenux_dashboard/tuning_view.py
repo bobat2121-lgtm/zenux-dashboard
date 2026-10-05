@@ -1,31 +1,34 @@
-"""My preferences: everything the analyst tunes, in one tab (docs/SPEC-PHASE03-UI.md section 7).
+"""Tuning: everything the analyst tunes, on one page with no sub-tabs (docs/SPEC-SIMPLIFY.md 2.3), in this order:
 
-Six sections behind one segmented control (`pf_section`, mirrored as `section` in the page link):
-
-    ok          Needs your OK: suggested wordings, suggestions from the analyst's ratings, merges and brief or coverage
-                suggestions (GET /preferences `suggestions`, plus legacy proposed drafts from GET /rules), each with its
-                14-day preview and the stories it moves (`preview_items`). Approve: POST /rules/<draft>/approve
-                {proposed_at, text?, retire?, as_new?}; Not now: POST /rules/<draft>/reject {}, with Undo (POST
-                /rules/<draft>/reopen).
-    active      Active and paused preferences with what they did (GET /preferences), the Add form (POST /preferences
-                {direction, scope: "standing", text, expires_at?}), and Pause, Resume, Edit, End date, Remove and
-                Bring back (POST /rules/<id>/<pause|resume|edit|end-date|retire|reactivate>).
-    looks_for   What ZENUX looks for and the sign-off (brief_view.render_brief).
-    muted       Mutes (GET /mutes?all=1) with Unmute and Bring back, through the card actions (actions.py).
-    watchlist   Stars (GET /stars) with Remove (actions.unstar).
-    how_much    The "how much" dial: GET /settings, GET /settings/volume/preview, POST /settings/volume.
+1. The title, the 7-day summary line ("This week your preferences changed 23 decisions: ...") and Refresh.
+2. "Needs your OK · N", only when something waits: suggested wordings, suggestions from the analyst's ratings,
+   merges and brief or coverage suggestions (GET /preferences `suggestions`, plus legacy proposed drafts from GET
+   /rules). Each card: its head chip, the suggestion, one impact line ("Would have brought 3 stories in and kept 1 out
+   over the last 14 days."), its two buttons (Approve / Not now, Use this wording / Keep mine, Merge them / Keep them
+   separate), and a "Details" expander with the rest: the ratings behind it, which stories, the wording assistant's
+   reasoning, the wording box and the conflict checkboxes (on by default). Approve: POST /rules/<draft>/approve
+   {proposed_at, text?, retire?, as_new?}; the other: POST /rules/<draft>/reject {} with Undo (reopen). The 409 answers
+   (proposal_changed, merge_outdated, target_retired) are said on the card in plain words (brief_view.write_or_handle).
+3. "How much": one row with the three choices, the near-miss switch, the preview line and "Use this setting" (enabled
+   only when changed): GET /settings, GET /settings/volume/preview, POST /settings/volume, with Undo.
+4. "Your rules · N": one list of the preferences (GET /preferences, active and paused), mutes (GET /mutes?all=1,
+   active) and the watchlist (GET /stars), with filter pills (All · More · Less · Muted · Watchlist, with counts) and
+   "+ Add a rule" (a dialog: more, less or exactly as I write it, own words, only for a while; POST /preferences
+   {direction, scope: standing, text, expires_at?}). Each row: what kind, its words or label, one impact line, an
+   optional hint (paused; a clearer wording is waiting; mostly kept out one source; not used in 30 days) and one ⋯
+   menu: a preference has Edit, End date and Remove (Resume when paused, "Mute <source> instead" when it looks like a
+   mute), a mute Unmute (the card actions' dialog), the watchlist Remove from watchlist. There is no Pause. A `pref=`
+   link highlights its row (and opens Ended once for an ended one).
+5. "Ended · N" (collapsed): ended preferences (Bring back) and removed mutes (Bring back the last 7 days), 100 at most.
 
 Every write goes through ui.write: the owner token from the PIN, a toast that says when the change takes effect (from
 the answer's `effective`), and an undo where the hub has an inverse route. An approval names the proposal shown
-(`proposed_at`); a 409 proposal_changed, merge_outdated or target_retired is answered on the card in plain words
-instead of as an error (brief_view.write_or_handle). Each section reads only what it needs, so one failing route never
-blanks the others; the section labels carry counts from the reads that worked.
+(`proposed_at`). Each part reads only what it needs, so one failing route never blanks the others.
 
 The analyst never sees an id, a source key or a module id here: the hub sends plain words beside every stored text
 (`plain_text`, `proposal_plain`, `replaces_detail`, `soft_cap.warning`, `with_assistant`; docs/SPEC-PHASE05.md 3.2);
-labels.preference_text keeps the analyst's own words of a preference (without the lead the chip says and the example
-the card shows on its own line), labels.clean_rationale stays the last guard on reasoning, and the end reason, scope
-and direction go through their plain labels.
+labels.preference_text keeps the analyst's own words of a preference, labels.clean_rationale stays the last guard on
+reasoning, and the end reason, scope and direction go through their plain labels.
 """
 
 from __future__ import annotations
@@ -35,25 +38,20 @@ from typing import Any, Callable, Mapping
 
 import streamlit as st
 
-from . import actions, api, brief_view, data, labels, links, owner, ui
+from . import actions, api, brief_view, data, labels, links, ui
 from .config import Workspace, load_config
-from .fmt import (MIN_TIME, UTC, as_int, as_list, chip, clip, dicts, empty_state, esc, fmt_date, one_line, md_label,
+from .fmt import (MIN_TIME, UTC, as_int, as_list, chip, clip, dicts, empty_state, esc, fmt_date, md_label, one_line,
                   parse_time, pick, plural, relative_time, unique_by_id, zone)
 
-SECTION_KEY = "pf_section"
-SECTIONS: tuple[str, ...] = tuple(links.PREFERENCE_SECTIONS)  # ok, active, looks_for, muted, watchlist, how_much
-SECTION_NAMES = {"ok": "Needs your OK", "active": "Active", "looks_for": "What ZENUX looks for", "muted": "Muted",
-                 "watchlist": "Watchlist", "how_much": "How much"}
-COUNTED = ("ok", "active", "muted", "watchlist")
-
-NOTICE_KEY = "pf_notice"          # a plain warning for the top of Needs your OK, after a 409 re-read
+NOTICE_KEY = "pf_notice"          # a plain warning for the top of the page, after a 409 re-read
 AS_NEW_KEY = "pf_as_new"          # {draft id: the hub's sentence}: suggestions whose preference has ended
-ENDED_KEY = "pf_ended"            # the lazy "Ended preferences" expander
-ENDED_FOCUS_KEY = "pf_ended_focus"
-REMOVED_MUTES_KEY = "pf_removed_mutes"
-VOLUME_MODE_KEY = "pf_volume_mode"
-VOLUME_SHELF_KEY = "pf_volume_shelf"
-VOLUME_SEEN_KEY = "pf_volume_seen"
+RULES_KEY = "tn_rules"            # the filter pills of Your rules
+PREF_SEEN_KEY = "tn_pref_seen"    # the last `pref` link applied (a new one resets the filter to All)
+ENDED_KEY = "tn_ended"            # the lazy "Ended" expander
+ENDED_FOCUS_KEY = "tn_ended_focus"
+VOLUME_MODE_KEY = "tn_volume_mode"
+VOLUME_SHELF_KEY = "tn_volume_shelf"
+VOLUME_SEEN_KEY = "tn_volume_seen"
 
 DIRECTIONS = ("more", "less", "exact")
 SCOPES = ("this_story", "similar", "standing")
@@ -66,26 +64,31 @@ UNTIL_MAX_DAYS = 366
 GRADE_LINES = 5
 ENDED_MAX = 100
 VOLUME_ORDER = ("top", "standard", "broad")
+RULE_FILTERS: tuple[tuple[str, str], ...] = (("all", "All"), ("more", "More"), ("less", "Less"), ("muted", "Muted"),
+                                             ("watchlist", "Watchlist"))
+RULE_FILTER_NAMES = dict(RULE_FILTERS)
 
-# ---------------------------------------------------------------------------------------------- copy (spec 7)
+# ---------------------------------------------------------------------------------------------- copy
 
+TITLE = "Tuning"
 SUMMARY_NONE = "Your preferences haven't changed anything this week."
-EMPTY_OK = ("Nothing needs your OK. Suggestions from your ratings and clearer wordings for your preferences appear "
-            "here.")
-EMPTY_ACTIVE = "No preferences yet. Use More like this or Less like this on any story, or add one above."
-EMPTY_MUTED = "Nothing muted. Use Mute on any story, or Mute on a source or company in Coverage."
-EMPTY_WATCHLIST = "No companies on your watchlist. Use Star on a story or in Coverage."
-MUTED_CAPTION = ("Muted sources, companies and stories are still collected, kept out of your briefing. Find what they "
-                 "hid under Filtered out › Muted.")
+EMPTY_RULES = "No rules yet. Use the thumbs on any story in your briefing, or + Add a rule."
+EMPTY_FILTER = {
+    "more": "No “more like this” preferences.",
+    "less": "No “less like this” preferences.",
+    "muted": "Nothing muted. Mute a source or company in Coverage.",
+    "watchlist": "No companies on your watchlist. Star one in Coverage.",
+}
+FILTER_NOTES = {"muted": labels.STILL_COLLECTED + " Mute or unmute sources and companies in Coverage too.",
+                "watchlist": labels.STAR_PROMISE}
 PROPOSAL_CHANGED = ("The wording assistant changed this suggestion after the page loaded, so nothing was approved. "
                     "Look at it again below.")
 MERGE_OUTDATED = ("One of these preferences changed meanwhile, so nothing was merged. The list has been reloaded.")
 MERGE_STALE = ("One of these preferences has changed since this merge was suggested, so it can't be merged. Keep them "
                "separate; the wording assistant suggests a fresh merge next month.")
 TARGET_RETIRED = "The preference this wording was for has ended. Approve it as a new preference instead."
-PAUSED_TOAST = "Paused. The editor ignores it from the next briefing until you resume it."
 REMOVE_TITLE = "Remove this preference?"
-REMOVE_MESSAGE = ("The editor stops using it from the next briefing. You can bring it back from Ended preferences.")
+REMOVE_MESSAGE = "The editor stops using it from the next briefing. You can bring it back from Ended."
 TOO_SHORT = f"Write at least {TEXT_MIN} characters so the editor knows what you mean."
 EMPTY_WORDING = "The wording is empty. Write it, or reload the page to see the suggestion again."
 NOTHING_CHANGED = "Nothing changed."
@@ -94,7 +97,10 @@ VOLUME_CAPTION = ("This changes how many stories make the briefing, never how st
                   "collected.")
 VOLUME_CURRENT = "This is your current setting."
 VOLUME_NO_PREVIEW = "No briefings in the last 7 days to compare."
+SHELF_LABEL = "Near misses under each briefing"
 ADD_PLACEHOLDER = "e.g. Less coverage of bitcoin price moves unless a miner announces AI hosting"
+ADD_LABEL = "Add a rule"
+MENU_LABEL = "Options"  # each rule's ⋯ menu (the icon shows; the word is for screen readers)
 
 SUGGESTION_HEADS = {
     "grades": "Suggested from your ratings",
@@ -116,14 +122,16 @@ ENDED_REASONS = {
     "consolidated": "Merged into another preference",
     "expired": "Its end date passed",
 }
-MUTE_GROUPS = (("source", "Sources"), ("entity", "Companies"), ("story", "Stories"))
+KIND_LABELS = {"more": "More like this", "less": "Less like this", "exact": "Exactly as I write it"}
+MUTE_KIND_CHIPS = {"source": "Muted source", "entity": "Muted company", "story": "Muted story",
+                   "outlet": "Muted outlet"}
 
 
 # ---------------------------------------------------------------------------------------------- pure helpers
 
 
 def attempt(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> tuple[Any, api.ApiError | None]:
-    """(body, None) or (None, the ApiError): one failing read never stops the other sections."""
+    """(body, None) or (None, the ApiError): one failing read never stops the other parts."""
     try:
         return fn(*args, **kwargs), None
     except api.ApiError as exc:
@@ -194,7 +202,7 @@ def ended_preferences(prefs_body: Any) -> list[dict]:
 
 def needs_ok(prefs_body: Any, rules_body: Any) -> list[dict]:
     """GET /preferences suggestions plus the legacy proposed drafts of GET /rules that are not among them, newest
-    first (by when the proposal arrived, then by id)."""
+    first (by when the proposal arrived, then by id). The Briefing's banner counts the same list."""
     suggestions = [d for d in unique_by_id(dicts(pick(prefs_body, "suggestions", default=[])))
                    if status_of(d, "proposed") == "proposed"]
     seen = {one_line(d.get("id")) for d in suggestions}
@@ -228,17 +236,6 @@ def removed_mutes(body: Any) -> list[dict]:
 def active_stars(body: Any) -> list[dict]:
     return [s for s in unique_by_id(dicts(pick(body, "stars", default=[])))
             if s.get("active") is not False and not s.get("removed_at")]
-
-
-def default_section(counts: Mapping[str, int | None]) -> str:
-    """Needs your OK when it has something, else Active."""
-    return "ok" if counts.get("ok") else "active"
-
-
-def section_label(slug: str, counts: Mapping[str, int | None]) -> str:
-    name = SECTION_NAMES.get(slug, slug)
-    n = counts.get(slug)
-    return f"{name} · {n}" if slug in COUNTED and n is not None else name
 
 
 def summary_sentence(summary: Any) -> str:
@@ -278,16 +275,14 @@ def stats_line(pref: Mapping, now: datetime | None = None) -> str:
     return f"{effect} · {used}"
 
 
-def status_text(pref: Mapping, tz: str) -> str:
-    if status_of(pref) == "paused":
-        since = fmt_date(pref.get("paused_at"), tz) if pref.get("paused_at") else ""
-        return f"Paused since {since}" if since and since != "—" else "Paused"
-    return labels.STATUS_LABELS.get(status_of(pref), "Active")
+def kind_label(pref: Mapping) -> str:
+    """'More like this', 'Less like this' or 'Exactly as I write it' (a legacy preference reads as the last)."""
+    return KIND_LABELS.get(one_line(pref.get("direction")).lower(), KIND_LABELS["exact"])
 
 
-def head_meta(pref: Mapping, tz: str) -> str:
-    """'Stories like this · Active · until Nov 3'."""
-    parts = [labels.scope_label(pref.get("scope")), status_text(pref, tz)]
+def rule_meta(pref: Mapping, tz: str) -> str:
+    """'Stories like this · until Nov 3': the scope and, when it has one, the end date."""
+    parts = [labels.scope_label(pref.get("scope"))]
     if pref.get("expires_at"):
         parts.append(f"until {fmt_date(pref.get('expires_at'), tz)}")
     return " · ".join(p for p in parts if p)
@@ -302,6 +297,15 @@ def example_line(pref: Mapping) -> str:
     return f"Example: {title} ({source})" if source else f"Example: {title}"
 
 
+def looks_like_mute(pref: Mapping) -> dict | None:
+    """The hub's "this preference behaves like a mute" ({kind, module, ref, label, share}), or None."""
+    stats = pref.get("stats") if isinstance(pref.get("stats"), Mapping) else {}
+    mute = stats.get("looks_like_mute")
+    if isinstance(mute, Mapping) and one_line(mute.get("ref")) and one_line(mute.get("kind")):
+        return dict(mute)
+    return None
+
+
 def looks_like_mute_text(mute: Mapping) -> str:
     share = pick(mute, "share")
     try:
@@ -313,10 +317,31 @@ def looks_like_mute_text(mute: Mapping) -> str:
     return f"{lead} came from {label}. Mute it instead?"
 
 
-def mostly_kept_out(stats: Any) -> str:
-    names = [one_line(pick(s, "label", "source_key")) for s in dicts(pick(stats, "top_suppressed_sources", default=[]))]
-    names += [one_line(pick(c, "name", "entity_id")) for c in dicts(pick(stats, "top_suppressed_companies", default=[]))]
-    return ", ".join(n for n in names if n)
+def wording_waiting(pref: Mapping, waiting: set[str] | None = None) -> bool:
+    """A clearer wording of this preference waits for the analyst's OK (`wording`, proposed); with `waiting` (the ids
+    of the Needs your OK cards) only when its card is there to approve."""
+    wording = pref.get("wording")
+    if not (isinstance(wording, Mapping) and status_of(wording, "queued") == "proposed"):
+        return False
+    return waiting is None or one_line(wording.get("draft_id")) in waiting
+
+
+def preference_hint(pref: Mapping, tz: str, waiting: set[str] | None = None) -> str:
+    """The row's one hint, the most useful first: paused; a clearer wording is waiting (`waiting`: the ids of the
+    Needs your OK cards); it kept out mostly one source; not used in 30 days. '' when none applies."""
+    stats = pref.get("stats") if isinstance(pref.get("stats"), Mapping) else {}
+    if status_of(pref) == "paused":
+        since = fmt_date(pref.get("paused_at"), tz) if pref.get("paused_at") else ""
+        when = f" since {since}" if since and since != "—" else ""
+        return f"Paused{when}. The editor ignores it until you resume it."
+    if wording_waiting(pref, waiting):
+        return "A clearer wording is waiting under Needs your OK."
+    mute = looks_like_mute(pref)
+    if mute:
+        return looks_like_mute_text(mute)
+    if stats.get("dormant"):
+        return "Not used in 30 days. Still useful?"
+    return ""
 
 
 def ended_reason(pref: Mapping) -> str:
@@ -399,21 +424,28 @@ def preview_counts(draft: Mapping) -> tuple[int, int, int] | None:
     return added, removed, as_int(summary.get("window_days")) or 14
 
 
-def preview_text(draft: Mapping) -> str:
-    """'+3 / -9 in the last 14 days', or 'No preview yet.'"""
+def impact_line(draft: Mapping) -> str:
+    """'Would have brought 3 stories in and kept 1 out over the last 14 days.', or 'No preview yet.'"""
     counts = preview_counts(draft)
     if counts is None:
         return "No preview yet."
     added, removed, days = counts
-    return f"+{added} / -{removed} in the last {days} days"
+    span = f"over the last {days} days"
+    if added and removed:
+        return f"Would have brought {plural(added, 'story', 'stories')} in and kept {removed} out {span}."
+    if added:
+        return f"Would have brought {plural(added, 'story', 'stories')} in {span}."
+    if removed:
+        return f"Would have kept {plural(removed, 'story', 'stories')} out {span}."
+    return f"Would not have changed your briefings {span}."
 
 
-def preview_caption(draft: Mapping) -> str:
-    counts = preview_counts(draft)
-    if counts is None:
-        return ""
-    added, removed, _ = counts
-    return f"Would have added {plural(added, 'story', 'stories')} to your briefings and removed {removed}."
+def preview_item_line(item: Mapping) -> str:
+    """'<title> · <source>' for one story of a proposal's preview (gap 2: the hub sends titles and plain source
+    names)."""
+    title = one_line(item.get("title")) or "A story no longer available"
+    source = one_line(item.get("source_label"))
+    return " · ".join(p for p in (title, source) if p)
 
 
 def local_today(tz: str, now: datetime | None = None) -> date:
@@ -463,7 +495,128 @@ def ws_missing() -> None:
     st.error("This workspace is no longer configured. Close this and reload the page.")
 
 
-# ---------------------------------------------------------------------------------------------- the tab
+def mute_impact(mute: Mapping) -> str:
+    """'Hid 12 stories this week (30 in all)'."""
+    week = max(as_int(mute.get("hidden_7d")) or 0, 0)
+    total = max(as_int(mute.get("hidden_total")) or 0, 0)
+    return f"Hid {plural(week, 'story', 'stories')} this week ({total} in all)"
+
+
+def mute_meta(mute: Mapping, tz: str) -> str:
+    """'since Oct 2 · <note>'."""
+    parts = []
+    since = fmt_date(mute.get("created_at"), tz) if mute.get("created_at") else ""
+    if since and since != "—":
+        parts.append(f"since {since}")
+    note = one_line(mute.get("note"))
+    if note:
+        parts.append(note)
+    return " · ".join(parts)
+
+
+def star_impact(star: Mapping) -> str:
+    """'9 stories this week, 2 in your briefing'."""
+    return (f"{plural(as_int(star.get('matches_7d')) or 0, 'story', 'stories')} this week, "
+            f"{as_int(star.get('in_briefing_7d')) or 0} in your briefing")
+
+
+def rules_of(prefs_body: Any, mutes_body: Any, stars_body: Any) -> list[dict]:
+    """Your rules as one list: [{kind: pref | mute | star, filter, id, row}], preferences first (the hub's order,
+    newest first), then mutes (newest first), then the watchlist. `filter` is the pill that shows the row besides All:
+    more, less, muted or watchlist ("" for a preference exactly as written, shown under All only)."""
+    out: list[dict] = []
+    for pref in live_preferences(prefs_body):
+        direction = one_line(pref.get("direction")).lower()
+        out.append({"kind": "pref", "filter": direction if direction in ("more", "less") else "",
+                    "id": one_line(pref.get("id")), "row": pref})
+    mutes = sorted(active_mutes(mutes_body), key=lambda m: parse_time(m.get("created_at")), reverse=True)
+    for mute in mutes:
+        if as_int(mute.get("id")) is not None:
+            out.append({"kind": "mute", "filter": "muted", "id": str(as_int(mute.get("id"))), "row": mute})
+    for star in active_stars(stars_body):
+        if one_line(star.get("entity_id")):
+            out.append({"kind": "star", "filter": "watchlist", "id": one_line(pick(star, "id", "entity_id")),
+                        "row": star})
+    return out
+
+
+def filter_counts(rules: list[dict]) -> dict[str, int]:
+    counts = {code: 0 for code, _ in RULE_FILTERS}
+    counts["all"] = len(rules)
+    for rule in rules:
+        if rule["filter"] in counts:
+            counts[rule["filter"]] += 1
+    return counts
+
+
+def filter_label(code: str, counts: Mapping[str, int | None]) -> str:
+    """'Muted · 3' (a count that could not be read is left out)."""
+    n = counts.get(code)
+    name = RULE_FILTER_NAMES.get(code, code)
+    return f"{name} · {n}" if n is not None else name
+
+
+def filtered_rules(rules: list[dict], code: str, focus: str = "") -> list[dict]:
+    """The rows the pill shows, the linked preference (`pref=`) first."""
+    shown = [r for r in rules if code == "all" or r["filter"] == code]
+    if focus:
+        shown.sort(key=lambda r: not (r["kind"] == "pref" and r["id"] == focus))
+    return shown
+
+
+def rule_html(rule: Mapping, tz: str, focused: bool = False, waiting: set[str] | None = None) -> str:
+    """One row of Your rules: the kind chip (and the scope and end date of a preference, or since when a mute is on),
+    the words or label (a preference's example on its own line), one impact line and the hint (`waiting`: the ids of
+    the Needs your OK cards)."""
+    row = rule["row"]
+    kind = rule["kind"]
+    if kind == "pref":
+        head, meta = kind_label(row), rule_meta(row, tz)
+        words = labels.preference_text(row) or "Your preference"
+        example = example_line(row)
+        impact = stats_line(row)
+        hint = preference_hint(row, tz, waiting)
+    elif kind == "mute":
+        head = MUTE_KIND_CHIPS.get(one_line(row.get("kind")), "Muted")
+        meta = mute_meta(row, tz)
+        words = one_line(pick(row, "label")) or labels.MUTE_KIND_LABELS.get(one_line(row.get("kind")), "A mute")
+        example, impact, hint = "", mute_impact(row), ""
+    else:
+        head, meta = "Watchlist", one_line(row.get("note"))
+        words = one_line(pick(row, "label", "name")) or "A company"
+        example, impact, hint = "", star_impact(row), ""
+    css = "tn-rule" + (" zx-focus" if focused else "")
+    return (f'<div class="{css}">'
+            f'<div class="loop-card-head">{chip(head, "suggested")}'
+            + (f'<span class="pref-meta">{esc(meta)}</span>' if meta else "") + "</div>"
+            f'<div class="pref-text">{esc(words)}</div>'
+            + (f'<div class="pref-meta">{esc(example)}</div>' if example else "")
+            + f'<div class="pref-stats">{esc(impact)}</div>'
+            + (f'<div class="tn-hint">{esc(hint)}</div>' if hint else "")
+            + "</div>")
+
+
+def remove_detail(pref: Mapping) -> str:
+    """Which preference Remove ends, in full (WF5 AW-3): its direction, its words and its example story, so a "more"
+    and a "less" made from the same story can be told apart: 'Remove "Show me less like this: Stories like this
+    example. (Example: The Hidden Failure Domain ...)"?'"""
+    words = clip(labels.preference_text(pref), 200).rstrip()
+    head = labels.direction_label(pref.get("direction"))
+    example = one_line(pick(pref.get("example"), "title"))
+    text = f"{head}: {words}" if words else head
+    if example:
+        text += f" (Example: {clip(example, 120)})"
+    return f"Remove “{text}”?"
+
+
+def ended_rows(prefs_body: Any, mutes_body: Any) -> list[tuple[str, dict]]:
+    """[("pref" | "mute", row)]: ended preferences and removed mutes, most recently ended first."""
+    rows = [("pref", p) for p in ended_preferences(prefs_body)] + [("mute", m) for m in removed_mutes(mutes_body)]
+    return sorted(rows, key=lambda kr: parse_time(pick(kr[1], "retired_at", "removed_at", "created_at")),
+                  reverse=True)
+
+
+# ---------------------------------------------------------------------------------------------- the page
 
 
 def render(ws: Workspace) -> None:
@@ -472,90 +625,46 @@ def render(ws: Workspace) -> None:
     mutes, mutes_error = attempt(data.mutes, ws.id, include_removed=True)
     stars, stars_error = attempt(data.stars, ws.id)
     header(ws, prefs)
-    counts: dict[str, int | None] = {
-        "ok": len(needs_ok(prefs, rules)) if prefs_error is None else None,
-        "active": len(live_preferences(prefs)) if prefs_error is None else None,
-        "muted": len(active_mutes(mutes)) if mutes_error is None else None,
-        "watchlist": len(active_stars(stars)) if stars_error is None else None,
-    }
-    section = section_control(counts)
-    if section != "active":  # Active has the hint under its Add form
-        ui.locked_hint(ws)
-    if section == "ok":
-        render_ok(ws, prefs, prefs_error, rules)
-    elif section == "active":
-        render_active(ws, prefs, prefs_error)
-    elif section == "looks_for":
-        brief_view.render_brief(ws)
-    elif section == "muted":
-        render_muted(ws, mutes, mutes_error)
-    elif section == "watchlist":
-        render_watchlist(ws, stars, stars_error)
-    else:
-        render_how_much(ws)
+    ui.locked_hint(ws)
+    if prefs_error is None:
+        render_ok(ws, prefs, rules)
+    render_how_much(ws)
+    waiting = {one_line(d.get("id")) for d in needs_ok(prefs, rules)} if prefs_error is None else set()
+    render_rules(ws, prefs, prefs_error, mutes, mutes_error, stars, stars_error, waiting)
+    render_ended(ws, prefs, mutes)
 
 
 def header(ws: Workspace, prefs: Any) -> None:
-    """'This week your preferences changed ...' and the Refresh button."""
-    text_col, button_col = st.columns([6, 1], vertical_alignment="center")
-    with text_col:
-        if prefs is not None:
-            st.markdown(f'<div class="pref-text">{esc(summary_sentence(pick(prefs, "summary_7d")))}</div>',
-                        unsafe_allow_html=True)
-    with button_col:
-        ui.refresh_button("preferences")
+    """'Tuning', 'This week your preferences changed ...' and Refresh; a notice after a refused approval, and how many
+    of the analyst's suggestions are still with the wording assistant."""
+    with st.container(horizontal=True, key="zx_tuning_head", vertical_alignment="center", gap="small"):
+        summary = (f'<div class="pref-text">{esc(summary_sentence(pick(prefs, "summary_7d")))}</div>'
+                   if prefs is not None else "")
+        st.markdown(f'<div class="tn-head"><div class="tn-title">{esc(TITLE)}</div>{summary}</div>',
+                    unsafe_allow_html=True)
+        ui.refresh_button("tuning")
+    notice = st.session_state.pop(NOTICE_KEY, None)
+    if notice:
+        st.warning(notice)
+    n = waiting_count(prefs) if prefs is not None else 0
+    if n:
+        st.caption(f"{plural(n, 'suggestion')} you sent {'is' if n == 1 else 'are'} with the wording assistant. "
+                   f"{'It comes' if n == 1 else 'They come'} back under Needs your OK once worded.")
 
 
-def _section_changed() -> None:
-    value = st.session_state.get(SECTION_KEY)
-    links.set_focus(section=value if value in SECTIONS else None, pref=None)
-
-
-def select_section(section: str) -> None:
-    """A button callback: switch to another section (the control is not drawn yet when callbacks run)."""
-    st.session_state[SECTION_KEY] = section
-    links.set_focus(section=section, pref=None)
-
-
-def section_control(counts: Mapping[str, int | None]) -> str:
-    """The section picker. A link (`section`, or `pref`, which means Active) wins over the remembered choice when it
-    changes; otherwise the choice stays; the first visit opens Needs your OK when it has something, else Active."""
-    want = links.focus("section")
-    if want not in SECTIONS:
-        want = "active" if links.focus("pref") else None
-    current = st.session_state.get(SECTION_KEY)
-    if want and current != want:
-        st.session_state[SECTION_KEY] = want
-    elif current not in SECTIONS:
-        st.session_state[SECTION_KEY] = default_section(counts)
-    st.segmented_control("Section", list(SECTIONS), key=SECTION_KEY, required=True,
-                         format_func=lambda slug: section_label(slug, counts), on_change=_section_changed,
-                         label_visibility="collapsed")
-    value = st.session_state.get(SECTION_KEY)
-    if value not in SECTIONS:
-        value = default_section(counts)
-    links.set_focus(section=value)
-    return value
+def section(title: str) -> None:
+    st.markdown(f'<div class="rules-section">{esc(title)}</div>', unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------------------------- Needs your OK
 
 
-def render_ok(ws: Workspace, prefs: Any, prefs_error: api.ApiError | None, rules: Any) -> None:
-    notice = st.session_state.pop(NOTICE_KEY, None)
-    if notice:
-        st.warning(notice)
-    if prefs_error is not None:
-        ui.error_box("your preferences", prefs_error, key="preferences")
-        return
-    n = waiting_count(prefs)
-    if n:
-        st.caption(f"{plural(n, 'suggestion')} you sent {'is' if n == 1 else 'are'} with the wording assistant. "
-                   f"{'It comes' if n == 1 else 'They come'} back here once worded.")
+def render_ok(ws: Workspace, prefs: Any, rules: Any) -> None:
+    """"Needs your OK · N", only when something waits."""
     cards = needs_ok(prefs, rules)
     if not cards:
-        st.markdown(empty_state(EMPTY_OK), unsafe_allow_html=True)
         return
+    section(f"Needs your OK · {len(cards)}")
     by_id = preferences_by_id(prefs)
     lines = brief_lines(ws) if any(origin_of(d) == "brief" for d in cards) else {}
     for draft in cards:
@@ -567,8 +676,8 @@ def brief_lines(ws: Workspace) -> dict[str, str]:
     line in the approved words (the draft's context keeps the original words for the wording assistant)."""
     brief, _ = attempt(data.brief, ws.id)
     out: dict[str, str] = {}
-    for section in dicts(pick(brief, "sections", default=[])):
-        for part in dicts(section.get("parts")):
+    for part_section in dicts(pick(brief, "sections", default=[])):
+        for part in dicts(part_section.get("parts")):
             for line in dicts(part.get("lines")):
                 if one_line(line.get("id")) and one_line(line.get("text")):
                     out[one_line(line.get("id"))] = one_line(line.get("text"))
@@ -576,19 +685,15 @@ def brief_lines(ws: Workspace) -> dict[str, str]:
 
 
 def suggestion_html(draft: Mapping, by_id: Mapping[str, dict], tz: str, lines: Mapping[str, str] | None = None) -> str:
-    """The card's head and body by origin (spec 7.2), escaped."""
+    """The card's head chip, the suggestion (with what it changes, by origin) and its impact line, escaped. The
+    ratings behind it and the stories it moves are in Details."""
     origin = origin_of(draft)
     proposed = shown_text(draft)
     when = fmt_date(pick(draft, "proposed_at", "updated_at", "created_at"), tz)
     head = ('<div class="loop-card-head">' + chip(suggestion_head(draft), "suggested")
             + (f'<span class="pref-meta">{esc(when)}</span>' if when and when != "—" else "") + "</div>")
-    if origin == "grades":
-        lines, more = grade_lines(draft)
+    if origin in ("grades", "radar"):
         body = f'<div class="pref-text">{esc(proposed)}</div>'
-        if lines:
-            body += ('<div class="refine-label">Your ratings behind it</div><div class="grade-lines">'
-                     + "".join(f'<div class="grade-line">{esc(line)}</div>' for line in lines) + "</div>"
-                     + (f'<div class="refine-note">and {more} more</div>' if more else ""))
     elif origin == "preference":
         target = by_id.get(one_line(draft.get("target_precedent_id")))
         yours = labels.preference_text(target) if target else labels.preference_text({"text": draft.get("text")})
@@ -605,51 +710,34 @@ def suggestion_html(draft: Mapping, by_id: Mapping[str, dict], tz: str, lines: M
             pick(draft, "context.brief_line.text"))
         body = ((f'<div class="refine-owner">Line: {esc(line)}</div>' if line else "")
                 + f'<div class="pref-text">Suggested: {esc(proposed)}</div>')
-    elif origin == "radar":
-        body = f'<div class="pref-text">{esc(proposed)}</div>'
     else:
         words = one_line(pick(draft, "owner_text", "plain_text", "text"))
         body = ((f'<div class="refine-owner">Your words: {esc(words)}</div>' if words else "")
                 + f'<div class="pref-text">Suggested: {esc(proposed)}</div>')
-    counts = preview_counts(draft)
-    if counts:
-        added, removed, days = counts
-        line_html = (f'<div class="preview-line"><span class="preview-plus">+{added}</span> / '
-                     f'<span class="preview-minus">-{removed}</span> in the last {days} days</div>')
-    else:
-        line_html = f'<div class="preview-line">{esc(preview_text(draft))}</div>'
-    return f'<div class="pref-card">{head}{body}{line_html}</div>'
+    return (f'<div class="pref-card">{head}{body}'
+            f'<div class="preview-line">{esc(impact_line(draft))}</div></div>')
 
 
-def preview_item_line(item: Mapping) -> str:
-    """'<title> · <source>' for one story of a proposal's preview (gap 2: the hub sends titles and plain source
-    names)."""
-    title = one_line(item.get("title")) or "A story no longer available"
-    source = one_line(item.get("source_label"))
-    return " · ".join(p for p in (title, source) if p)
-
-
-def which_stories(draft: Mapping, did: str) -> None:
-    """The lazy "Which stories" list: the stories the proposal would bring in and drop out (`preview_items`, at most
-    50; `preview_more` counts the rest)."""
-    items = dicts(draft.get("preview_items"))
-    if not items:
-        return
-    box = st.expander("Which stories", key=f"sg_list_{did}", on_change="rerun")
-    if not box.open:
-        return
+def details_html(draft: Mapping) -> str:
+    """The Details expander's read-only part: the ratings behind it, then which stories it would bring in and drop
+    out (`preview_items`, at most 50; `preview_more` counts the rest)."""
     html = ""
+    lines, more = grade_lines(draft) if origin_of(draft) == "grades" else ([], 0)
+    if lines:
+        html += ('<div class="refine-label">Your ratings behind it</div><div class="grade-lines">'
+                 + "".join(f'<div class="grade-line">{esc(line)}</div>' for line in lines) + "</div>"
+                 + (f'<div class="refine-note">and {more} more</div>' if more else ""))
+    items = dicts(draft.get("preview_items"))
     for heading, to in (("Would come in", "in"), ("Would drop out", "out")):
         group = [e for e in items if one_line(e.get("to")).lower() == to]
         if not group:
             continue
         html += (f'<div class="refine-label">{esc(heading)} · {len(group)}</div><div class="grade-lines">'
                  + "".join(f'<div class="grade-line">{esc(preview_item_line(e))}</div>' for e in group) + "</div>")
-    more = as_int(draft.get("preview_more")) or 0
-    if more > 0:
-        html += f'<div class="refine-note">and {plural(more, "more story", "more stories")}</div>'
-    with box:
-        st.markdown(html or '<div class="refine-note">No stories listed.</div>', unsafe_allow_html=True)
+    extra = as_int(draft.get("preview_more")) or 0
+    if extra > 0:
+        html += f'<div class="refine-note">and {plural(extra, "more story", "more stories")}</div>'
+    return html
 
 
 def conflict_choices(draft: Mapping, did: str, by_id: Mapping[str, dict]) -> list[str]:
@@ -670,24 +758,17 @@ def conflict_choices(draft: Mapping, did: str, by_id: Mapping[str, dict]) -> lis
 
 def suggestion_card(ws: Workspace, draft: Mapping, by_id: Mapping[str, dict],
                     lines: Mapping[str, str] | None = None) -> None:
+    """One card: the head chip, the suggestion and its impact line, the two buttons, then Details (drawn every run,
+    collapsed, so the wording box and the conflict choices count whether or not it was opened)."""
     did = one_line(draft.get("id"))
     approve_label, reject_label = button_labels(draft)
-    as_new = st.session_state.get(AS_NEW_KEY, {}).get(did) if isinstance(st.session_state.get(AS_NEW_KEY), dict) else None
+    store = st.session_state.get(AS_NEW_KEY)
+    as_new = store.get(did) if isinstance(store, dict) else None
     stale = merge_is_stale(draft, by_id)
     with st.container(border=True, key=f"zx_card_sg_{did}"):
         st.markdown(suggestion_html(draft, by_id, ws.timezone, lines), unsafe_allow_html=True)
-        caption = preview_caption(draft)
-        if caption:
-            st.caption(md_label(caption))
-        which_stories(draft, did)
-        rationale = shown_rationale(draft, by_id)
-        if rationale:
-            st.caption(md_label(rationale))
         if stale:
             st.caption(MERGE_STALE)
-        retire = conflict_choices(draft, did, by_id)
-        edited = st.text_area(WORDING_LABEL, value=shown_text(draft), key=f"sg_text_{did}", height=100,
-                              max_chars=EDIT_TEXT_MAX, disabled=stale)
         with st.container(horizontal=True, key=f"zx_actions_sg_{did}"):
             if stale:  # approving would be refused (merge_outdated): only turning it down is offered
                 approve = False
@@ -699,6 +780,16 @@ def suggestion_card(ws: Workspace, draft: Mapping, by_id: Mapping[str, dict],
         if as_new:
             st.info(as_new)
             approve_new = ui.write_button("Approve as a new preference", ws=ws, key=f"sg_as_new_{did}", type="primary")
+        with st.expander("Details", key=f"sg_details_{did}"):
+            html = details_html(draft)
+            if html:
+                st.markdown(html, unsafe_allow_html=True)
+            rationale = shown_rationale(draft, by_id)
+            if rationale:
+                st.caption(md_label(rationale))
+            edited = st.text_area(WORDING_LABEL, value=shown_text(draft), key=f"sg_text_{did}", height=100,
+                                  max_chars=EDIT_TEXT_MAX, disabled=stale)
+            retire = conflict_choices(draft, did, by_id)
         if approve or approve_new:
             approve_suggestion(ws, draft, edited, retire, as_new=approve_new)
         elif reject:
@@ -780,147 +871,197 @@ def reject_suggestion(ws: Workspace, draft: Mapping) -> None:
         st.rerun()
 
 
-# ---------------------------------------------------------------------------------------------- Active
+# ---------------------------------------------------------------------------------------------- How much
 
 
-def render_active(ws: Workspace, prefs: Any, prefs_error: api.ApiError | None) -> None:
-    add_form(ws)
+def volume_modes(volume: Mapping) -> tuple[list[str], dict[str, int | None], dict[str, str]]:
+    """(modes in the hub's order, cap per mode, hub label per mode); the three known modes when the hub sends none."""
+    rows = [m for m in dicts(volume.get("modes")) if one_line(m.get("mode"))]
+    modes = [one_line(m.get("mode")) for m in rows] or [m for m in VOLUME_ORDER]
+    caps = {one_line(m.get("mode")): as_int(m.get("cap")) for m in rows}
+    names = {one_line(m.get("mode")): one_line(m.get("label")) for m in rows}
+    return modes, caps, names
+
+
+def volume_label(mode: str, names: Mapping[str, str] | None = None) -> str:
+    return labels.VOLUME_LABELS.get(mode) or (names or {}).get(mode) or mode.replace("_", " ").capitalize()
+
+
+def render_how_much(ws: Workspace) -> None:
+    """One row: the three choices, the near-miss switch, the preview line and Use this setting."""
+    section("How much")
+    try:
+        settings = data.settings(ws.id)
+    except api.ApiError as exc:
+        ui.error_box("your 'how much' setting", exc, key="tn_settings")
+        return
+    volume = pick(settings, "volume") if isinstance(pick(settings, "volume"), Mapping) else {}
+    modes, caps, names = volume_modes(volume)
+    saved_mode = one_line(volume.get("mode")) or "standard"
+    saved_mode = saved_mode if saved_mode in modes else modes[0]
+    saved_shelf = bool(volume.get("near_miss_shelf"))
+    saved = (saved_mode, saved_shelf)
+    # Start from the saved setting, and follow it when it changes (an undo, another tab) rather than keep a stale pick.
+    if (st.session_state.get(VOLUME_SEEN_KEY) != saved or VOLUME_MODE_KEY not in st.session_state
+            or st.session_state.get(VOLUME_MODE_KEY) not in modes):
+        st.session_state[VOLUME_MODE_KEY] = saved_mode
+        st.session_state[VOLUME_SHELF_KEY] = saved_shelf
+        st.session_state[VOLUME_SEEN_KEY] = saved
+    with st.container(horizontal=True, key="zx_how_much", vertical_alignment="center", gap="small"):
+        mode = st.segmented_control("How many stories per briefing?", modes, key=VOLUME_MODE_KEY, required=True,
+                                    format_func=lambda m: volume_label(m, names), label_visibility="collapsed",
+                                    wrap=True)  # on a phone the choices wrap instead of hiding off the edge
+        shelf = st.toggle(SHELF_LABEL, key=VOLUME_SHELF_KEY)
+        chosen = (mode if mode in modes else saved_mode, bool(shelf))
+        unchanged = chosen == saved
+        if unchanged:
+            text = join(labels.volume_help(chosen[0], caps.get(chosen[0])), VOLUME_CURRENT)
+        else:
+            try:
+                preview = data.volume_preview(ws.id, chosen[0], chosen[1])
+                text = one_line(pick(preview, "text")) or VOLUME_NO_PREVIEW
+            except api.ApiError as exc:
+                text = ui.plain_error(exc)[0]
+        st.markdown(f'<div class="preview-line tn-preview">{esc(text)}</div>', unsafe_allow_html=True)
+        if unchanged:
+            save = False
+            st.button("Use this setting", key="tn_volume_save", disabled=True, help="Choose a different setting first.")
+        else:
+            save = ui.write_button("Use this setting", ws=ws, key="tn_volume_save", type="primary")
+    st.caption(VOLUME_CAPTION)
+    if save:
+        new_mode, new_shelf = chosen
+        result = ui.write(
+            ws, lambda token: api.set_volume(ws, token, new_mode, near_miss_shelf=new_shelf),
+            toast=lambda answer: join(f"Now: {volume_label(new_mode, names)}.", effective(answer, ws)),
+            undo=lambda answer: ("Changed how much you see.",
+                                 lambda token: api.set_volume(ws, token, saved_mode, near_miss_shelf=saved_shelf)))
+        if result is not None:
+            st.rerun()
+
+
+# ---------------------------------------------------------------------------------------------- Your rules
+
+
+def _filter_changed() -> None:
+    value = st.session_state.get(RULES_KEY)
+    links.set_focus(rules=value if value in RULE_FILTER_NAMES and value != "all" else None)
+
+
+def current_filter(focus_pref: str) -> None:
+    """Set the pill before it is drawn: a `rules` link (Briefing's "See your mutes", an old `section=muted` link)
+    selects its filter; a new `pref` link shows All, so its row is in view; otherwise the analyst's choice stays (All
+    at first). The analyst's own choice is mirrored into the link by the pills' callback, so the two never disagree."""
+    want = links.focus("rules")
+    want = want if want in RULE_FILTER_NAMES else None
+    if focus_pref and st.session_state.get(PREF_SEEN_KEY) != focus_pref:
+        st.session_state[PREF_SEEN_KEY] = focus_pref
+        want = want or "all"
+    if want and st.session_state.get(RULES_KEY) != want:
+        st.session_state[RULES_KEY] = want
+    elif st.session_state.get(RULES_KEY) not in RULE_FILTER_NAMES:
+        st.session_state[RULES_KEY] = "all"
+
+
+def open_add(ws: Workspace) -> None:
+    ui.open_dialog("add_rule", workspace_id=ws.id)
+
+
+def render_rules(ws: Workspace, prefs: Any, prefs_error: api.ApiError | None, mutes: Any,
+                 mutes_error: api.ApiError | None, stars: Any, stars_error: api.ApiError | None,
+                 waiting: set[str] | None = None) -> None:
+    """"Your rules · N": the pills, + Add a rule, and one row per rule with its ⋯ menu (`waiting`: the ids of the
+    Needs your OK cards, for the "a clearer wording is waiting" hint)."""
+    rules = rules_of(prefs, mutes, stars)
+    counts: dict[str, int | None] = dict(filter_counts(rules))
     if prefs_error is not None:
-        ui.error_box("your preferences", prefs_error, key="preferences")
-        return
-    warning = soft_cap_text(pick(prefs, "soft_cap"))
-    if warning:
-        st.info(md_label(warning))
-    live = live_preferences(prefs)
+        counts.update(all=None, more=None, less=None)
+    if mutes_error is not None:
+        counts.update(all=None, muted=None)
+    if stars_error is not None:
+        counts.update(all=None, watchlist=None)
+    total = counts.get("all")
+    section(f"Your rules · {total}" if total is not None else "Your rules")
     focus = one_line(links.focus("pref"))
-    if focus:
-        live.sort(key=lambda p: one_line(p.get("id")) != focus)  # stable: the linked one first, the rest in order
-    if not live:
-        st.markdown(empty_state(EMPTY_ACTIVE), unsafe_allow_html=True)
-    for pref in live:
-        preference_card(ws, pref, focused=bool(focus) and one_line(pref.get("id")) == focus)
-    ended_list(ws, ended_preferences(prefs), focus)
+    current_filter(focus)
+    with st.container(horizontal=True, key="zx_rules_bar", vertical_alignment="center", gap="small"):
+        code = st.pills("Show", [c for c, _ in RULE_FILTERS], key=RULES_KEY, selection_mode="single", required=True,
+                        format_func=lambda c: filter_label(c, counts), on_change=_filter_changed,
+                        label_visibility="collapsed", wrap=True)
+        ui.write_button(f"+ {ADD_LABEL}", ws=ws, key="tn_add", type="secondary", on_click=open_add, args=(ws,))
+    code = code if code in RULE_FILTER_NAMES else "all"
+    if code in FILTER_NOTES:
+        st.caption(FILTER_NOTES[code])
+    if code in ("muted", "watchlist"):
+        st.button("Open Coverage", key="tn_open_coverage", type="tertiary", icon=":material/arrow_forward:",
+                  on_click=links.go, args=("coverage",))
+    warning = soft_cap_text(pick(prefs, "soft_cap")) if prefs is not None else ""
+    if warning and code in ("all", "more", "less"):
+        st.info(md_label(warning))
+    for exc, what, key, codes in ((prefs_error, "your preferences", "preferences", ("all", "more", "less")),
+                                  (mutes_error, "your mutes", "tn_mutes", ("all", "muted")),
+                                  (stars_error, "your watchlist", "tn_stars", ("all", "watchlist"))):
+        if exc is not None and code in codes:
+            ui.error_box(what, exc, key=key)
+    shown = filtered_rules(rules, code, focus)
+    if not shown and not any(e is not None for e in (prefs_error, mutes_error, stars_error)):
+        st.markdown(empty_state(EMPTY_FILTER.get(code, EMPTY_RULES)), unsafe_allow_html=True)
+    for rule in shown:
+        rule_row(ws, rule, focused=bool(focus) and rule["kind"] == "pref" and rule["id"] == focus, waiting=waiting)
 
 
-def add_form(ws: Workspace) -> None:
-    """A standing preference in the analyst's words, active at once."""
-    earliest, default, latest = day_bounds(ws.timezone)
-    with st.form("pf_add", border=True):
-        st.markdown('<div class="rules-section" style="margin-top:0">Add a preference</div>', unsafe_allow_html=True)
-        direction = st.radio("What do you want?", DIRECTIONS, key="pf_add_dir", horizontal=True,
-                             format_func=labels.direction_label)
-        text = st.text_area("In your own words", key="pf_add_text", height=90, max_chars=ADD_TEXT_MAX,
-                            placeholder=ADD_PLACEHOLDER)
-        # A form cannot reveal the date when the box is ticked, so the two sit side by side.
-        box_col, date_col = st.columns([1, 1], vertical_alignment="bottom")
-        until_on = box_col.checkbox("Only for a while", key="pf_add_until_on")
-        until = date_col.date_input("Until", value=default, min_value=earliest, max_value=latest, key="pf_add_until",
-                                    help="Used only when 'Only for a while' is ticked.")
-        submitted = st.form_submit_button("Add", key="pf_add_save", type="primary", disabled=not owner.can_edit(ws))
-        st.caption(actions.ACTIVE_AT_ONCE)
-    ui.locked_hint(ws)
-    if not submitted:
-        return
-    clean = (text or "").strip()
-    if len(one_line(clean)) < TEXT_MIN:
-        st.info(TOO_SHORT)
-        return
-    expires = expires_iso(until, ws.timezone) if until_on and isinstance(until, date) else None
-    chosen = direction if direction in DIRECTIONS else "more"
-    result = ui.write(
-        ws, lambda token: api.add_preference(ws, token, direction=chosen, scope="standing", text=clean,
-                                             expires_at=expires),
-        toast=lambda answer: join(f"Added: {labels.direction_label(chosen)}.", effective(answer, ws)),
-        undo=lambda answer: _undo_new(ws, answer, "Added a preference."))
-    if result is not None:
-        st.session_state.pop("pf_add_text", None)
-        st.rerun()
+def rule_row(ws: Workspace, rule: Mapping, *, focused: bool = False, waiting: set[str] | None = None) -> None:
+    """One rule: its words on the left, its ⋯ menu on the right."""
+    ident = f"{rule['kind']}_{rule['id']}"
+    with st.container(horizontal=True, key=f"zx_rule_{ident}", vertical_alignment="top", gap="small"):
+        st.markdown(rule_html(rule, ws.timezone, focused, waiting), unsafe_allow_html=True)
+        # the ⋯ menu: its words stay the label for screen readers (feed.css shows only the icon)
+        menu = st.popover(MENU_LABEL, key=f"tn_menu_{ident}", on_change="rerun", type="tertiary",
+                          icon=":material/more_horiz:", help="What you can do with this rule")
+        with menu:
+            if menu.open:
+                rule_menu(ws, rule, f"tn_menu_{ident}")
 
 
-def _undo_new(ws: Workspace, answer: Any, text: str) -> tuple[str, Callable[[str], Any]] | None:
-    """Undo a new preference: retire it as undone."""
-    new_id = one_line(pick(answer, "preference.id", "precedent.id"))
-    if not new_id:
-        return None
-    return text, lambda token: api.rule_action(ws, token, new_id, "retire", {"reason": "undone"})
-
-
-def preference_html(pref: Mapping, tz: str, focused: bool = False) -> str:
-    example = example_line(pref)
-    return (
-        f'<div class="pref-card{" zx-focus" if focused else ""}">'
-        '<div class="loop-card-head">' + chip(labels.direction_label(pref.get("direction")), "suggested")
-        + f'<span class="pref-meta">{esc(head_meta(pref, tz))}</span></div>'
-        f'<div class="pref-text">{esc(labels.preference_text(pref))}</div>'
-        + (f'<div class="pref-meta">{esc(example)}</div>' if example else "")
-        + f'<div class="pref-stats">{esc(stats_line(pref))}</div></div>'
-    )
-
-
-def preference_card(ws: Workspace, pref: Mapping, *, focused: bool = False) -> None:
-    pid = one_line(pref.get("id"))
-    status = status_of(pref)
-    stats = pref.get("stats") if isinstance(pref.get("stats"), Mapping) else {}
-    clicked: str | None = None
-    with st.container(border=True, key=f"zx_card_pf_{pid}"):
-        st.markdown(preference_html(pref, ws.timezone, focused), unsafe_allow_html=True)
-        if stats.get("dormant") and status == "active":
-            st.markdown('<div class="pref-meta">Not used in 30 days. Still useful?</div>', unsafe_allow_html=True)
-            if ui.write_button("End it", ws=ws, key=f"pf_end_it_{pid}", type="tertiary"):
-                clicked = "remove"
-        mute = stats.get("looks_like_mute")
-        if isinstance(mute, Mapping) and one_line(mute.get("ref")) and one_line(mute.get("kind")):
+def rule_menu(ws: Workspace, rule: Mapping, pop: str) -> None:
+    """The ⋯ menu's items (drawn only while it is open); each closes the menu and opens its dialog or writes, in its
+    button's callback (ui.menu_item)."""
+    row = rule["row"]
+    ident = f"{rule['kind']}_{rule['id']}"
+    if rule["kind"] == "pref":
+        if status_of(row) == "paused":
+            ui.menu_item("Resume", ws=ws, key=f"tn_resume_{ident}", popover_key=pop, action=resume, args=(ws, row))
+        ui.menu_item("Edit", ws=ws, key=f"tn_edit_{ident}", popover_key=pop, action=ui.open_dialog,
+                     args=("pref_edit",), kwargs={"workspace_id": ws.id, "pref": dict(row)})
+        ui.menu_item("End date", ws=ws, key=f"tn_end_{ident}", popover_key=pop, action=ui.open_dialog,
+                     args=("pref_end",), kwargs={"workspace_id": ws.id, "pref": dict(row)})
+        ui.menu_item("Remove", ws=ws, key=f"tn_remove_{ident}", popover_key=pop, action=confirm_remove,
+                     args=(ws, row))
+        mute = looks_like_mute(row)
+        if mute:
             label = one_line(pick(mute, "label", "ref"))
-            st.markdown(f'<div class="pref-meta">{esc(looks_like_mute_text(mute))}</div>', unsafe_allow_html=True)
-            if ui.write_button(f"Mute {label}", ws=ws, key=f"pf_mute_instead_{pid}", type="tertiary"):
-                actions.open_mute(ws, kind=one_line(mute.get("kind")), ref=one_line(mute.get("ref")), label=label,
-                                  module=one_line(mute.get("module")) or None)
-        kept = mostly_kept_out(stats)
-        if kept:
-            st.caption(md_label(f"Mostly kept out: {kept}"))
-        wording = pref.get("wording")
-        if isinstance(wording, Mapping) and status_of(wording, "queued") == "proposed":
-            st.markdown('<div class="pref-meta">A clearer wording is waiting in Needs your OK.</div>',
-                        unsafe_allow_html=True)
-            st.button("See it", key=f"pf_wording_{pid}", type="tertiary", on_click=select_section, args=("ok",))
-        with st.container(horizontal=True, key=f"zx_actions_pf_{pid}"):
-            if status == "paused":
-                if ui.write_button("Resume", ws=ws, key=f"pf_resume_{pid}", type="tertiary"):
-                    clicked = "resume"
-            elif ui.write_button("Pause", ws=ws, key=f"pf_pause_{pid}", type="tertiary"):
-                clicked = "pause"
-            if ui.write_button("Edit", ws=ws, key=f"pf_edit_{pid}", type="tertiary"):
-                clicked = "edit"
-            if ui.write_button("End date", ws=ws, key=f"pf_end_{pid}", type="tertiary"):
-                clicked = "end"
-            if ui.write_button("Remove", ws=ws, key=f"pf_remove_{pid}", type="tertiary"):
-                clicked = "remove"
-        if clicked:
-            card_action(ws, pref, clicked)
+            ui.menu_item(f"Mute {label} instead", ws=ws, key=f"tn_mute_instead_{ident}", popover_key=pop,
+                         action=actions.open_mute, args=(ws,),
+                         kwargs={"kind": one_line(mute.get("kind")), "ref": one_line(mute.get("ref")), "label": label,
+                                 "module": one_line(mute.get("module")) or None})
+    elif rule["kind"] == "mute":
+        ui.menu_item("Unmute", ws=ws, key=f"tn_unmute_{ident}", popover_key=pop, action=actions.open_unmute,
+                     args=(ws, dict(row)))
+        st.caption(labels.STILL_COLLECTED)
+    else:
+        entity_id = one_line(row.get("entity_id"))
+        name = one_line(pick(row, "label", "name", "entity_id"))
+        ui.menu_item("Remove from watchlist", ws=ws, key=f"tn_unstar_{ident}", popover_key=pop, action=actions.unstar,
+                     args=(ws, entity_id, name), kwargs={"rerun": False})
 
 
-def card_action(ws: Workspace, pref: Mapping, action: str) -> None:
-    """One card button; writes run below the buttons, so an error shows in the card, not squeezed into the row."""
+def resume(ws: Workspace, pref: Mapping) -> None:
+    """Resume a paused preference (a menu item's callback); Undo pauses it again."""
     pid = one_line(pref.get("id"))
-    if action == "edit":
-        ui.open_dialog("pref_edit", workspace_id=ws.id, pref=dict(pref))
-    elif action == "end":
-        ui.open_dialog("pref_end", workspace_id=ws.id, pref=dict(pref))
-    elif action == "remove":
-        confirm_remove(ws, pref)
-    elif action == "pause":
-        result = ui.write(ws, lambda token: api.rule_action(ws, token, pid, "pause", {}), toast=PAUSED_TOAST,
-                          undo=lambda answer: ("Paused a preference.",
-                                               lambda token: api.rule_action(ws, token, pid, "resume", {})))
-        if result is not None:
-            st.rerun()
-    elif action == "resume":
-        result = ui.write(ws, lambda token: api.rule_action(ws, token, pid, "resume", {}),
-                          toast=lambda answer: join("Resumed.", effective(answer, ws)),
-                          undo=lambda answer: ("Resumed a preference.",
-                                               lambda token: api.rule_action(ws, token, pid, "pause", {})))
-        if result is not None:
-            st.rerun()
+    ui.write(ws, lambda token: api.rule_action(ws, token, pid, "resume", {}),
+             toast=lambda answer: join("Resumed.", effective(answer, ws)),
+             undo=lambda answer: ("Resumed a preference.", lambda token: api.rule_action(ws, token, pid, "pause", {})),
+             in_callback=True)
 
 
 def confirm_remove(ws: Workspace, pref: Mapping) -> None:
@@ -934,46 +1075,59 @@ def confirm_remove(ws: Workspace, pref: Mapping) -> None:
     ui.ask_confirm(REMOVE_TITLE, REMOVE_MESSAGE, "Remove", remove, danger=True, detail=remove_detail(pref))
 
 
-def remove_detail(pref: Mapping) -> str:
-    """Which preference Remove ends, in full (WF5 AW-3): its direction, its words and its example story, so a "more"
-    and a "less" made from the same story can be told apart: 'Remove "Show me less like this: Stories like this
-    example. (Example: The Hidden Failure Domain ...)"?'"""
-    words = clip(labels.preference_text(pref), 200).rstrip()
-    head = labels.direction_label(pref.get("direction"))
-    example = one_line(pick(pref.get("example"), "title"))
-    text = f"{head}: {words}" if words else head
-    if example:
-        text += f" (Example: {clip(example, 120)})"
-    return f"Remove “{text}”?"
+# ---------------------------------------------------------------------------------------------- Ended
 
 
-def ended_list(ws: Workspace, ended: list[dict], focus: str) -> None:
-    if not ended:
+def render_ended(ws: Workspace, prefs: Any, mutes: Any) -> None:
+    """"Ended · N", collapsed and lazy: ended preferences (Bring back) and removed mutes (Bring back the last 7 days),
+    the most recently ended first, 100 at most. A link to an ended preference opens it once."""
+    rows = ended_rows(prefs, mutes)
+    if not rows:
         return
-    ids = [one_line(p.get("id")) for p in ended]
+    focus = one_line(links.focus("pref"))
+    ids = [one_line(r.get("id")) for kind, r in rows if kind == "pref"]
     if focus and focus in ids and st.session_state.get(ENDED_FOCUS_KEY) != focus:
         st.session_state[ENDED_KEY] = True  # a link to an ended preference opens the list once
         st.session_state[ENDED_FOCUS_KEY] = focus
-    box = st.expander(f"Ended preferences · {len(ended)}", key=ENDED_KEY, on_change="rerun")
+    box = st.expander(f"Ended · {len(rows)}", key=ENDED_KEY, on_change="rerun")
     if not box.open:
         return
     if focus in ids:
-        ended = sorted(ended, key=lambda p: one_line(p.get("id")) != focus)
+        rows = sorted(rows, key=lambda kr: not (kr[0] == "pref" and one_line(kr[1].get("id")) == focus))
     with box:
-        for pref in ended[:ENDED_MAX]:
-            pid = one_line(pref.get("id"))
-            when = fmt_date(pref.get("retired_at"), ws.timezone) if pref.get("retired_at") else ""
-            meta = " · ".join(p for p in (ended_reason(pref), when if when != "—" else "") if p)
-            text_col, button_col = st.columns([5, 1], vertical_alignment="center")
-            text_col.markdown(
-                f'<div class="pref-card{" zx-focus" if pid == focus else ""}">'
-                f'<div class="pref-text">{esc(labels.preference_text(pref))}</div>'
-                f'<div class="pref-meta">{esc(meta)}</div></div>', unsafe_allow_html=True)
-            with button_col:
-                if ui.write_button("Bring back", ws=ws, key=f"pf_bring_back_{pid}", type="tertiary"):
-                    bring_back_preference(ws, pref)
-        if len(ended) > ENDED_MAX:
-            st.caption(f"and {len(ended) - ENDED_MAX} more ended earlier")
+        for kind, row in rows[:ENDED_MAX]:
+            if kind == "pref":
+                ended_preference(ws, row, focused=one_line(row.get("id")) == focus)
+            else:
+                ended_mute(ws, row)
+        if len(rows) > ENDED_MAX:
+            st.caption(f"and {len(rows) - ENDED_MAX} more ended earlier")
+
+
+def ended_preference(ws: Workspace, pref: Mapping, *, focused: bool = False) -> None:
+    pid = one_line(pref.get("id"))
+    when = fmt_date(pref.get("retired_at"), ws.timezone) if pref.get("retired_at") else ""
+    meta = " · ".join(p for p in (kind_label(pref), ended_reason(pref), when if when != "—" else "") if p)
+    with st.container(horizontal=True, key=f"zx_ended_pref_{pid}", vertical_alignment="center", gap="small"):
+        st.markdown(f'<div class="pref-card{" zx-focus" if focused else ""}">'
+                    f'<div class="pref-text">{esc(labels.preference_text(pref))}</div>'
+                    f'<div class="pref-meta">{esc(meta)}</div></div>', unsafe_allow_html=True)
+        if ui.write_button("Bring back", ws=ws, key=f"pf_bring_back_{pid}", type="tertiary"):
+            bring_back_preference(ws, pref)
+
+
+def ended_mute(ws: Workspace, mute: Mapping) -> None:
+    mid = one_line(mute.get("id"))
+    when = fmt_date(mute.get("removed_at"), ws.timezone) if mute.get("removed_at") else ""
+    meta = " · ".join(p for p in (MUTE_KIND_CHIPS.get(one_line(mute.get("kind")), "Muted"),
+                                  f"removed {when}" if when and when != "—" else "") if p)
+    with st.container(horizontal=True, key=f"zx_ended_mute_{mid}", vertical_alignment="center", gap="small"):
+        st.markdown(f'<div class="pref-card"><div class="pref-text">{esc(one_line(pick(mute, "label", "ref")))}</div>'
+                    f'<div class="pref-meta">{esc(meta)}</div></div>', unsafe_allow_html=True)
+        if mute.get("brought_back"):
+            st.caption("Brought back")
+        elif ui.write_button("Bring back the last 7 days", ws=ws, key=f"pf_bring_back_m{mid}", type="tertiary"):
+            actions.bring_back(ws, mute)
 
 
 def bring_back_preference(ws: Workspace, pref: Mapping) -> None:
@@ -1002,6 +1156,49 @@ def dialog_buttons(ws: Workspace, save_label: str) -> tuple[bool, bool]:
 def close_and_rerun() -> None:
     ui.close_dialog()
     st.rerun()
+
+
+def add_rule_dialog(workspace_id: str) -> None:
+    """+ Add a rule: more, less or exactly as I write it, in the analyst's own words, optionally only for a while; a
+    standing preference, active at once (Undo ends it)."""
+    ws = workspace_of(workspace_id)
+    if ws is None:
+        ws_missing()
+        return
+    earliest, default, latest = day_bounds(ws.timezone)
+    direction = st.radio("What do you want?", DIRECTIONS, key="dlg_direction", format_func=labels.direction_label)
+    text = st.text_area("In your own words", key="dlg_text", height=90, max_chars=ADD_TEXT_MAX,
+                        placeholder=ADD_PLACEHOLDER)
+    until = None
+    if st.checkbox("Only for a while", key="dlg_until_on"):
+        until = st.date_input("Until", value=default, min_value=earliest, max_value=latest, key="dlg_until")
+    save, cancel = dialog_buttons(ws, "Add")
+    st.caption(actions.ACTIVE_AT_ONCE)
+    if cancel:
+        close_and_rerun()
+    if not save:
+        return
+    clean = (text or "").strip()
+    if len(one_line(clean)) < TEXT_MIN:
+        st.info(TOO_SHORT)
+        return
+    expires = expires_iso(until, ws.timezone) if isinstance(until, date) else None
+    chosen = direction if direction in DIRECTIONS else "more"
+    result = ui.write(
+        ws, lambda token: api.add_preference(ws, token, direction=chosen, scope="standing", text=clean,
+                                             expires_at=expires),
+        toast=lambda answer: join(f"Added: {labels.direction_label(chosen)}.", effective(answer, ws)),
+        undo=lambda answer: _undo_new(ws, answer, "Added a preference."))
+    if result is not None:
+        close_and_rerun()
+
+
+def _undo_new(ws: Workspace, answer: Any, text: str) -> tuple[str, Callable[[str], Any]] | None:
+    """Undo a new preference: retire it as undone."""
+    new_id = one_line(pick(answer, "preference.id", "precedent.id"))
+    if not new_id:
+        return None
+    return text, lambda token: api.rule_action(ws, token, new_id, "retire", {"reason": "undone"})
 
 
 def edit_dialog(workspace_id: str, pref: dict) -> None:
@@ -1130,170 +1327,7 @@ def reactivate_dialog(workspace_id: str, pref: dict) -> None:
         close_and_rerun()
 
 
-# ---------------------------------------------------------------------------------------------- Muted, Watchlist
-
-
-def mute_meta(mute: Mapping, tz: str) -> str:
-    """'since Oct 2 · hid 12 this week (30 in all) · <note>'."""
-    parts = []
-    since = fmt_date(mute.get("created_at"), tz) if mute.get("created_at") else ""
-    if since and since != "—":
-        parts.append(f"since {since}")
-    parts.append(f"hid {as_int(mute.get('hidden_7d')) or 0} this week ({as_int(mute.get('hidden_total')) or 0} in all)")
-    note = one_line(mute.get("note"))
-    if note:
-        parts.append(note)
-    return " · ".join(parts)
-
-
-def render_muted(ws: Workspace, body: Any, error: api.ApiError | None) -> None:
-    st.caption(MUTED_CAPTION)
-    if st.button("Show what they hid", key="pf_show_hidden", type="tertiary"):
-        links.go("filtered", view="muted")
-    if error is not None:
-        ui.error_box("your mutes", error, key="pf_mutes")
-        return
-    active = active_mutes(body)
-    if pick(body, "has_more") is True:
-        listed = len(dicts(pick(body, "mutes", default=[])))
-        st.caption(f"The newest {listed} of {plural(as_int(pick(body, 'total')) or listed, 'mute')} are listed.")
-    if not active:
-        st.markdown(empty_state(EMPTY_MUTED), unsafe_allow_html=True)
-    known = {kind for kind, _ in MUTE_GROUPS}
-    groups = [(title, [m for m in active if one_line(m.get("kind")).lower() == kind]) for kind, title in MUTE_GROUPS]
-    groups.append(("Other", [m for m in active if one_line(m.get("kind")).lower() not in known]))
-    for title, group in groups:
-        if not group:
-            continue
-        st.markdown(f'<div class="rules-section">{esc(title)} · {len(group)}</div>', unsafe_allow_html=True)
-        for mute in group:
-            mid = one_line(mute.get("id"))
-            text_col, button_col = st.columns([5, 1], vertical_alignment="center")
-            text_col.markdown(
-                f'<div class="pref-text">{esc(one_line(pick(mute, "label", "ref")))}</div>'
-                f'<div class="pref-meta">{esc(mute_meta(mute, ws.timezone))}</div>', unsafe_allow_html=True)
-            with button_col:
-                if ui.write_button("Unmute", ws=ws, key=f"pf_unmute_{mid}", type="tertiary"):
-                    actions.open_unmute(ws, mute)
-    removed = removed_mutes(body)
-    if not removed:
-        return
-    box = st.expander(f"Removed mutes · {len(removed)}", key=REMOVED_MUTES_KEY, on_change="rerun")
-    if not box.open:
-        return
-    with box:
-        for mute in removed:
-            mid = one_line(mute.get("id"))
-            when = fmt_date(mute.get("removed_at"), ws.timezone) if mute.get("removed_at") else ""
-            meta = " · ".join(p for p in (one_line(labels.MUTE_KIND_LABELS.get(one_line(mute.get("kind")), "")),
-                                          f"removed {when}" if when and when != "—" else "") if p)
-            text_col, button_col = st.columns([5, 2], vertical_alignment="center")
-            text_col.markdown(
-                f'<div class="pref-text">{esc(one_line(pick(mute, "label", "ref")))}</div>'
-                f'<div class="pref-meta">{esc(meta)}</div>', unsafe_allow_html=True)
-            with button_col:
-                if mute.get("brought_back"):
-                    st.caption("Brought back")
-                elif ui.write_button("Bring back the last 7 days", ws=ws, key=f"pf_bring_back_m{mid}",
-                                     type="tertiary"):
-                    actions.bring_back(ws, mute)
-
-
-def star_meta(star: Mapping) -> str:
-    parts = [f"{plural(as_int(star.get('matches_7d')) or 0, 'story', 'stories')} this week, "
-             f"{as_int(star.get('in_briefing_7d')) or 0} in your briefing"]
-    note = one_line(star.get("note"))
-    if note:
-        parts.append(note)
-    return " · ".join(parts)
-
-
-def render_watchlist(ws: Workspace, body: Any, error: api.ApiError | None) -> None:
-    st.caption(labels.STAR_PROMISE)
-    if st.button("Find companies in Coverage", key="pf_find_coverage", type="tertiary"):
-        links.go("coverage")
-    if error is not None:
-        ui.error_box("your watchlist", error, key="pf_stars")
-        return
-    stars = active_stars(body)
-    if not stars:
-        st.markdown(empty_state(EMPTY_WATCHLIST), unsafe_allow_html=True)
-        return
-    for star in stars:
-        sid = one_line(star.get("id"))
-        entity_id = one_line(star.get("entity_id"))
-        name = one_line(pick(star, "label", "name", "entity_id"))
-        text_col, button_col = st.columns([5, 1], vertical_alignment="center")
-        text_col.markdown(f'<div class="pref-text">{esc(name)}</div>'
-                          f'<div class="pref-meta">{esc(star_meta(star))}</div>', unsafe_allow_html=True)
-        with button_col:
-            if ui.write_button("Remove", ws=ws, key=f"pf_unstar_{sid}", type="tertiary") and entity_id:
-                actions.unstar(ws, entity_id, name)
-
-
-# ---------------------------------------------------------------------------------------------- How much
-
-
-def volume_modes(volume: Mapping) -> tuple[list[str], dict[str, int | None], dict[str, str]]:
-    """(modes in the hub's order, cap per mode, hub label per mode); the three known modes when the hub sends none."""
-    rows = [m for m in dicts(volume.get("modes")) if one_line(m.get("mode"))]
-    modes = [one_line(m.get("mode")) for m in rows] or [m for m in VOLUME_ORDER]
-    caps = {one_line(m.get("mode")): as_int(m.get("cap")) for m in rows}
-    names = {one_line(m.get("mode")): one_line(m.get("label")) for m in rows}
-    return modes, caps, names
-
-
-def volume_label(mode: str, names: Mapping[str, str] | None = None) -> str:
-    return labels.VOLUME_LABELS.get(mode) or (names or {}).get(mode) or mode.replace("_", " ").capitalize()
-
-
-def render_how_much(ws: Workspace) -> None:
-    try:
-        settings = data.settings(ws.id)
-    except api.ApiError as exc:
-        ui.error_box("your 'how much' setting", exc, key="pf_settings")
-        return
-    volume = pick(settings, "volume") if isinstance(pick(settings, "volume"), Mapping) else {}
-    modes, caps, names = volume_modes(volume)
-    saved_mode = one_line(volume.get("mode")) or "standard"
-    saved_mode = saved_mode if saved_mode in modes else modes[0]
-    saved_shelf = bool(volume.get("near_miss_shelf"))
-    saved = (saved_mode, saved_shelf)
-    # Start from the saved setting, and follow it when it changes (an undo, another tab) rather than keep a stale pick.
-    if (st.session_state.get(VOLUME_SEEN_KEY) != saved or VOLUME_MODE_KEY not in st.session_state
-            or st.session_state.get(VOLUME_MODE_KEY) not in modes):
-        st.session_state[VOLUME_MODE_KEY] = saved_mode
-        st.session_state[VOLUME_SHELF_KEY] = saved_shelf
-        st.session_state[VOLUME_SEEN_KEY] = saved
-    mode = st.radio("How many stories per briefing?", modes, key=VOLUME_MODE_KEY,
-                    format_func=lambda m: volume_label(m, names),
-                    captions=[labels.volume_help(m, caps.get(m)) for m in modes])
-    shelf = st.toggle("Show near misses under each briefing", key=VOLUME_SHELF_KEY)
-    chosen = (mode if mode in modes else saved_mode, bool(shelf))
-    unchanged = chosen == saved
-    if unchanged:
-        st.markdown(f'<div class="preview-line">{esc(VOLUME_CURRENT)}</div>', unsafe_allow_html=True)
-    else:
-        try:
-            preview = data.volume_preview(ws.id, chosen[0], chosen[1])
-            text = one_line(pick(preview, "text")) or VOLUME_NO_PREVIEW
-        except api.ApiError as exc:
-            text = ui.plain_error(exc)[0]
-        st.markdown(f'<div class="preview-line">{esc(text)}</div>', unsafe_allow_html=True)
-    if unchanged:
-        st.button("Use this setting", key="pf_volume_save", disabled=True, help="Choose a different setting first.")
-    elif ui.write_button("Use this setting", ws=ws, key="pf_volume_save", type="primary"):
-        new_mode, new_shelf = chosen
-        result = ui.write(
-            ws, lambda token: api.set_volume(ws, token, new_mode, near_miss_shelf=new_shelf),
-            toast=lambda answer: join(f"Now: {volume_label(new_mode, names)}.", effective(answer, ws)),
-            undo=lambda answer: ("Changed how much you see.",
-                                 lambda token: api.set_volume(ws, token, saved_mode, near_miss_shelf=saved_shelf)))
-        if result is not None:
-            st.rerun()
-    st.caption(VOLUME_CAPTION)
-
-
+ui.register_dialog("add_rule", ADD_LABEL, add_rule_dialog, width="medium")
 ui.register_dialog("pref_edit", "Edit preference", edit_dialog, width="medium")
 ui.register_dialog("pref_end", "End date", end_date_dialog, width="small")
 ui.register_dialog("pref_reactivate", "Bring it back", reactivate_dialog, width="small")

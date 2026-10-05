@@ -174,11 +174,40 @@ class CardHtmlTests(unittest.TestCase):
         self.assertEqual(len(feed_view.shelf_rows(shelves, "near")), 2)
         self.assertEqual(feed_view.shelf_rows({"shelves": None}, "near"), [])
         self.assertEqual(feed_view.shelf_rows({"shelves": {"near_misses": None}}, "near"), [])
-        row = dict(shelves["shelves"]["watchlist"][0], source_label="dcd-news", url="javascript:x")
-        html = feed_view.shelf_row_html(row, TZ, with_companies=False)
-        self.assertNotIn("dcd-news", html)
-        self.assertNotIn("javascript", html)
-        self.assertNotIn("About", html)
+        # a shelf row is the shared left-out row; it carries the briefing's bar for its Why
+        row = feed_view.shelf_row(shelves["shelves"]["near_misses"][0], shelves)
+        self.assertEqual(row["bar"], 70)
+        self.assertEqual(feed_view.shelf_row({"bar": 80}, shelves)["bar"], 80)
+        self.assertNotIn("bar", feed_view.shelf_row({}, {}))
+
+
+class ReceiptTests(unittest.TestCase):
+    """The tuning receipt under a briefing's summary (docs/SPEC-SIMPLIFY.md 2.2, from the edition's `tuning`)."""
+
+    def receipt(self, **tuning) -> str:
+        return feed_view.receipt_text({"tuning": tuning})
+
+    def test_the_specs_sentence(self):
+        self.assertEqual(self.receipt(brought_in=2, kept_out=1, raised=0, lowered=0, rules_used=2, ratings_used=3),
+                         "Your tuning here: 2 stories brought in and 1 kept out by your rules; the editor used 3 of your "
+                         "ratings.")
+
+    def test_only_counts_above_zero(self):
+        self.assertEqual(self.receipt(brought_in=1), "Your tuning here: 1 story brought in by your rules.")
+        self.assertEqual(self.receipt(kept_out=4, raised=2, lowered=1),
+                         "Your tuning here: 4 stories kept out, 2 raised and 1 lowered by your rules.")
+        self.assertEqual(self.receipt(ratings_used=1), "Your tuning here: the editor used 1 of your ratings.")
+        self.assertEqual(self.receipt(rules_used=2), "Your tuning here: the editor applied 2 of your rules.")
+        self.assertEqual(self.receipt(brought_in=0, kept_out=0, raised=0, lowered=0, rules_used=0, ratings_used=0), "")
+        self.assertEqual(feed_view.receipt_text({}), "")  # an older hub
+        self.assertEqual(self.receipt(brought_in="x", kept_out=-2), "")
+
+    def test_plain_words(self):
+        for text in (self.receipt(brought_in=2, kept_out=1, ratings_used=3), self.receipt(rules_used=4)):
+            self.assertEqual(labels.find_jargon(text), [])
+        head = feed_view.head_html({"items": [], "tuning": {"kept_out": 3}}, TZ)
+        self.assertIn('<div class="edition-receipt">Your tuning here: 3 stories kept out by your rules.</div>', head)
+        self.assertNotIn("edition-receipt", feed_view.head_html({"items": []}, TZ))
 
 
 class TargetTests(unittest.TestCase):

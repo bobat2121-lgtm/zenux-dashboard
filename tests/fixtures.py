@@ -917,7 +917,7 @@ def brief(stage: str = "live") -> dict:
             {"id": "s-scores", "module": None, "heading": "Scores",
              "parts": [{"kind": "scores", "title": "Scores", "lines": [
                  {"id": "L-0a1b2c3d4e", "text": "90+: Top story", "original": "90+: Lead item"},
-                 {"id": "L-0b1c2d3e4f", "text": "40-69: Near miss; shows under Filtered out",
+                 {"id": "L-0b1c2d3e4f", "text": "40-69: Near miss; listed under each briefing in Left out",
                   "original": "40-69: Watch; shows on the Rejected tab"}]}]},
             {"id": "s-ai-infrastructure", "module": "ai-infra",
              "heading": "AI infrastructure: data centers, colocation, AI cloud, bitcoin miners",
@@ -1057,6 +1057,35 @@ def search_hit(edition_id: int, item_id: int, headline: str, hours: float = 300)
     return {"edition_id": edition_id, "item_id": item_id, "rank": 1, "headline": headline, "event_id": 5000 + item_id,
             "story_id": f"s-{item_id}", "title": headline, "url": f"https://example.com/hit-{item_id}",
             "published_at": published, "briefing_label": briefing_name(published)["briefing_label"]}
+
+
+def tuneup(*, due: bool = False, items: list[dict] | None = None, week: str = "2026-W40", rated: int = 0,
+           dismissed: bool = False) -> dict:
+    """GET /tuneup (schema 11, docs/SPEC-SIMPLIFY.md 1.5): by default not due (nothing to rate)."""
+    return {"due": due, "week": week, "dismissed": dismissed, "rated_7d": rated, "target": 5,
+            "items": list(items or [])}
+
+
+def tuneup_item(event_id: int, *, item_id: int | None = None, title: str = "A story to rate", decision: str = "rejected",
+                score: int | None = 66, bar: int | None = 70, module: str = "ai-infra",
+                reason_text: str | None = "Near miss", hours: float = 30) -> dict:
+    """One story of GET /tuneup (docs/SPEC-SIMPLIFY.md 1.5)."""
+    return {"event_id": event_id, "item_id": item_id, "title": title, "url": f"https://example.com/tune-{event_id}",
+            "source_label": "Data Center Dynamics", "module": module,
+            "area_label": "AI infrastructure" if module == "ai-infra" else "Defense unmanned",
+            "published_at": iso(hours), "decision": decision, "score": score, "bar": bar, "reason_text": reason_text}
+
+
+def tuneup_due(n: int = 5) -> dict:
+    """A due tune-up: two stories that made a briefing (lowest scores first) and three left out just under the bar."""
+    items = [tuneup_item(9101, item_id=1201, title="Neocloud adds a small site", decision="selected", score=74,
+                         reason_text=None),
+             tuneup_item(9102, item_id=1202, title="Army orders spare parts", decision="selected", score=76,
+                         module="defense-unmanned", reason_text=None),
+             tuneup_item(9103, title="Miner signs a hosting letter", score=66),
+             tuneup_item(9104, title="Grid study for a new campus", score=65, reason_text="Cut for space"),
+             tuneup_item(9105, title="Drone maker raises capital", score=64, module="defense-unmanned")]
+    return tuneup(due=True, items=items[:n])
 
 
 # ------------------------------------------------------------------------------------------------ write answers

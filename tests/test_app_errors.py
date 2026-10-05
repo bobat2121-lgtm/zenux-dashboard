@@ -12,11 +12,10 @@ from helpers import (AppCase, BETA_HUB, FakeResponse, OWNER, PILOT_AI, PILOT_DEF
                      RUN_DEF, SECRETS, hub_defaults, one_workspace, two_workspaces)
 from zenux_dashboard import links
 
-ANALYST_TABS = ("briefing", "filtered", "preferences", "coverage")
+ANALYST_TABS = ("briefing", "tuning", "coverage")
 EXPECTED = {
     "briefing": "Couldn't load your briefings.",
-    "filtered": "Couldn't load filtered-out stories.",
-    "preferences": "Couldn't load your preferences.",
+    "tuning": "Couldn't load your preferences.",
     "coverage": "Couldn't load coverage areas.",
 }
 UNREACHABLE = "ZENUX can't be reached right now. This is usually brief. Try again in a minute."
@@ -76,6 +75,7 @@ class ErrorStateTests(AppCase):
                                  "correction": [1]}, "junk"], "shelves": "x", "corrections": [None]},
             "junk", {"items": None}]})
         self.http.on("GET", PILOT_HUB + "/rejected", {"items": [{"title": None, "score": "n/a", "subjects": "x"}, 7]})
+        self.http.on("GET", PILOT_HUB + "/tuneup", {"due": True, "items": [None, {"event_id": "x"}, {"title": 3}]})
         self.http.on("GET", PILOT_HUB + "/preferences", {"preferences": [{"id": None}, {"id": "R-1", "stats": 4}, "x"],
                                                          "suggestions": "x", "summary_7d": None})
         self.http.on("GET", PILOT_HUB + "/modules", {"modules": [{"id": "ai-infra", "counts": "x"}, "x"]})
@@ -152,19 +152,21 @@ class HubRefusalTests(AppCase):
     def test_approving_a_suggestion_handled_elsewhere(self):
         self.http.on("POST", PILOT_HUB + "/rules/43/approve", FakeResponse(
             409, {"error": "draft_closed", "message": "rule draft 43 is approved", "status": "approved"}))
-        at = self.app(tab="preferences", pin=PIN, query={"section": "ok"})
+        at = self.app(tab="tuning", pin=PIN)
         at.button(key="sg_approve_43").click().run()
         self.assert_clean(at)
         self.assertIn("Not saved. This suggestion was already handled meanwhile. Refresh to see where it stands.",
                       self.texts(at, "error"))
         self.assert_plain(at)
 
-    def test_pausing_a_replaced_preference(self):
-        self.http.on("POST", PILOT_HUB + "/rules/R-0014/pause", FakeResponse(409, {
+    def test_removing_a_replaced_preference(self):
+        self.http.on("POST", PILOT_HUB + "/rules/R-0014/retire", FakeResponse(409, {
             "error": "superseded",
             "message": "A newer version, R-0019, replaced this preference. Change that one instead."}))
-        at = self.app(tab="preferences", pin=PIN, query={"section": "active"})
-        at.button(key="pf_pause_R-0014").click().run()
+        at = self.app(tab="tuning", pin=PIN, state={"tn_menu_pref_R-0014": True})
+        at.session_state["tn_menu_pref_R-0014"] = True
+        at.button(key="tn_remove_pref_R-0014").click().run()
+        at.button(key="dlg_save").click().run()  # the confirmation
         self.assert_clean(at)
         self.assertIn("Not saved. A newer wording replaced this preference. Change that one instead.",
                       self.texts(at, "error"))
@@ -174,10 +176,10 @@ class HubRefusalTests(AppCase):
     def test_the_mute_preview_of_a_removed_source(self):
         self.http.on("GET", PILOT_HUB + "/mutes/preview", FakeResponse(
             404, {"error": "unknown_source", "message": "No source dcd-news in ai-infra."}))
-        at = self.app(tab="filtered", pin=PIN, run=False)
-        self.open_popover(at, "zx_more_r7102")
+        at = self.app(pin=PIN, run=False)
+        self.open_popover(at, "zx_more_i1201")
         at.run()
-        at.button(key="act_mute_source_r7102").click().run()
+        at.button(key="act_mute_source_i1201").click().run()
         self.assert_clean(at)
         self.assertIn("Couldn't load the 7-day preview. That source is no longer in your coverage. Refresh and try "
                       "again.", self.texts(at, "caption"))

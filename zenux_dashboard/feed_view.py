@@ -1,26 +1,34 @@
 """Briefing: the analyst's published briefings, newest first (GET /editions?limit=5&before=), with card actions.
 
-Page, top to bottom (docs/SPEC-PHASE03-UI.md section 5): the plain status line and the new-briefing check (status),
-the search box (always visible: matching stories of the briefings loaded below show as full cards, and GET
-/editions/search lists the matches of earlier briefings of the last 90 days under them, each with Show it), a
-deep-linked briefing that is not among the loaded pages (GET /editions/<id>, api.edition), the briefings, and Load
-earlier briefings. Nothing on this page reruns on a timer (the new-briefing check is the shell's own small fragment
-with no inputs).
+Page, top to bottom (docs/SPEC-SIMPLIFY.md 2.2): the plain status line and the new-briefing check (status); at most two
+one-line banners, only when they apply ("N suggestions need your OK" with Review, which opens Tuning; the weekly
+tune-up of `tuneup`); one search box over the briefings and what was left out of them; a deep-linked briefing that is
+not among the loaded pages (GET /editions/<id>, api.edition); the briefings; and Load earlier briefings. Nothing on this
+page reruns on a timer (the new-briefing check is the shell's own small fragment with no inputs).
+
+The search ("Search your briefings and what was left out (last 90 days)") shows two groups: "In your briefings · N"
+(matching stories of the briefings loaded below show as full cards, and GET /editions/search lists the matches of
+earlier briefings of the last 90 days under them, each with Show it) and "Left out · N" (left_out.render_search_group:
+GET /rejected?q=&days=90, with the shared left-out row).
 
 A briefing (edition) card: the kicker (LATEST on the newest, the hub's briefing name "Sat Oct 4 · morning briefing",
 age, clock time, story count, and the "how much" setting when it is not Standard), the editor's one-sentence
-summary as the title (older briefings have none: a deterministic sentence built from the stories), the hero tiles
-and coverage-area split on the newest, the corrections answered in this briefing, one card per story, the "On your
-watchlist" and "Near misses" shelves, the editor's notes collapsed at the bottom (shown as written, inside the
-expander only), and under them "Why am I seeing this?": one collapsed section with every story's reasons, each
-headed by the story's number ("01") and headline (lazy: drawn only while open).
+summary as the title (older briefings have none: a deterministic sentence built from the stories), the tuning receipt
+under it ("Your tuning here: 2 stories brought in and 1 kept out by your rules; the editor used 3 of your ratings.",
+from the briefing's `tuning`, only when a count is above zero), the hero tiles and coverage-area split on the newest,
+the corrections answered in this briefing, one card per story, the "On your watchlist" and "Near misses" shelves (the
+shared left-out row, left_out.render_row), "Left out of this briefing · N" (left_out.render_edition_section: lazy,
+three groups and the automatic caption), the editor's notes collapsed (shown as written, inside the expander only),
+and under them "Why am I seeing this?": one collapsed section with every story's reasons, each headed by the story's
+number ("01") and headline (lazy: drawn only while open).
 
 A story card: rank, dateline (date · plain source name, never a source key), the headline with its facts, metrics and
 source links (a corrected story shows the corrected text and metrics), then one row under the headline
 (actions.action_bar, docs/SPEC-ICON-ACTIONS.md): on the left its tags (coverage areas, TOP STORY at 90+, the plain tier
 in grey words, and its states: flagged by you, corrected, checked, on your watchlist), on the right the story icons.
 What the analyst said about the story (a preference, a rating) shows as a glowing icon, not as a chip. Fields are read
-tolerantly, so an older or newer hub shape still renders; anything unknown is left out, not guessed.
+tolerantly, so an older or newer hub shape still renders (a briefing without `left_out` or `tuning` simply has no
+receipt and no left-out section); anything unknown is left out, not guessed.
 """
 
 from __future__ import annotations
@@ -29,11 +37,11 @@ from typing import Any, Mapping
 
 import streamlit as st
 
-from . import actions, api, data, labels, links, owner, status, ui
+from . import actions, api, data, labels, left_out, links, owner, status, tuneup, tuning_view, ui
 from .config import Workspace
 from .fmt import (MIN_TIME, as_int, as_list, chip, clip, dicts, empty_state, esc, esc_lines, fmt_clock, fmt_date,
                   fmt_day, join_and, link, md_label, module_color, module_name, one_line, parse_time, pick, plural,
-                  relative_time, section_label, tag_style)
+                  relative_time, tag_style)
 
 PAGE_SIZE = 5
 MAX_PAGES = 20
@@ -41,24 +49,30 @@ NOTES_LABEL = "Editor's notes"
 WHY_LABEL = "Why am I seeing this?"
 FULL_ITEMS = "_all_items"  # set by search(): the edition's full item list, while `items` holds only the hits
 SEARCH_KEY = "br_search"
-SEARCH_LABEL = "Search your briefings"
-SEARCH_PLACEHOLDER = "Company, topic or source"
+SEARCH_LABEL = "Search your briefings and what was left out"
+SEARCH_PLACEHOLDER = "Search your briefings and what was left out (last 90 days)"
+IN_BRIEFINGS = "In your briefings"
 MORE_KEY = "br_more"
 BACK_KEY = "br_back_latest"
 SIGNOFF_KEY = "br_signoff"
 EMPTY_BRIEFING = "Nothing new cleared your bar in this briefing."
 NO_HITS = "No matching stories in the loaded briefings. Try another word, or load earlier briefings."
-NO_HITS_ANYWHERE = "No matching stories in your briefings of the last 90 days. Try another word."
+NO_HITS_ANYWHERE = "No matching stories in your briefings of the last 90 days."
 EARLIER = "Earlier briefings"
 EARLIER_MORE = "Showing the newest {n} matches from earlier briefings. Add a word to narrow the search."
 SEARCH_FAILED = "Couldn't search earlier briefings: {reason}"
 LINKED = "Showing the briefing you linked."
 LINKED_GONE = "The briefing you linked isn't available any more."
-STAGING_EMPTY = ("ZENUX is collecting. Briefings start after you sign off in My preferences › What ZENUX looks for.")
+STAGING_EMPTY = ("ZENUX is collecting. Briefings start after you sign off on What ZENUX looks for, at the top of "
+                 "Coverage.")
 SHELF_TITLES = {"watchlist": "On your watchlist · not in this briefing", "near": "Near misses · just under your bar"}
 SHELF_FIELDS = {"watchlist": "watchlist", "near": "near_misses"}
-BRIEFING_LOCKED = "Sign in to edit (top right) to use More like this, Less like this, mute and star."
+BRIEFING_LOCKED = "Sign in to edit (top right) to use More like this, Less like this and Rate this story."
 SHELF_SHOWN = 5  # watchlist and near-miss shelf rows shown before "Show all" (WF5 SA-2)
+OK_REVIEW = "Review"
+RECEIPT_LEAD = "Your tuning here: "
+# The briefing's `tuning` (docs/SPEC-SIMPLIFY.md 1.4): what the analyst's rules did in that run, in this order.
+RECEIPT_EFFECTS = (("brought_in", "brought in"), ("kept_out", "kept out"), ("raised", "raised"), ("lowered", "lowered"))
 
 
 def _map(value: Any) -> Mapping:
@@ -186,6 +200,29 @@ def on_watchlist(item: Mapping) -> bool:
     """A starred subject company, or a starred company the story is about."""
     why = _map(item.get("why"))
     return any(s.get("starred") for s in actions.subjects_of(why.get("subjects"))) or bool(dicts(why.get("stars")))
+
+
+def receipt_text(edition: Mapping) -> str:
+    """The tuning receipt from the briefing's `tuning` (schema 11), only when a count is above zero: "Your tuning here:
+    2 stories brought in and 1 kept out by your rules; the editor used 3 of your ratings." A run whose rules changed no
+    decision but were cited says "the editor applied 2 of your rules". '' for an older hub or a briefing your tuning
+    did not touch."""
+    tuning = _map(edition.get("tuning"))
+
+    def n(key: str) -> int:
+        return max(as_int(tuning.get(key)) or 0, 0)
+
+    effects = [(n(key), words) for key, words in RECEIPT_EFFECTS if n(key) > 0]
+    parts = []
+    if effects:
+        first, rest = effects[0], effects[1:]
+        phrases = [f"{plural(first[0], 'story', 'stories')} {first[1]}"] + [f"{count} {words}" for count, words in rest]
+        parts.append(f"{join_and(phrases)} by your rules")
+    elif n("rules_used"):
+        parts.append(f"the editor applied {n('rules_used')} of your rules")
+    if n("ratings_used"):
+        parts.append(f"the editor used {n('ratings_used')} of your ratings")
+    return RECEIPT_LEAD + "; ".join(parts) + "." if parts else ""
 
 
 # ---------------------------------------------------------------------------------------------- html
@@ -320,7 +357,9 @@ def head_html(edition: Mapping, tz: str, latest: bool = False, matched: int | No
         + '</div>'
     )
     title = f'<div class="edition-title" role="heading" aria-level="2">{esc(summary_of(edition, items))}</div>'
-    main = f'<div class="edition-main">{kicker}{title}</div>'
+    receipt = receipt_text(edition)
+    receipt_html = f'<div class="edition-receipt">{esc(receipt)}</div>' if receipt else ""
+    main = f'<div class="edition-main">{kicker}{title}{receipt_html}</div>'
     if latest:
         return f'<header class="edition-head has-stats">{main}{stats_html(edition, items)}</header>'
     return f'<header class="edition-head">{main}</header>'
@@ -368,22 +407,15 @@ def shelf_order(rows: list[dict]) -> list[dict]:
                                        -parse_time(r.get("published_at")).timestamp()))
 
 
-def shelf_row_html(row: Mapping, tz: str, with_companies: bool) -> str:
-    title = one_line(row.get("title")) or "A story"
-    when = row.get("published_at")
-    dateline = " · ".join(p for p in (fmt_date(when, tz) if known_time(when) else "",
-                                      actions.plain_source_label(row.get("source_label"), row.get("source_key"),
-                                                                 row.get("url"))) if p)
-    reason = labels.reason_label(row.get("reason_code"), row.get("reason"))
-    names = [one_line(pick(s, "name", "label")) for s in dicts(row.get("stars"))] if with_companies else []
-    about = "About " + join_and([n for n in names if n]) if any(names) else ""
-    return (
-        '<div class="shelf-row">'
-        + (f'<div class="feed-dateline">{esc(dateline)}</div>' if dateline else "")
-        + f'<div>{link(row.get("url"), title)}</div>'
-        + f'<div class="feed-tags">{chip(reason, "tier")}{chip(about, "chip-state chip-starred")}</div>'
-        + '</div>'
-    )
+def shelf_row(row: Mapping, edition: Mapping) -> dict:
+    """A shelf row as the shared left-out row takes it: the bar in force for the briefing (`selection.min_score`) when
+    the row does not carry its own, so "Why was it left out?" can say it."""
+    out = dict(row)
+    if as_int(out.get("bar")) is None:
+        bar = as_int(pick(edition, "selection.min_score"))
+        if bar is not None:
+            out["bar"] = bar
+    return out
 
 
 # ---------------------------------------------------------------------------------------------- search
@@ -525,27 +557,17 @@ def render_item(ws: Workspace, edition: Mapping, item: dict, index: Any, n: int,
 
 
 def render_shelf(ws: Workspace, edition: Mapping, index: Any, kind: str, used: set[str]) -> None:
-    """A lighter sub-section under the stories: each row with Should have been in."""
-    rows = shelf_order(shelf_rows(edition, kind))
+    """A lighter sub-section under the stories, one shared left-out row per story (left_out.render_row: its reason, the
+    story icons with the up arrow, Why was it left out?); a watchlist row keeps "Not about <company>" for a look-alike
+    name (WF5 AW-10). The first SHELF_SHOWN rows, then the rest on demand."""
+    rows = [shelf_row(r, edition) for r in shelf_order(shelf_rows(edition, kind))
+            if left_out.event_id_of(r) is not None]
     if not rows:
         return
 
     def draw(row: Mapping) -> None:
-        st.markdown(shelf_row_html(row, ws.timezone, with_companies=kind == "watchlist"), unsafe_allow_html=True)
-        target = actions.target_from_row(ws, row)
-        if target.event_id is None:
-            return
-        with st.container(horizontal=True, gap="small", key=unique_key(f"zx_actions_shelf_{index}_{kind}_{target.event_id}", used)):
-            key = unique_key(f"br_promote_{index}_{kind}_{target.event_id}", used)
-            if ui.write_button("Should have been in", ws=ws, key=key, icon=":material/move_up:"):
-                actions.open_promote(ws, target)
-            # WF5 AW-10: a look-alike name ("Lambda Energy" for Lambda) can be taken off the watchlist shelf.
-            for n, star in enumerate(dicts(row.get("stars")) if kind == "watchlist" else []):
-                entity_id, name = one_line(star.get("entity_id")), one_line(pick(star, "name", "label"))
-                if entity_id and name:
-                    ui.write_button(f"Not about {name}", ws=ws, key=unique_key(f"br_not_about_{index}_{target.event_id}_{n}", used),
-                                    type="tertiary", on_click=actions.report_not_about,
-                                    args=(ws, entity_id, name, target.event_id), kwargs={"rerun": False})
+        key = left_out.unique_key(f"{kind[0]}{index}_{left_out.event_id_of(row)}", used)
+        left_out.render_row(ws, row, key, not_about=kind == "watchlist")
 
     with st.container(key=f"zx_shelf_{index}_{kind}"):
         title = SHELF_TITLES[kind] + (f" · {len(rows)}" if len(rows) > SHELF_SHOWN else "")
@@ -563,7 +585,8 @@ def render_shelf(ws: Workspace, edition: Mapping, index: Any, kind: str, used: s
 
 def render_edition(ws: Workspace, edition: Mapping, index: Any, *, latest: bool, searching: bool,
                    focus_item: int | None, used: set[str]) -> None:
-    """One briefing card: its header, corrections, stories, shelves, the editor's notes and every story's Why."""
+    """One briefing card: its header (with the tuning receipt), corrections, stories, shelves, what it left out, the
+    editor's notes and every story's Why. A search narrows it to its matching stories."""
     items = items_of(edition)
     with st.container(key=f"zx_edition_{index}"):
         st.markdown(edition_html(edition, ws.timezone, latest=latest, matched=len(items) if searching else None),
@@ -579,21 +602,30 @@ def render_edition(ws: Workspace, edition: Mapping, index: Any, *, latest: bool,
         if not searching:
             render_shelf(ws, edition, index, "watchlist", used)
             render_shelf(ws, edition, index, "near", used)
+            left_out.render_edition_section(ws, edition, used)
         render_notes(edition)
         render_why(ws, edition, items, index)
 
 
-def render_search(editions: list[dict], more: bool, tz: str) -> str:
-    """The search box (always visible) and what it covers; returns the query."""
-    query = one_line(st.text_input(SEARCH_LABEL, key=SEARCH_KEY, placeholder=SEARCH_PLACEHOLDER,
-                                   label_visibility="collapsed"))
-    if editions:
-        oldest = edition_time(editions[-1])
-        back = f" (back to {fmt_day(oldest, tz)})" if known_time(oldest) else ""
-        earlier = " Matches in earlier briefings are listed after them." if more else ""
-        st.caption(f"Searches headlines, story text and companies in your briefings of the last {api.SEARCH_DAYS} days. "
-                   f"Matches in the {plural(len(editions), 'briefing')} loaded below{back} show in full.{earlier}")
-    return query
+def render_search() -> str:
+    """The one search box (always visible); returns the query."""
+    return one_line(st.text_input(SEARCH_LABEL, key=SEARCH_KEY, placeholder=SEARCH_PLACEHOLDER,
+                                  label_visibility="collapsed", icon=":material/search:"))
+
+
+def search_caption(editions: list[dict], more: bool, tz: str) -> str:
+    """What the first group covers: 'Matches in the 2 briefings loaded below (back to Fri Oct 2) show in full; matches
+    in earlier briefings are listed after them.'"""
+    if not editions:
+        return ""
+    oldest = edition_time(editions[-1])
+    back = f" (back to {fmt_day(oldest, tz)})" if known_time(oldest) else ""
+    earlier = "; matches in earlier briefings are listed after them" if more else ""
+    return f"Matches in the {plural(len(editions), 'briefing')} loaded below{back} show in full{earlier}."
+
+
+def group_title_html(title: str, count: int) -> str:
+    return f'<div class="zx-group-title">{esc(title)} · {count}</div>'
 
 
 def earlier_hits(ws: Workspace, query: str, shown_ids: set) -> tuple[list[dict], bool, api.ApiError | None]:
@@ -680,7 +712,7 @@ def render_empty(ws: Workspace) -> None:
     if _map(summary).get("level") == "staging":
         st.markdown(empty_state(STAGING_EMPTY), unsafe_allow_html=True)
         if st.button("Review and sign off", key=SIGNOFF_KEY, type="primary"):
-            links.go("preferences", section="looks_for")
+            links.go("coverage")
         return
     when = _map(summary).get("next_at")
     clock = f" (next: {fmt_clock(when, ws.timezone)})" if known_time(when) else ""
@@ -688,8 +720,40 @@ def render_empty(ws: Workspace) -> None:
                 unsafe_allow_html=True)
 
 
+def ok_count(ws: Workspace) -> int:
+    """How many suggestions need the analyst's OK: the list Tuning shows (GET /preferences suggestions and the legacy
+    proposed drafts of GET /rules); 0 when it cannot be read (the banner is an offer, never an alert)."""
+    try:
+        prefs = data.preferences(ws.id)
+    except api.ApiError:
+        return 0
+    try:
+        rules = data.rules(ws.id)
+    except api.ApiError:
+        rules = None
+    return len(tuning_view.needs_ok(prefs, rules))
+
+
+def ok_text(n: int) -> str:
+    """'1 suggestion needs your OK' / '3 suggestions need your OK'."""
+    return f"{plural(n, 'suggestion')} {'needs' if n == 1 else 'need'} your OK"
+
+
+def render_banners(ws: Workspace) -> None:
+    """At most two one-line banners, only when they apply: suggestions that need the analyst's OK (Review opens
+    Tuning, where Needs your OK comes first) and the weekly tune-up (tuneup)."""
+    n = ok_count(ws)
+    if n > 0:
+        with st.container(horizontal=True, key="zx_ok_banner", gap="small", vertical_alignment="center"):
+            st.markdown(f'<div class="zx-banner-text">{esc(ok_text(n))}</div>', unsafe_allow_html=True)
+            st.button(OK_REVIEW, key="br_ok_review", icon=":material/arrow_forward:", on_click=links.go,
+                      args=("tuning",))
+    tuneup.render(ws)
+
+
 def render(ws: Workspace) -> None:
     status.status_line(ws)
+    render_banners(ws)
     actions.ctrl_click_support()  # Ctrl/Cmd+click on a thumb or the star opens its dialog
     try:
         editions, more = load(ws)
@@ -697,7 +761,7 @@ def render(ws: Workspace) -> None:
         ui.error_box("your briefings", exc, key="briefing")
         return
     status.new_briefing_watch(ws, as_int(edition_id(editions[0])) if editions else None)
-    query = render_search(editions, more, ws.timezone)
+    query = render_search()
     if editions and not owner.can_edit(ws):
         # The story buttons are drawn disabled while locked; a phone has no hover for their tooltip (WF5 AW-4).
         st.markdown(f'<div class="zx-locked">{esc(BRIEFING_LOCKED)}</div>', unsafe_allow_html=True)
@@ -716,16 +780,18 @@ def render(ws: Workspace) -> None:
         earlier, earlier_more, earlier_error = earlier_hits(ws, query, drawn)
     if query:
         hits = sum(len(items_of(e)) for e in shown) + len(earlier)
-        st.markdown(section_label(plural(hits, "matching story", "matching stories")), unsafe_allow_html=True)
+        st.markdown(group_title_html(IN_BRIEFINGS, hits), unsafe_allow_html=True)
+        st.caption(search_caption(editions, more, ws.timezone))
         if not hits:
-            st.markdown(empty_state(NO_HITS if earlier_error is not None else NO_HITS_ANYWHERE),
-                        unsafe_allow_html=True)
+            empty = NO_HITS if earlier_error is not None else NO_HITS_ANYWHERE
+            st.markdown(f'<div class="zx-group-empty">{esc(empty)}</div>', unsafe_allow_html=True)
     newest = edition_id(editions[0])
     for index, edition in enumerate(shown):
         latest = not query and index == 0 and edition_id(edition) == newest
         render_edition(ws, edition, index, latest=latest, searching=bool(query), focus_item=focus_item, used=used)
     if query:
         render_earlier(ws, earlier, earlier_more, earlier_error, used)
+        left_out.render_search_group(ws, query, used)
     if more and st.button("Load earlier briefings", key=MORE_KEY):
         st.session_state[pages_key(ws)] = page_count(ws) + 1
         st.rerun()

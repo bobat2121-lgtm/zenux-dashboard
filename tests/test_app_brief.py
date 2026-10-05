@@ -1,11 +1,12 @@
-"""AppTest: What ZENUX looks for (docs/SPEC-PHASE03-UI.md 7.4): the one-pager in plain sections, Suggest a change,
+"""AppTest: What ZENUX looks for (docs/SPEC-PHASE03-UI.md 7.4), at the top of Coverage (docs/SPEC-SIMPLIFY.md 2.4):
+one expander titled with its sign-off state, open while staging; the one-pager in plain sections, Suggest a change,
 the staging banner, the sign-off status and the sign-off itself (bound to the versions shown)."""
 
 from __future__ import annotations
 
 import unittest
 
-import fixtures_preferences as fp
+import fixtures_tuning as fp
 from helpers import AppCase, Call, OWNER, PILOT_HUB, PIN, READ, hub_defaults
 
 from zenux_dashboard import brief_view as bv
@@ -22,7 +23,12 @@ class BriefCase(AppCase):
         fp.route_reads(self.http)
 
     def open(self, *, pin: str | None = None):
-        return self.app(tab="preferences", pin=pin, state={"pf_section": "looks_for"})
+        return self.app(tab="coverage", pin=pin)
+
+    @staticmethod
+    def brief_expander(at):
+        found = [e for e in at.expander if str(e.label).startswith(bv.LABEL)]
+        return found[0] if found else None
 
     def posted(self, url: str) -> Call:
         calls = self.http.find("POST", url)
@@ -31,7 +37,23 @@ class BriefCase(AppCase):
 
 
 class BriefTests(BriefCase):
-    def test_sections_parts_lines_and_tuning(self):
+    def test_an_expander_above_the_area_picker_titled_with_the_sign_off(self):
+        at = self.open()
+        self.assert_clean(at)
+        body = fp.brief()
+        day = fmt_date(body["signoff"]["last"]["signed_at"], TZ)
+        box = self.brief_expander(at)
+        self.assertEqual(box.label, f"What ZENUX looks for · signed off by you on {day}")
+        self.assertFalse(box.proto.expanded)  # collapsed once the workspace is live
+        html = self.html(at)
+        self.assertLess(html.index("What ZENUX looks for: AI infrastructure"), html.index("How ZENUX covers this area"))
+        self.assertEqual(at.segmented_control(key="cv_area").value, "ai-infra")  # the area picker follows it
+        self.fresh()
+        self.http.on("GET", PILOT_HUB + "/brief", fp.brief(signed_by=None))
+        at = self.open()
+        self.assertEqual(self.brief_expander(at).label, "What ZENUX looks for · not signed off yet")
+
+    def test_sections_parts_and_lines(self):
         at = self.open()
         self.assert_clean(at)
         html = self.html(at)
@@ -41,11 +63,9 @@ class BriefTests(BriefCase):
         self.assertIn('<li class="brief-line">Power: interconnection approvals for 100 MW or more.</li>', html)
         self.assertIn("Stock-price moves without new facts &lt;b&gt;at all&lt;/b&gt;.", html)
         self.assertIn("Who is covered", html)
-        self.assertIn("3 active preferences · 3 mutes · 2 on your watchlist · How much: Standard", html)
-        self.assertIn("Who is covered · AI infrastructure", html)
-        self.assertIn("AI cloud: CoreWeave, Nebius", html)
-        self.assertIn("Bitcoin miners: IREN, Cipher &lt;Mining&gt;", html)
-        self.assertIn("Who is covered · Defense unmanned", html)
+        # the "Your tuning" read-out is gone (docs/SPEC-SIMPLIFY.md 2.3)
+        self.assertNotIn("Your tuning", html)
+        self.assertNotIn("3 active preferences", html)
         for key in ("br_suggest_s-ai-infrastructure_0", "br_suggest_s-ai-infrastructure_1",
                     "br_suggest_s-defense-unmanned_0"):
             self.assertEqual(at.button(key=key).label, "Suggest a change")
@@ -60,7 +80,7 @@ class BriefTests(BriefCase):
         at = self.open()
         self.assert_clean(at)
         html = self.html(at)
-        for shown in ("90+: Top story", "40-69: Near miss; shows under Filtered out",
+        for shown in ("90+: Top story", "40-69: Near miss; listed under each briefing in Left out",
                       "Your coverage, Read-through, Industry and policy"):
             self.assertIn(f'<li class="brief-line">{shown}</li>', html)
         visible = self.visible_text(at)
@@ -85,14 +105,14 @@ class BriefTests(BriefCase):
             self.assert_clean(at)
             self.assertIn(text, self.html(at))
 
-    def test_staging_banner_and_open_coverage(self):
+    def test_staging_banner_and_the_expander_open(self):
         self.http.on("GET", PILOT_HUB + "/brief", fp.brief(stage="staging", signed_by=None))
         at = self.open()
         self.assert_clean(at)
         self.assertIn(bv.STAGING_BANNER, self.texts(at, "info"))
+        self.assertTrue(self.brief_expander(at).proto.expanded)  # open while staging
         self.assertEqual(at.button(key="br_signoff").label, "Sign off")
-        at.button(key="br_open_coverage").click().run()
-        self.assertEqual(at.session_state["zx_tab"], "coverage")
+        self.assertEqual([b.key for b in at.button if b.key == "br_open_coverage"], [])  # it is on Coverage now
 
     def test_sign_off_sends_the_versions_shown(self):
         self.http.on("POST", PILOT_HUB + "/signoff", fp.signed_off())

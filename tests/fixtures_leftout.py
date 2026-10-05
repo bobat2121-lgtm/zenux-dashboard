@@ -1,9 +1,12 @@
-"""Hub bodies for the Filtered out tab, shaped as docs/SPEC-PHASE05.md section 2 (GET /rejected: one row per story,
-true totals, every view's count, paging, `q` and `module`; rows with reason, rules_detail, source_label, subjects,
-muted, requested, rationale_plain, canonical and published_later). Fresh copies per call.
+"""Hub bodies for what was left out of the briefings, shaped as docs/SPEC-PHASE05.md section 2 and
+docs/SPEC-SIMPLIFY.md 1.3 (GET /rejected: one row per story, true totals, every view's count, paging, `q` and
+`module`, and `edition_id` with each row's `group`; rows with reason, rules_detail, source_label, subjects, muted,
+requested, rationale_plain, canonical and published_later), and the schema 11 fields of a briefing (`left_out`,
+`tuning`; editions_v11). Fresh copies per call.
 
-rejected_for(params) answers like the hub: it picks the view by `filter`, then narrows by `module` and by `q` (every
-word in the title, the editor's reasoning, the source's name or a company), and pages with `offset` (500 a page).
+rejected_for(params) answers like the hub: with `edition_id`, that briefing's left-out rows (edition_rows); else it
+picks the view by `filter`, then narrows by `module` and by `q` (every word in the title, the editor's reasoning, the
+source's name or a company), and pages with `offset` and `limit` (500 a page at most).
 
 A few deliberately hostile values (markup in a title, a javascript: link) check the escaping, and one row's
 source_label is only its source key (an older hub), so the page must fall back to the link's domain.
@@ -199,16 +202,68 @@ def rejected_for(params: dict) -> dict:
     f = str(params.get("filter") or "all")
     days = int(params.get("days") or 3)
     include_auto = str(params.get("include_auto", "")).lower() in ("1", "true")
-    rows = {"near_miss": near_rows, "same_story": same_rows, "muted": muted_rows, "old_news": old_rows,
-            "auto": auto_rows}.get(f)
-    rows = rows() if rows else (all_rows() if include_auto else [r for r in all_rows() if not r.get("auto")])
+    if params.get("edition_id") is not None:
+        rows = edition_rows() if int(params["edition_id"]) == LEFT_OUT_EDITION else []
+        rows = {"near_miss": [r for r in rows if r["group"] == "near_miss"],
+                "same_story": [r for r in rows if r["group"] == "same_story"]}.get(f, rows)
+    else:
+        rows = {"near_miss": near_rows, "same_story": same_rows, "muted": muted_rows, "old_news": old_rows,
+                "auto": auto_rows}.get(f)
+        rows = rows() if rows else (all_rows() if include_auto else [r for r in all_rows() if not r.get("auto")])
     module = str(params.get("module") or "")
     if module:
         rows = [r for r in rows if r.get("module") == module]
     query = str(params.get("q") or "")
     if query:
         rows = [r for r in rows if matches(r, query)]
-    return rejected_body(rows, filter=f, days=days, include_auto=include_auto, offset=int(params.get("offset") or 0))
+    limit = min(int(params.get("limit") or PAGE), PAGE)
+    body = rejected_body(rows, filter=f, days=days, include_auto=include_auto, offset=int(params.get("offset") or 0))
+    page = rows[int(params.get("offset") or 0):int(params.get("offset") or 0) + limit]
+    more = int(params.get("offset") or 0) + len(page) < len(rows)
+    body.update(items=page, returned=len(page), limit=limit, has_more=more,
+                next_offset=int(params.get("offset") or 0) + len(page) if more else None)
+    return body
+
+
+# ---------------------------------------------------------------------------------------------- schema 11 (SIMPLIFY)
+
+LEFT_OUT_EDITION = 12   # the latest briefing of fixtures_briefing
+BELOW_BAR_ROWS = 13     # one more page than the 10 a group shows first
+
+
+def edition_rows() -> list[dict]:
+    """GET /rejected?edition_id=12: what briefing 12's run decided and left out, each with its `group`, in the hub's
+    order (the run decided them all at once: best score first)."""
+    near = [dict(r, group="near_miss") for r in near_rows()]
+    below = [row(7500 + n, score=55 - n, reason_code="below_materiality", reason="Not significant enough",
+                 title=f"Smaller story number {n}", hours=5, group="below_bar") for n in range(BELOW_BAR_ROWS - 1)]
+    below.append(dict(next(r for r in all_rows() if r["event_id"] == 7301), group="below_bar"))
+    same = [dict(r, group="same_story") for r in same_rows()]
+    return near + below + same
+
+
+def left_out(total: int | None = None, *, near: int = 4, below: int = BELOW_BAR_ROWS, same: int = 2, muted: int = 4,
+             old: int = 12) -> dict:
+    """A briefing's `left_out` (docs/SPEC-SIMPLIFY.md 1.4)."""
+    return {"total": near + below + same if total is None else total, "near_miss": near, "below_bar": below,
+            "same_story": same, "kept_out_automatically": {"muted": muted, "old_news": old}}
+
+
+def tuning(**counts) -> dict:
+    """A briefing's `tuning` (docs/SPEC-SIMPLIFY.md 1.4): by default 2 brought in and 1 kept out by 2 rules, 3 ratings."""
+    body = {"brought_in": 2, "kept_out": 1, "raised": 0, "lowered": 0, "rules_used": 2, "ratings_used": 3}
+    body.update(counts)
+    return body
+
+
+def editions_v11(**latest) -> dict:
+    """GET /editions from a schema 11 hub: the latest briefing (12) with `left_out` and `tuning`; the older one (11)
+    without them, as an older hub sends it (no receipt, no left-out section)."""
+    import fixtures_briefing as fb
+
+    body = fb.editions()
+    body["editions"][0].update({"left_out": left_out(), "tuning": tuning(), **latest})
+    return body
 
 
 def many_rows(total: int = 620):

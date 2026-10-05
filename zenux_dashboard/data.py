@@ -67,12 +67,19 @@ def status(workspace_id: str) -> dict:
 
 
 @st.cache_data(ttl=READ_TTL, show_spinner=False)
-def rejected(workspace_id: str, days: int = 3, filter: str = "all", include_auto: bool = False, q: str = "",
-             module: str = "", offset: int = 0) -> dict:
-    """GET /rejected: one view of the filtered-out stories (filter all | near_miss | same_story | muted | old_news |
-    auto), searched (q) and narrowed to one coverage area (module) by the hub; one page of up to 500 from `offset`."""
+def rejected(workspace_id: str, days: int | None = 3, filter: str = "all", include_auto: bool = False, q: str = "",
+             module: str = "", offset: int = 0, edition_id: int | None = None, limit: int | None = None) -> dict:
+    """GET /rejected: stories left out of the briefings (filter all | near_miss | same_story | muted | old_news | auto),
+    searched (q) and narrowed to one coverage area (module) by the hub; one page of up to `limit` (500 at most) from
+    `offset`. With edition_id: what that briefing left out (Briefing's "Left out of this briefing")."""
     return api.rejected(_ws(workspace_id), days=days, filter=filter, include_auto=include_auto, q=q or None,
-                        module=module or None, offset=offset)
+                        module=module or None, offset=offset, edition_id=edition_id, limit=limit)
+
+
+@st.cache_data(ttl=READ_TTL, show_spinner=False)
+def tuneup(workspace_id: str) -> dict:
+    """GET /tuneup: the weekly tune-up (Briefing's banner and its panel)."""
+    return api.tuneup(_ws(workspace_id))
 
 
 # ---------------------------------------------------------------------------------------------- coverage
@@ -217,9 +224,9 @@ def workspace_health(workspace_id: str) -> dict:
     return gather_health(_ws(workspace_id))
 
 
-READS = (editions, edition, latest_edition_id, search_editions, status, rejected, modules, inspect, radar, repairs,
-         mutes, mute_preview, bring_back_preview, stars, star_preview, preferences, rules, settings, volume_preview,
-         brief, diagnostics, hub_sources)
+READS = (editions, edition, latest_edition_id, search_editions, status, rejected, tuneup, modules, inspect, radar,
+         repairs, mutes, mute_preview, bring_back_preview, stars, star_preview, preferences, rules, settings,
+         volume_preview, brief, diagnostics, hub_sources)
 
 
 def clear_reads() -> None:

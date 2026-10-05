@@ -1,5 +1,5 @@
 """The one vocabulary: every analyst-facing label (docs/SPEC-PHASE03-UI.md 3.4; the plain words of
-docs/PLAN-ANALYST-READY.md's vocabulary map and docs/SPEC-PHASE02.md 1.3).
+docs/PLAN-ANALYST-READY.md's vocabulary map and docs/SPEC-PHASE02.md 1.3; the tabs of docs/SPEC-SIMPLIFY.md 2.1).
 
 Pure: no Streamlit calls. Views may add sentence copy of their own, written in these words. Nothing here ever turns
 an engine code into visible text: unknown codes fall back to a plain default, never to the code itself.
@@ -20,10 +20,10 @@ from .fmt import MIN_TIME, MODULE_NAMES, as_int, one_line, parse_time, zone
 
 # ---------------------------------------------------------------------------------------------- tabs
 
-TABS: tuple[tuple[str, str], ...] = (("briefing", "Briefing"), ("filtered", "Filtered out"),
-                                     ("preferences", "My preferences"), ("coverage", "Coverage"),
+# docs/SPEC-SIMPLIFY.md 2.1: Briefing (daily), Tuning (weekly) and Coverage (setup); the Control room for the builder.
+TABS: tuple[tuple[str, str], ...] = (("briefing", "Briefing"), ("tuning", "Tuning"), ("coverage", "Coverage"),
                                      ("control", "Control room"))
-ANALYST_TABS: tuple[str, ...] = ("briefing", "filtered", "preferences", "coverage")
+ANALYST_TABS: tuple[str, ...] = ("briefing", "tuning", "coverage")
 BUILDER_TAB = "control"
 _TAB_NAMES = dict(TABS)
 

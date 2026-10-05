@@ -389,6 +389,33 @@ class ApiTests(unittest.TestCase):
                 bad()
         self.assertEqual(self.http.calls, [])  # refused before anything was sent
 
+    def test_schema_11_read_wrappers(self):
+        # docs/SPEC-SIMPLIFY.md 1.3 and 1.5: a briefing's left-out list (whatever `days` says: none is sent), the
+        # left-out search over 90 days, and the weekly tune-up
+        self.assertEqual(self.read(api.rejected, "/rejected", days=None, edition_id=12)[1],
+                         {"filter": "all", "edition_id": 12})
+        self.assertEqual(self.read(api.rejected, "/rejected", days=None, edition_id=12, offset=500)[1],
+                         {"filter": "all", "edition_id": 12, "offset": 500})
+        self.assertEqual(self.read(api.rejected, "/rejected", days=90, q="grid", limit=20)[1],
+                         {"days": 90, "filter": "all", "q": "grid", "limit": 20})
+        body, params = self.read(api.tuneup, "/tuneup", body=fx.tuneup_due())
+        self.assertEqual((body["due"], len(body["items"]), params), (True, 5, {}))
+        self.http.calls.clear()
+        for bad in (lambda: api.rejected(self.ws, edition_id=0), lambda: api.rejected(self.ws, edition_id="x")):
+            with self.assertRaises(api.ApiError):
+                bad()
+        self.assertEqual(self.http.calls, [])
+
+    def test_schema_11_write_wrappers(self):
+        self.assertEqual(self.post(api.dismiss_tuneup, "/tuneup/dismiss"), {})
+        for role in ("grader", "refiner", "scout"):
+            self.assertEqual(self.post(api.allow_once, "/admin/routines/allow-once", role), {"role": role})
+        self.http.calls.clear()
+        with self.assertRaises(api.ApiError) as ctx:
+            api.allow_once(self.ws, OWNER, "everyone")
+        self.assertEqual(ctx.exception.kind, "invalid")
+        self.assertEqual(self.http.calls, [])
+
     def post(self, fn, path: str, *args, **kwargs):
         self.http.calls.clear()
         self.http.on("POST", PILOT_HUB + path, {"ok": True})
@@ -683,7 +710,13 @@ class StylesheetTests(unittest.TestCase):
                     "preview-plus", "preview-minus", "brief-part", "brief-line", "cov-head", "cov-col", "cov-row",
                     "cov-name", "cov-chip", "cov-chip-own_feed", "cov-chip-sec_filings", "cov-chip-federal_contracts",
                     "cov-chip-news_search", "cov-chip-name_only", "cov-stats", "timeline", "timeline-step",
-                    "zx-locked"):
+                    "zx-locked",
+                    # docs/SPEC-SIMPLIFY.md: the banners, the tune-up, the receipt, the groups, the left-out section,
+                    # Tuning's rows, What ZENUX looks for on Coverage and the routines' lines
+                    "st-key-zx_ok_banner", "st-key-zx_tuneup_banner", "zx-banner-text", "st-key-zx_tu_", "tu-row",
+                    "tu-editor", "tu-done", "edition-receipt", "zx-group-title", "zx-group-empty", "st-key-zx_leftout_",
+                    "zx-leftout-auto", "tn-title", "tn-rule", "tn-hint", "st-key-zx_rule_", "st-key-zx_how_much",
+                    "st-key-zx_rules_bar", "st-key-zx_ended_", "brief-title", "st-key-zx_routine_"):
             with self.subTest(cls=cls):
                 self.assertIn(cls, self.css)
         for colour in ("#34d399", "#fbbf24", "#f87171", "#38bdf8"):  # the pill colours of the contrast test
@@ -701,8 +734,10 @@ class StylesheetTests(unittest.TestCase):
 
 class LabelsTests(unittest.TestCase):
     def test_tabs(self):
+        # docs/SPEC-SIMPLIFY.md 2.1: Briefing (daily), Tuning (weekly), Coverage (setup), the builder's Control room
         self.assertEqual([labels.tab_label(s) for s, _ in labels.TABS],
-                         ["Briefing", "Filtered out", "My preferences", "Coverage", "Control room"])
+                         ["Briefing", "Tuning", "Coverage", "Control room"])
+        self.assertEqual(labels.ANALYST_TABS, ("briefing", "tuning", "coverage"))
         self.assertEqual(labels.tab_label("nope"), "Briefing")
 
     def test_reason_labels(self):
@@ -821,7 +856,7 @@ class LabelsTests(unittest.TestCase):
         for text in positives:
             with self.subTest(text=text):
                 self.assertTrue(labels.find_jargon(text))
-        negatives = ["Briefing", "Filtered out · Near misses", "Applies from the 12:30 PM briefing.",
+        negatives = ["Briefing", "Left out of this briefing · Near misses", "Applies from the 12:30 PM briefing.",
                      "Still collected, kept out of your briefing.", "Coverage area", "Top story", "release",
                      "airplanes", "hubbub", "Cursory look", "#12", "scouting"]
         for text in negatives:
@@ -846,19 +881,34 @@ class LabelsTests(unittest.TestCase):
 class LinksTests(unittest.TestCase):
     def test_parse_validates_every_parameter(self):
         conf = parse_config(two_workspaces())
-        good = {"tab": "filtered", "ws": "beta", "edition": "12", "item": "1203", "view": "muted",
-                "section": "looks_for", "pref": "R-0012", "module": "ai-infra", "request": "41"}
+        good = {"tab": "tuning", "ws": "beta", "edition": "12", "item": "1203", "rules": "muted", "pref": "R-0012",
+                "module": "ai-infra", "request": "41"}
         self.assertEqual(links.parse(good, conf), {**good, "edition": 12, "item": 1203, "request": 41})
-        bad = {"tab": "rules", "ws": "gamma", "edition": "0", "item": "12a", "view": "rejected", "section": "rules",
-               "pref": "R-12", "module": "AI Infra", "request": "-4", "token": "x"}
+        bad = {"tab": "rules", "ws": "gamma", "edition": "0", "item": "12a", "rules": "rejected", "section": "rules",
+               "pref": "R-12", "module": "AI Infra", "request": "-4", "token": "x", "view": "muted"}
         self.assertEqual(links.parse(bad, conf), {})
         self.assertEqual(links.parse({"tab": ["coverage", "briefing"]}, conf), {"tab": "coverage"})
         self.assertEqual(links.parse({"ws": "pilot"}, None), {})
 
+    def test_old_links_are_translated(self):
+        # docs/SPEC-SIMPLIFY.md 2.1: tab=preferences opens Tuning, tab=filtered opens Briefing; the old section= of My
+        # preferences picks the part of Tuning, or opens Coverage for What ZENUX looks for; it is never kept
+        self.assertEqual(links.parse({"tab": "preferences", "pref": "R-0012", "section": "active"}, None),
+                         {"tab": "tuning", "pref": "R-0012"})
+        self.assertEqual(links.parse({"tab": "preferences", "section": "muted"}, None), {"tab": "tuning", "rules": "muted"})
+        self.assertEqual(links.parse({"tab": "preferences", "section": "watchlist", "rules": "less"}, None),
+                         {"tab": "tuning", "rules": "less"})
+        self.assertEqual(links.parse({"tab": "preferences", "section": "looks_for", "pref": "R-0012"}, None),
+                         {"tab": "coverage"})
+        self.assertEqual(links.parse({"tab": "filtered", "view": "muted"}, None), {"tab": "briefing"})
+        self.assertEqual(links.parse({"tab": "briefing", "section": "muted"}, None), {"tab": "briefing"})
+        self.assertEqual((links.tab_slug("preferences"), links.tab_slug("filtered"), links.tab_slug("nope")),
+                         ("tuning", "briefing", None))
+
     def test_href(self):
         self.assertEqual(links.href("briefing", edition=12, item=1203), "?tab=briefing&edition=12&item=1203")
-        self.assertEqual(links.href("preferences", pref="R-0012", section="active", ws=None),
-                         "?tab=preferences&section=active&pref=R-0012")
+        self.assertEqual(links.href("tuning", pref="R-0012", rules="less", ws=None), "?tab=tuning&rules=less&pref=R-0012")
+        self.assertEqual(links.href("tuning", section="muted"), "?tab=tuning")  # section is only ever read
         self.assertEqual(links.href("coverage"), "?tab=coverage")
 
     def test_the_params_cover_the_tabs(self):

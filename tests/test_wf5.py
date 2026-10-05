@@ -10,7 +10,7 @@ import unittest
 
 import fixtures_briefing as fb
 from helpers import DASHBOARD, AppCase, FakeResponse, OWNER, PILOT_HUB, PIN, hub_defaults
-from zenux_dashboard import actions, api, feed_view, preferences_view, radar_view
+from zenux_dashboard import actions, api, feed_view, radar_view, tuning_view
 
 EDITIONS = PILOT_HUB + "/editions"
 PREFERENCES = PILOT_HUB + "/preferences"
@@ -101,7 +101,8 @@ class AlreadySaidTests(Case):
         at.button(key="act_less_i1201").click().run()
         self.assert_clean(at)
         self.assertEqual(self.sent(PILOT_HUB + "/rules/I-0002/retire"), {"reason": "undone"})
-        self.assertTrue(any(t.startswith("Undone: less like this. Stops applying from the ") for t in self.toasts(at)),
+        # "from the 4:30 PM briefing" or, late in the evening, "from tomorrow's 12:30 AM briefing"
+        self.assertTrue(any(t.startswith("Undone: less like this. Stops applying from ") for t in self.toasts(at)),
                         self.toasts(at))
         self.assertEqual(self.http.find("POST", PREFERENCES), [])
 
@@ -162,7 +163,7 @@ class AlreadySaidTests(Case):
         self.assertEqual(self.sent(PILOT_HUB + "/rules/I-0002/retire"), {"reason": "undone"})
 
     def test_no_undo_or_change_on_the_card(self):
-        # phones and tablets: a tap saves or undoes; the options for a preference are on My preferences
+        # phones and tablets: a tap saves or undoes; the options for a preference are in Tuning (its menu)
         self.http.on("GET", EDITIONS, self.editions_with_a_preference())
         at = self.briefing()
         keys = [str(b.key) for b in at.button]
@@ -202,8 +203,8 @@ class ShelfTests(Case):
         at = self.briefing()
         html = self.html(at)
         self.assertIn('<div class="shelf-title">On your watchlist · not in this briefing · 8</div>', html)
-        promote = [b.key for b in at.button if str(b.key).startswith("br_promote_")]
-        self.assertEqual(promote, [f"br_promote_0_watchlist_{1400 + i}" for i in (7, 6, 5, 4, 3)], "best score first")
+        promote = [b.key for b in at.button if str(b.key).startswith("act_promote_")]
+        self.assertEqual(promote, [f"act_promote_w0_{1400 + i}" for i in (7, 6, 5, 4, 3)], "best score first")
         self.assertIn("Show all 8", [e.label for e in at.expander])
 
     def test_not_about_a_look_alike_company(self):
@@ -211,7 +212,7 @@ class ShelfTests(Case):
         self.http.on("POST", STARS, {"reported": True, "created": True, "entity_id": "lambda", "event_id": 1400,
                                      "label": "Lambda", "effective": fb.effective()})
         at = self.briefing()
-        button = at.button(key="br_not_about_0_1400_0")
+        button = at.button(key="lo_not_about_w0_1400_0")
         self.assertEqual(button.label, "Not about Lambda")
         button.click().run()
         self.assert_clean(at)
@@ -226,11 +227,11 @@ class HelperTests(unittest.TestCase):
     def test_remove_confirmation_names_the_preference(self):
         pref = {"id": "I-0002", "direction": "less", "text": "Show me less like this: stories like this example.",
                 "example": {"title": "The Hidden Failure Domain in N+1 Data Center Cooling"}}
-        self.assertEqual(preferences_view.remove_detail(pref),
+        self.assertEqual(tuning_view.remove_detail(pref),
                          "Remove “Show me less like this: Stories like this example. (Example: The Hidden Failure Domain "
                          "in N+1 Data Center Cooling)”?")
         more = dict(pref, direction="more")
-        self.assertNotEqual(preferences_view.remove_detail(more), preferences_view.remove_detail(pref))
+        self.assertNotEqual(tuning_view.remove_detail(more), tuning_view.remove_detail(pref))
 
     def test_a_link_copied_without_https_gets_it(self):
         self.assertEqual(api.with_scheme("www.utilitydive.com"), "https://www.utilitydive.com")
