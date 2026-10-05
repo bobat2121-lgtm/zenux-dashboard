@@ -11,6 +11,7 @@ import html as htmllib
 import re
 import unittest
 
+import fixtures_briefing as fb
 import fixtures_filtered as ff
 from helpers import AppCase, FakeResponse, OWNER, PILOT_HUB, PIN, READ, hub_defaults
 
@@ -83,6 +84,13 @@ class FilteredCase(AppCase):
         match = re.search(r'<div class="rejected-summary">(.*?)</div>', html)
         self.assertIsNotNone(match, "no count line")
         return htmllib.unescape(match.group(1))
+
+    def row_markdown(self, at, eid: int) -> str:
+        """The HTML drawn inside one row card (its title block and its row of chips and icons)."""
+        for node in self.walk(at._tree):
+            if getattr(node, "key", None) == f"zx_row_{eid}":
+                return "\n".join(str(m.value) for m in self.walk(node) if getattr(m, "type", "") == "markdown")
+        self.fail(f"no row {eid}")
 
     def menu_click(self, at, row_key: str, button_key: str):
         """Click a button inside a row's lazy More popover: the popover is opened for the run that draws it and
@@ -465,10 +473,9 @@ class RowActionTests(FilteredCase):
 
         self.http.on("GET", REJECTED, answer)
         at = self.filtered(pin=PIN)
-        html = self.html(at)
-        card = html[html.index("Anduril wins drone order"):]
         self.assertIn('<span class="zx-chip chip-state chip-corrected">Later in your briefing</span>',
-                      card[:card.index("</article>")])
+                      self.row_markdown(at, 7202))
+        self.assertNotIn("Later in your briefing", self.row_markdown(at, 7201))
         keys = {getattr(b, "key", None) for b in at.button}
         self.assertIn("fo_show_7202", keys)
         self.assertNotIn("act_promote_r7202", keys)
@@ -615,16 +622,102 @@ class RowActionTests(FilteredCase):
         self.assertTrue(any(t.startswith("Rating saved.") for t in self.toasts(at)))
         self.assert_clean(at)
 
-    def test_requested_and_rating_chips(self):
+    def test_the_glow_says_the_request_and_the_rating(self):
+        # docs/SPEC-ICON-ACTIONS.md: the arrow glows for the open request, the star for the newest rating (not for the
+        # "Should have been in" grade stored after it), so neither has a chip
         at = self.filtered()
         html = self.html(at)
-        self.assertIn('<span class="zx-chip chip-state chip-requested">You asked for this · re-checked at the next '
-                      'briefing</span>', html)
-        # the newest plain rating, not the "Should have been in" note stored after it
-        self.assertIn('<span class="zx-chip grade">You rated it: Top story</span>', html)
-        self.assertNotIn("You rated it: In the briefing", html)
+        self.assertNotIn("You asked for this", html)
+        self.assertNotIn("You rated it", html)
         self.assertIn('<span class="zx-chip chip-state chip-starred">On your watchlist</span>', html)
+        kinds = {k: at.button(key=k).proto.type for k in ("act_promote_r7205", "act_rate_r7205", "act_promote_r7201",
+                                                          "act_rate_r7201", "act_more_r7205", "act_less_r7205")}
+        self.assertEqual(kinds, {"act_promote_r7205": "primary", "act_rate_r7205": "primary",
+                                 "act_promote_r7201": "tertiary", "act_rate_r7201": "tertiary",
+                                 "act_more_r7205": "tertiary", "act_less_r7205": "tertiary"})
+        self.assertEqual(at.button(key="act_promote_r7201").help, "Should have been in. " + labels.LOCKED_HELP)
+        self.assertEqual(at.button(key="act_promote_r7205").help,
+                         "You asked for it to be in your briefing. " + labels.LOCKED_HELP)
         self.assert_clean(at)
+
+    def test_the_request_chip_stays_where_no_arrow_is_drawn(self):
+        def answer(call):
+            body = ff.rejected_for(call.params or {})
+            for row in body["items"]:
+                if row["event_id"] == 7302:  # a repeated story: no Should have been in in the Same story view
+                    row["requested"] = {"reason": "promote", "note": "x", "requested_at": ff.iso(2)}
+            return body
+
+        self.http.on("GET", REJECTED, answer)
+        at = self.filtered(view="same")
+        self.assertIn("You asked for this · re-checked at the next briefing", self.row_markdown(at, 7302))
+        self.assertNotIn("act_promote_r7302", {getattr(b, "key", None) for b in at.button})
+
+    def test_tooltips_when_signed_in(self):
+        at = self.filtered(pin=PIN)
+        self.assertEqual(at.button(key="act_promote_r7201").help, "Should have been in.")
+        self.assertEqual(at.button(key="act_promote_r7205").help,
+                         "You asked for it to be in your briefing. Click to withdraw the request.")
+        self.assertEqual(at.button(key="act_rate_r7205").help,
+                         "You rated it: Top story. Click to withdraw your rating. Ctrl+click to change it.")
+        self.assertEqual(at.button(key="act_rate_r7201").help, "Rate this story.")
+        self.assert_plain(at)
+
+    def test_the_thumbs_glow_from_the_rows_preferences(self):
+        def answer(call):
+            body = ff.rejected_for(call.params or {})
+            for row in body["items"]:
+                if row["event_id"] == 7201:
+                    row["my_preferences"] = [{"id": "R-0031", "direction": "less", "scope": "similar",
+                                              "status": "active"}]
+            return body
+
+        self.http.on("GET", REJECTED, answer)
+        self.http.on("POST", PILOT_HUB + "/rules/R-0031/retire", fb.retired("R-0031"))
+        at = self.filtered(pin=PIN)
+        self.assertEqual([at.button(key=k).proto.type for k in ("act_more_r7201", "act_less_r7201")],
+                         ["tertiary", "primary"])
+        self.click(at, "act_less_r7201")
+        self.assert_clean(at)
+        post = self.http.find("POST", PILOT_HUB + "/rules/R-0031/retire")[-1]
+        self.assertEqual((post.bearer, post.body), (OWNER, {"reason": "undone"}))
+        self.assertTrue(any(t.startswith("Undone: less like this.") for t in self.toasts(at)), self.toasts(at))
+
+    def test_withdraw_a_rating_from_a_row(self):
+        self.http.on("POST", PILOT_HUB + "/feedback/withdraw", {"withdrawn": [11], "effective": ff.effective()})
+        at = self.filtered(pin=PIN)
+        self.click(at, "act_rate_r7205")
+        self.assert_clean(at)
+        post = self.http.find("POST", PILOT_HUB + "/feedback/withdraw")[-1]
+        self.assertEqual((post.bearer, post.body), (OWNER, {"event_id": 7205}))  # a row is a story, not an item
+        self.assertEqual(self.http.find("POST", PILOT_HUB + "/feedback"), [])
+        self.assertIn(actions.RATING_WITHDRAWN, self.toasts(at))
+
+    def test_withdraw_a_should_have_been_in(self):
+        answer = {"cancelled": True, "already_reconsidered": False, "withdrawn": [12], "effective": ff.effective()}
+        self.http.on("POST", PILOT_HUB + "/promote/withdraw", answer)
+        at = self.filtered(pin=PIN)
+        self.click(at, "act_promote_r7205")
+        self.assert_clean(at)
+        post = self.http.find("POST", PILOT_HUB + "/promote/withdraw")[-1]
+        self.assertEqual((post.bearer, post.body), (OWNER, {"event_id": 7205}))
+        self.assertEqual(self.http.find("POST", PILOT_HUB + "/promote"), [])
+        self.assertEqual(self.toasts(at), ["Request withdrawn."])
+        self.assertNotIn("dlg_save", [b.key for b in at.button])  # no dialog
+        self.assertIsNone(at.session_state["zx_undo"] if "zx_undo" in at.session_state else None)
+        # the editor already looked at the story again: only the note is withdrawn, and the toast says so
+        self.http.on("POST", PILOT_HUB + "/promote/withdraw", dict(answer, cancelled=False, already_reconsidered=True))
+        self.click(at, "act_promote_r7205")
+        self.assertEqual(self.toasts(at), ["Request withdrawn. The editor had already looked at this story again, so it "
+                                           "stays where it is."])
+
+    def test_a_plain_arrow_opens_the_dialog(self):
+        at = self.filtered(pin=PIN)
+        self.assertEqual(at.button(key="act_promote_r7201").proto.type, "tertiary")
+        self.click(at, "act_promote_r7201")
+        self.assert_clean(at)
+        self.assertEqual(at.text_area(key="dlg_text").label, actions.PROMOTE_LABEL)
+        self.assertEqual(self.http.posts(), [])
 
     def test_unmute_sends_the_bring_back_choice(self):
         self.http.on("POST", MUTES, FakeResponse(200, ff.mute_removed(4, 12)))
@@ -674,10 +767,14 @@ class RowActionTests(FilteredCase):
 
     def test_locked_controls_are_disabled_and_send_nothing(self):
         at = self.filtered()
-        for key in ("act_more_r7201", "act_less_r7201", "act_promote_r7201"):
+        # the icons show no words, so their tooltips keep them
+        for key, words in (("act_more_r7201", "More like this."), ("act_less_r7201", "Less like this."),
+                           ("act_rate_r7201", "Rate this story."), ("act_promote_r7201", "Should have been in.")):
             button = at.button(key=key)
             self.assertTrue(button.disabled, key)
-            self.assertEqual(button.help, labels.LOCKED_HELP)
+            self.assertEqual(button.help, f"{words} {labels.LOCKED_HELP}")
+        for key in ("act_morefull_r7201", "act_lessfull_r7201", "act_ratefull_r7201"):
+            self.assertTrue(at.button(key=key).disabled, key)
         self.show(at, "muted")
         self.assertTrue(at.button(key="fo_unmute_4").disabled)
         self.assertEqual(self.http.posts(), [])

@@ -11,7 +11,8 @@ docs/SPEC-PHASE03-UI.md 3.3 for these wrappers; docs/SPEC-REPAIR-PHASE-B.md 1.2 
                                  /mutes/bring-back-preview, /stars, /stars/preview, /preferences, /rules, /settings,
                                  /settings/volume/preview, /brief, /radar, /repairs, /diagnostics, /snapshot, /sources
     writes (bearer OWNER_TOKEN): POST /preferences, /rules/<id>/<action> (reopen undoes turning a suggestion down),
-                                 /feedback, /mutes, /stars, /promote, /settings/volume, /brief/suggest, /signoff,
+                                 /feedback, /feedback/withdraw, /mutes, /stars, /promote, /promote/withdraw
+                                 (docs/SPEC-ICON-ACTIONS.md), /settings/volume, /brief/suggest, /signoff,
                                  /admin/stage, /radar/requests, /radar/<id>/{approve|reject},
                                  /repairs/<id>/{approve|reject|withdraw}, /admin/sources/{ack|unack}
 
@@ -435,6 +436,27 @@ def add_feedback(ws: Workspace, token: str, *, verdict: str, item_id: int | None
             raise invalid("A score is a whole number from 0 to 100.")
         body["score"] = score
     return hub_post(ws, "/feedback", _with(body, note=words), token)
+
+
+def withdraw_ratings(ws: Workspace, token: str, *, item_id: int | None = None, event_id: int | None = None) -> dict:
+    """POST /feedback/withdraw {item_id} or {event_id} (exactly one; docs/SPEC-ICON-ACTIONS.md): withdraws every active
+    rating of the story (for a briefing item, its ratings and its story's; for a story, its ratings and those of any
+    briefing item of it). Nothing is deleted. Answers {withdrawn: [ids], effective}; nothing left to withdraw answers
+    [] (the same call twice is harmless)."""
+    item, event = _id(item_id), _id(event_id)
+    if (item is None) == (event is None):
+        raise invalid("Pick the story whose rating to withdraw.")
+    return hub_post(ws, "/feedback/withdraw", {"item_id": item} if item is not None else {"event_id": event}, token)
+
+
+def withdraw_promote(ws: Workspace, token: str, event_id: int) -> dict:
+    """POST /promote/withdraw {event_id}: cancels the story's open "Should have been in" request and withdraws the note
+    it stored. Answers {cancelled, already_reconsidered, withdrawn: [ids], effective}; already_reconsidered: the
+    editor had looked at the story again, so only the note is withdrawn. The same call twice is harmless."""
+    eid = _id(event_id)
+    if eid is None:
+        raise invalid("Pick the story whose request to withdraw.")
+    return hub_post(ws, "/promote/withdraw", {"event_id": eid}, token)
 
 
 def add_mute(ws: Workspace, token: str, *, kind: str, ref: str, module: str | None = None,

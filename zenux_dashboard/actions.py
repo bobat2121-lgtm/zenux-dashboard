@@ -1,11 +1,14 @@
 """Card actions shared by Briefing, Filtered out, My preferences and Coverage (docs/SPEC-PHASE03-UI.md 5.4).
 
-A card shows at most four buttons (More like this, Less like this and Rate this story as outlined buttons, and Should
-have been in where the caller offers it). The lazy "More" popover (Wrong facts, Mute source, Mute company or Unmute
-company, Star or Remove from watchlist, Mute this story) is off for now (SHOW_MORE_MENU). A filtered-out row has one
-lazy "Why" expander; a briefing lists every story's Why in one section under the editor's notes (feed_view). Lazy
-means the popover and the expanders draw their contents only while open (`on_change="rerun"` and `.open`), so a page
-of 60 cards stays light.
+A story's actions are icons (docs/SPEC-ICON-ACTIONS.md): thumb up (More like this), thumb down (Less like this), a star
+(Rate this story) and, where the caller offers it, an arrow up (Should have been in). They sit on the right of one row
+under the headline, with the story's tags on the left (action_bar). The words are each icon's label, for screen
+readers (feed.css hides them), and its tooltip. An icon glows Northland green while the story holds what it stands
+for, and a click on a glowing icon undoes that, at any time (story_icons says what selects each icon). The lazy "More"
+popover (Wrong facts, Mute source, Mute company or Unmute company, Star or Remove from watchlist, Mute this story) is
+off for now (SHOW_MORE_MENU). A filtered-out row has one lazy "Why" expander; a briefing lists every story's Why in one
+section under the editor's notes (feed_view). Lazy means the popover and the expanders draw their contents only while
+open (`on_change="rerun"` and `.open`), so a page of 60 cards stays light.
 
 Every write button goes through `ui.write_button` (drawn disabled with "Unlock to edit" while the workspace is
 locked, so nothing fails after submit because of the lock), and every write through `ui.write` (the owner token,
@@ -17,21 +20,29 @@ st.secrets), and looks the workspace up again when it draws.
 
 What each write does (docs/SPEC-PHASE02.md; the copy below says exactly this and nothing more):
 
-- More / Less like this: POST /preferences. A plain click saves at once with the defaults (stories like this, no end
-  date, no words; quick_preference). Ctrl+click (Cmd+click on a Mac) opens the dialog with every option (just this
-  story, the analyst's own words, an end date): Streamlit buttons do not report modifier keys, so the page script
-  (CTRL_CLICK_JS, drawn by ctrl_click_support) forwards such a click to the story's hidden twin button
-  (act_morefull_<key> / act_lessfull_<key>, hidden in feed.css). Touch screens have no Ctrl key: once a story holds a
-  preference, its "Change" button opens the same dialog. The preference is active at once (the wording assistant
-  may later suggest a clearer wording, which the analyst approves or not). Undo: POST /rules/<id>/retire
-  {reason: "undone"}.
+- More / Less like this: POST /preferences. A click on a plain thumb saves at once with the defaults (stories like
+  this, no end date, no words; toggle_preference); when the other thumb glows, the same click switches (`replace:
+  true` ends that one in the same step). A click on a glowing thumb undoes its preference: POST /rules/<id>/retire
+  {reason: "undone"}; it stops applying from the next briefing. Ctrl+click (Cmd+click on a Mac) opens the dialog with
+  every option (just this story, the analyst's own words, an end date; set to replace what the story holds):
+  Streamlit buttons do not report modifier keys, so the page script (CTRL_CLICK_JS, drawn by ctrl_click_support)
+  forwards such a click to the story's hidden twin button (act_morefull_<key> / act_lessfull_<key>, hidden in
+  feed.css). Phones and tablets have no Ctrl key: a tap saves or undoes, and a preference's options are in My
+  preferences (Edit, End date). The preference is active at once (the wording assistant may later suggest a clearer
+  wording, which the analyst approves or not). The Undo bar after a save retires it; after a switch it also brings
+  back the preference the switch replaced (POST /rules/<id>/reactivate).
 - Wrong facts: POST /feedback {verdict: "factual_error", item_id, note} on a briefing item. The ZENUX editor
   re-checks the item at the next briefing and either corrects it or explains why it stands. No undo route.
 - Rate this story: POST /feedback {scope: "item", verdict, score}. The 0-100 slider and the four ratings move
   together (a score picks its rating, a rating moves the score into its band); the hub stores both and the next lease
-  shows them to the editor when the rating's band differs from the editor's score. No undo route.
+  shows them to the editor when the rating's band differs from the editor's score. A click on the glowing star
+  withdraws the story's ratings: POST /feedback/withdraw {item_id} on a briefing item, else {event_id}; the editor stops
+  using them from its next run. Ctrl+click on it opens the dialog through its hidden twin (act_ratefull_<key>), and the
+  new rating becomes the newest. No undo route (the star rates again).
 - Should have been in: POST /promote {event_id, note}. The story goes back to the editor with the note; it may still
-  stay out if the evidence is thin. No undo route.
+  stay out if the evidence is thin. A click on the glowing arrow withdraws the request: POST /promote/withdraw
+  {event_id} (when the editor already looked at the story again, only the note is withdrawn and the story stays where
+  it is). No undo route.
 - Mute (source, company, story): the 7-day preview (GET /mutes/preview) is the confirmation step, then POST /mutes
   {action: "add"}. Muted stories are still collected and kept out of the briefing. Undo: remove the mute and bring
   back the last 7 days. A briefing story offers every company it is about (why.companies: subjects, vendors and
@@ -47,7 +58,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 import streamlit as st
 
@@ -104,28 +115,51 @@ SCORE_SCALE = (
 RATE_SCALE_NOTE = ("Your rating and score go to the editor beside its own score. When your band differs from the "
                    "editor's, it scores similar stories in your band from the next briefing.")
 EXISTS_FALLBACK = "You already have a preference made from this story. Replace it?"
-# A plain click on More / Less like this saves at once; the tooltip says so and how to get the options.
-QUICK_HELP = {
-    "more": ("Saves at once: more stories like this, with no end date. Ctrl+click (Cmd+click on a Mac) for options: "
-             "just this story, your own words or an end date."),
-    "less": ("Saves at once: fewer stories like this, with no end date. Ctrl+click (Cmd+click on a Mac) for options: "
-             "just this story, your own words or an end date."),
-}
-CHANGE_HELP = "Options for this story: just this story, your own words or an end date."
 CHANGE_REPLACES = "Saving replaces what you asked for on this story."
-ALREADY_ASKED = "You already asked for {what} on this story. Use Change for other options."
-# Ctrl+click (Cmd+click on a Mac) on More / Less like this: Streamlit buttons do not report modifier keys, so this
-# page script catches such a click before the button sees it and clicks the story's hidden twin button instead
-# (act_morefull_<key> / act_lessfull_<key>), whose run opens the dialog with every option.
+# The story icons (docs/SPEC-ICON-ACTIONS.md): the words are each icon's label (hidden in feed.css, read by screen
+# readers) and, with what a click does, its tooltip. A selected icon is a primary button (it glows), a plain one tertiary.
+ICON_LABELS = {"more": "More like this", "less": "Less like this", "rate": "Rate this story",
+               "promote": "Should have been in"}
+ICONS = {"more": ":material/thumb_up:", "less": ":material/thumb_down:", "rate": ":material/star:",
+         "promote": ":material/arrow_upward:"}
+# The hidden twins a Ctrl/Cmd+click lands on (CTRL_CLICK_JS); never seen, but their words stay plain.
+TWIN_LABELS = {"more": "More like this, with options", "less": "Less like this, with options",
+               "rate": "Rate this story, with options"}
+CTRL_OPTIONS = "Ctrl+click (Cmd+click on a Mac) for options."
+# (icon, selected) -> (what it is, what a click does); the tooltip is both. Locked, the second gives way to
+# labels.LOCKED_HELP. {rating}: the newest rating in plain words.
+ICON_TIPS: dict[tuple[str, bool], tuple[str, str]] = {
+    ("more", False): ("More like this.", "Click to save it for stories like this, with no end date. " + CTRL_OPTIONS),
+    ("more", True): ("More like this is on.", "Click to undo it. Ctrl+click to change it."),
+    ("less", False): ("Less like this.", "Click to save it for stories like this, with no end date. " + CTRL_OPTIONS),
+    ("less", True): ("Less like this is on.", "Click to undo it. Ctrl+click to change it."),
+    ("rate", False): ("Rate this story.", ""),
+    ("rate", True): ("You rated it: {rating}.", "Click to withdraw your rating. Ctrl+click to change it."),
+    ("promote", False): ("Should have been in.", ""),
+    ("promote", True): ("You asked for it to be in your briefing.", "Click to withdraw the request."),
+}
+OTHER = {"more": "less", "less": "more"}
+WHAT = {"more": "more like this", "less": "less like this"}
+UNDO_CHAIN_MAX = 10  # the most versions of one preference a thumb's undo ends (each undone version restores the last)
+ON_STATUSES = ("active", "paused", "")  # a preference that is on (the hub lists only those; "" from an older hub)
+PROMOTE_NOTE = "Should have been in"  # the hub's note on the digest grade it stores with a request: not a rating
+RATING_WITHDRAWN = "Rating withdrawn. The editor stops using it from the next briefing."
+REQUEST_WITHDRAWN = "Request withdrawn."
+REQUEST_WITHDRAWN_LATE = ("Request withdrawn. The editor had already looked at this story again, so it stays where "
+                          "it is.")
+# Ctrl+click (Cmd+click on a Mac) on a thumb or the star: Streamlit buttons do not report modifier keys, so this page
+# script catches such a click before the button sees it and clicks the story's hidden twin button instead
+# (act_morefull_<key>, act_lessfull_<key>, act_ratefull_<key>), whose callback opens the dialog. (V2: the star joined;
+# a tab still running the first script keeps both, and each click is forwarded once.)
 CTRL_CLICK_JS = r"""
 (function () {
-  if (window.zxCtrlClick) return;
-  window.zxCtrlClick = true;
+  if (window.zxCtrlClickV2) return;
+  window.zxCtrlClickV2 = true;
   document.addEventListener('click', function (ev) {
     if (!(ev.ctrlKey || ev.metaKey) || !ev.target || !ev.target.closest) return;
-    var holder = ev.target.closest('[class*="st-key-act_more_"], [class*="st-key-act_less_"]');
+    var holder = ev.target.closest('[class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"]');
     if (!holder) return;
-    var m = /(?:^|\s)st-key-act_(more|less)_(\S+)/.exec(holder.className);
+    var m = /(?:^|\s)st-key-act_(more|less|rate)_(\S+)/.exec(holder.className);
     if (!m) return;
     var twin = document.querySelector('.st-key-act_' + m[1] + 'full_' + CSS.escape(m[2]) + ' button');
     if (!twin || twin.disabled) return;
@@ -168,6 +202,8 @@ class Target:
     outlet_domain: str | None = None     # its domain, what an outlet mute keys on ("finance.yahoo.com")
     my_prefs: tuple[dict, ...] = ()      # WF5 AW-2: the analyst's preferences made from this story [{id, direction}]
     score: int | None = None             # the ZENUX editor's score (the Rate dialog shows it beside the slider)
+    rating: str | None = None            # the analyst's newest rating of it (lead, digest, watch, reject): the star glows
+    requested: bool = False              # its "Should have been in" request is open: the arrow glows
 
 
 # ---------------------------------------------------------------------------------------------- targets
@@ -267,10 +303,42 @@ def my_prefs_of(raw: Any) -> tuple[dict, ...]:
 
 
 def asked_text(pref: Mapping) -> str:
-    """'You asked for less like this' for a preference made from this story."""
+    """'You asked for less like this' for a preference made from this story (the options dialog says it)."""
     direction = one_line(pref.get("direction"))
-    words = {"more": "more like this", "less": "less like this"}.get(direction, "a rule about this")
+    words = WHAT.get(direction, "a rule about this")
     return f"You asked for {words}" + (" (paused)" if one_line(pref.get("status")) == "paused" else "")
+
+
+def newest_rating(feedback: Any) -> str | None:
+    """The verdict of the analyst's newest rating of a story (lead, digest, watch or reject) from its `feedback` list, or
+    None. The digest grade the hub stores with "Should have been in" (its note starts so) is not a rating, and a
+    withdrawn one (withdrawn_at; the hub leaves those out) no longer counts."""
+    rows = [f for f in dicts(feedback) if one_line(f.get("verdict")) in labels.RATING_CHOICES
+            and one_line(f.get("scope")) in ("", "item") and not one_line(f.get("withdrawn_at"))
+            and not one_line(f.get("note")).startswith(PROMOTE_NOTE)]
+    if not rows:
+        return None
+    newest = max(enumerate(rows), key=lambda nf: (parse_time(nf[1].get("created_at")), as_int(nf[1].get("id")) or 0,
+                                                  nf[0]))[1]
+    return one_line(newest.get("verdict"))
+
+
+def requested_of(raw: Any) -> dict | None:
+    """An open "Should have been in" request (a filtered-out row's `requested`: reason promote, not cancelled), else
+    None."""
+    if isinstance(raw, Mapping) and one_line(raw.get("reason")) == "promote" and not one_line(raw.get("cancelled_at")):
+        return dict(raw)
+    return None
+
+
+def live_prefs(target: Target) -> list[dict]:
+    """The story's preferences that are on (active or paused)."""
+    return [p for p in target.my_prefs if one_line(p.get("status")) in ON_STATUSES]
+
+
+def prefs_on(target: Target, direction: str) -> list[str]:
+    """Ids of the story's preferences in `direction` that are on: thumb up glows for "more", thumb down for "less"."""
+    return [p["id"] for p in live_prefs(target) if one_line(p.get("direction")) == direction]
 
 
 def item_title(item: Mapping) -> str:
@@ -311,6 +379,7 @@ def target_from_item(ws: Workspace, edition: dict, item: dict) -> Target:
         outlet_domain=outlet_domain or None,
         my_prefs=my_prefs_of(why.get("my_preferences")),
         score=as_int(item.get("score")) if as_int(item.get("score")) is not None else as_int(why.get("score")),
+        rating=newest_rating(item.get("feedback")),
     )
 
 
@@ -338,50 +407,79 @@ def target_from_row(ws: Workspace, row: dict) -> Target:
         outlet_domain=outlet_domain or None,
         my_prefs=my_prefs_of(row.get("my_preferences")),
         score=as_int(row.get("score")),
+        rating=newest_rating(row.get("feedback")),
+        requested=requested_of(row.get("requested")) is not None,
     )
 
 
 # ---------------------------------------------------------------------------------------------- the action bar
 
 
-def action_bar(ws: Workspace, target: Target, *, key: str, promote: bool = False) -> None:
-    """More like this, Less like this, Rate this story and Should have been in (when `promote` and the story is not in
-    a briefing) as separate outlined buttons, in one horizontal row that wraps on narrow screens. The lazy More
-    menu (Wrong facts, mutes, star) is drawn only while SHOW_MORE_MENU is on; it is off for now (the owner's call,
-    2026-10-04): mutes and stars stay in Coverage and My preferences."""
+def action_bar(ws: Workspace, target: Target, *, key: str, promote: bool = False, tags: str = "",
+               extra: Callable[[], None] | None = None) -> None:
+    """The story's row under its headline (docs/SPEC-ICON-ACTIONS.md): its tags on the left (`tags`, an HTML block the
+    caller built and escaped), then `extra` (the caller's own widgets for this row: Show it), and the story icons on
+    the right (story_icons), in one horizontal container that wraps on a narrow screen while the icons stay together.
+    The lazy More menu (Wrong facts, mutes, star) is drawn only while SHOW_MORE_MENU is on; it is off for now (the
+    owner's call, 2026-10-04): mutes and stars stay in Coverage and My preferences."""
     with st.container(horizontal=True, key=f"zx_actions_{key}", gap="small", vertical_alignment="center"):
-        # WF5 AW-2: what the analyst already said about this story, with its own Undo.
-        for n, pref in enumerate(target.my_prefs):
-            st.markdown(f'<span class="zx-asked">{esc(asked_text(pref))}</span>', unsafe_allow_html=True)
-            ui.write_button("Undo", ws=ws, key=f"act_undo_pref_{key}_{n}", type="tertiary",
-                            on_click=undo_preference, args=(ws, pref["id"]))
-            # The options dialog without a Ctrl key (phones and tablets), set to replace what the story holds.
-            ui.write_button("Change", ws=ws, key=f"act_change_pref_{key}_{n}", type="tertiary", help=CHANGE_HELP,
-                            on_click=open_preference, args=(ws, target, pref.get("direction") or "more"),
-                            kwargs={"replace_note": CHANGE_REPLACES})
-        # A plain click saves at once; Ctrl/Cmd+click reaches the hidden twin (CTRL_CLICK_JS), which opens the options.
-        if ui.write_button("More like this", ws=ws, key=f"act_more_{key}", icon=":material/thumb_up:",
-                           help=QUICK_HELP["more"]):
-            quick_preference(ws, target, "more")
-        if ui.write_button("More like this, with options", ws=ws, key=f"act_morefull_{key}"):
-            open_preference(ws, target, "more")
-        if ui.write_button("Less like this", ws=ws, key=f"act_less_{key}", icon=":material/thumb_down:",
-                           help=QUICK_HELP["less"]):
-            quick_preference(ws, target, "less")
-        if ui.write_button("Less like this, with options", ws=ws, key=f"act_lessfull_{key}"):
-            open_preference(ws, target, "less")
-        if target.event_id is not None or target.item_id is not None:
-            if ui.write_button("Rate this story", ws=ws, key=f"act_rate_{key}", icon=":material/star_rate:"):
-                open_rate(ws, target)
-        if promote and not target.in_briefing and target.event_id is not None:
-            if ui.write_button("Should have been in", ws=ws, key=f"act_promote_{key}", icon=":material/move_up:"):
-                open_promote(ws, target)
+        if tags:
+            st.markdown(tags, unsafe_allow_html=True)
+        if extra is not None:
+            extra()
+        story_icons(ws, target, key=key, promote=promote)
         if SHOW_MORE_MENU:
             menu = st.popover("More", key=f"zx_more_{key}", on_change="rerun", icon=":material/more_horiz:",
                               type="tertiary")
             with menu:
                 if menu.open:
                     more_menu(ws, target, key)
+
+
+def story_icons(ws: Workspace, target: Target, *, key: str, promote: bool = False) -> None:
+    """Thumb up, thumb down, the star and (when `promote` and the story is not in a briefing) the arrow up, together on
+    the right of the story's row. Each one glows while the story holds what it stands for, and a click on it then
+    undoes that, at any time. Every click runs in its button's callback, so the page draws once, in its new state, and
+    a refusal is said in a toast; the hidden twins take a Ctrl/Cmd+click (CTRL_CLICK_JS).
+
+    - Thumb up / down glows while the story holds an active or paused "more" / "less" preference (my_preferences). A
+      click saves one at once, switches from the other thumb in one click, or, glowing, undoes it (toggle_preference).
+    - The star glows while the story holds a rating (Target.rating). A click opens the rating dialog, or, glowing,
+      withdraws the rating (toggle_rating); Ctrl+click opens the dialog either way.
+    - The arrow glows while the story's "Should have been in" request is open (Target.requested). A click opens its
+      dialog (it needs a note), or, glowing, withdraws the request (toggle_request)."""
+    with st.container(horizontal=True, key=f"zx_icons_{key}", gap="xxsmall", vertical_alignment="center",
+                      width="content"):
+        for direction in DIRECTIONS:
+            icon_button(ws, direction, key=f"act_{direction}_{key}", on=bool(prefs_on(target, direction)),
+                        on_click=toggle_preference, args=(ws, target, direction))
+            ui.write_button(TWIN_LABELS[direction], ws=ws, key=f"act_{direction}full_{key}", on_click=open_options,
+                            args=(ws, target, direction))
+        if target.event_id is not None or target.item_id is not None:
+            icon_button(ws, "rate", key=f"act_rate_{key}", on=bool(target.rating), on_click=toggle_rating,
+                        args=(ws, target), rating=target.rating)
+            ui.write_button(TWIN_LABELS["rate"], ws=ws, key=f"act_ratefull_{key}", on_click=open_rate,
+                            args=(ws, target))
+        if promote and not target.in_briefing and target.event_id is not None:
+            icon_button(ws, "promote", key=f"act_promote_{key}", on=target.requested, on_click=toggle_request,
+                        args=(ws, target))
+
+
+def icon_tip(name: str, on: bool, rating: str | None = None) -> tuple[str, str]:
+    """(what the icon is, what a click does) in plain words; its tooltip is both."""
+    lead, act = ICON_TIPS[(name, on)]
+    return lead.format(rating=labels.VERDICT_LABELS.get(one_line(rating), "a rating")), act
+
+
+def icon_button(ws: Workspace, name: str, *, key: str, on: bool, on_click: Callable[..., Any], args: tuple,
+                rating: str | None = None) -> None:
+    """One story icon: its words as the label (feed.css hides them; screen readers read them) and the tooltip, the
+    icon, and `on` (selected) as a primary button, which feed.css fills green and makes glow; plain, tertiary. Locked,
+    it is drawn disabled and its tooltip keeps the words."""
+    lead, act = icon_tip(name, on, rating)
+    ui.write_button(ICON_LABELS[name], ws=ws, key=key, type="primary" if on else "tertiary", icon=ICONS[name],
+                    help=f"{lead} {act}".strip(), locked_help=f"{lead} {labels.LOCKED_HELP}", on_click=on_click,
+                    args=args)
 
 
 def more_menu(ws: Workspace, target: Target, key: str) -> None:
@@ -602,53 +700,124 @@ def open_preference(ws: Workspace, target: Target, direction: str, replace_note:
         st.session_state[REPLACE_KEY] = replace_note  # after open_dialog, which clears the dialog's widgets
 
 
-def quick_preference(ws: Workspace, target: Target, direction: str) -> None:
-    """A plain click on More / Less like this: save "stories like this" with no end date and no words, at once, then
-    rerun so the card says what was asked (with Undo and Change). A story that already holds the same preference only
-    says so; one that holds the other direction opens the dialog, set to replace it (one preference per story)."""
+def open_options(ws: Workspace, target: Target, direction: str) -> None:
+    """A Ctrl/Cmd+click on a thumb (its hidden twin's callback): the dialog with every option, set to replace what the
+    story holds when it holds a preference (one preference per story; this is how the one made from it changes)."""
+    open_preference(ws, target, direction, replace_note=CHANGE_REPLACES if live_prefs(target) else None)
+
+
+def toggle_preference(ws: Workspace, target: Target, direction: str) -> None:
+    """A thumb's click (its button's callback). Glowing: undo the story's preference in this direction. Plain: save one
+    at once ("stories like this", no end date, no words), replacing the other thumb's in the same step when that one
+    glows (a switch). The hub refusing because the story holds another preference (one the page did not show yet, or
+    one in the analyst's own words) opens the options instead, set to replace it."""
     direction = direction if direction in DIRECTIONS else "more"
-    if target.my_prefs:
-        if any(one_line(p.get("direction")) == direction for p in target.my_prefs):
-            what = {"more": "more like this", "less": "less like this"}[direction]
-            ui.notify(ALREADY_ASKED.format(what=what))
-            st.rerun()
-        open_preference(ws, target, direction, replace_note=CHANGE_REPLACES)
+    on = prefs_on(target, direction)
+    if on:
+        undo_preferences(ws, direction, on)
         return
-    result, handled = save_preference(ws, target, direction, scope=DEFAULT_SCOPE, words="", expires=None,
-                                      replacing=False)
-    if handled is not None:  # the hub knows of a preference the page did not show yet: ask in the dialog
+    switch = bool(prefs_on(target, OTHER[direction]))
+    _, handled = save_preference(ws, target, direction, scope=DEFAULT_SCOPE, words="", expires=None, replacing=switch,
+                                 switch=switch, in_callback=True)
+    if handled is not None:
         open_preference(ws, target, direction, replace_note=one_line(handled.detail) or EXISTS_FALLBACK)
-        return
-    if result is not None:
-        st.rerun()
 
 
 def save_preference(ws: Workspace, target: Target, direction: str, *, scope: str, words: str, expires: str | None,
-                    replacing: bool) -> tuple[Any | None, api.ApiError | None]:
+                    replacing: bool, switch: bool = False,
+                    in_callback: bool = False) -> tuple[Any | None, api.ApiError | None]:
     """POST /preferences for this story, with its toast and Undo; a "preference_exists" refusal comes back to the
-    caller instead of being drawn. -> (result or None, the refusal or None)."""
+    caller instead of being drawn. switch: a thumb's one-click switch from the other direction (`replacing` too): its
+    toast says "Switched to ...", and its Undo also brings back the preference it replaced. in_callback: run from a
+    button's callback (ui.write's). -> (result or None, the refusal or None)."""
     item_id = target.item_id
     event_id = None if item_id is not None else target.event_id
 
     def call(token: str) -> Any:
-        return api.add_preference(ws, token, direction=direction, scope=scope or DEFAULT_SCOPE, text=words,
-                                  item_id=item_id, event_id=event_id, expires_at=expires, replace=replacing)
+        result = api.add_preference(ws, token, direction=direction, scope=scope or DEFAULT_SCOPE, text=words,
+                                    item_id=item_id, event_id=event_id, expires_at=expires, replace=replacing)
+        # an Undo bar that would end a preference this one just replaced has nothing left to do
+        ui.forget_undo(ws, {f"pref:{one_line(old)}" for old in as_list(pick(result, "replaced"))})
+        return result
 
     def undo(result: Any) -> tuple | None:
         pid = one_line(pick(result, "preference.id"))
         if not pid:
             return None
-        return ("Saved a preference.", lambda token: api.rule_action(ws, token, pid, "retire", {"reason": "undone"}),
-                "Preference removed.")
 
+        def retire(token: str) -> Any:
+            return api.rule_action(ws, token, pid, "retire", {"reason": "undone"})
+
+        if not switch:
+            return "Saved a preference.", retire, "Preference removed.", f"pref:{pid}"
+        replaced = [r for r in (one_line(x) for x in as_list(pick(result, "replaced"))) if PREFERENCE_ID_RE.match(r)]
+
+        def switch_back(token: str) -> None:
+            retire(token)
+            for old in replaced:
+                api.rule_action(ws, token, old, "reactivate")
+
+        back = f"Switched back to {WHAT[OTHER[direction]]}." if replaced else "Preference removed."
+        return f"Switched to {WHAT[direction]}.", switch_back, back, f"pref:{pid}"
+
+    toast = (lambda r: switch_toast(direction, r, ws.timezone)) if switch else (
+        lambda r: preference_toast(direction, r, ws.timezone))
     from .brief_view import write_or_handle  # brief_view imports nothing of this module; late to keep imports light
-    return write_or_handle(ws, call, toast=lambda r: preference_toast(direction, r, ws.timezone), undo=undo,
-                           codes=("preference_exists",))
+    return write_or_handle(ws, call, toast=toast, undo=undo, codes=("preference_exists",), in_callback=in_callback)
+
+
+def undo_preferences(ws: Workspace, direction: str, pref_ids: list[str]) -> None:
+    """A glowing thumb's click (in its callback): end the story's preference(s) in this direction as undone (POST
+    /rules/<id>/retire {reason: "undone"}); they stop applying from the next briefing. Undoing a version that replaced
+    another (an edited one, an approved wording) brings that one back (the answer's `restored`), so it is ended too,
+    and the thumb goes plain. One more click saves a new one; My preferences can bring the old one back. An Undo bar
+    that would have done just this is dropped quietly."""
+    refs = {f"pref:{pid}" for pid in pref_ids}
+
+    def call(token: str) -> Any:
+        result = None
+        done: set[str] = set()
+        todo = list(pref_ids)
+        while todo and len(done) < UNDO_CHAIN_MAX:
+            pid = todo.pop(0)
+            done.add(pid)
+            result = api.rule_action(ws, token, pid, "retire", {"reason": "undone"})
+            restored = one_line(pick(result, "restored"))
+            if PREFERENCE_ID_RE.match(restored) and restored not in done:
+                todo.append(restored)
+        ui.forget_undo(ws, refs)
+        return result
+
+    ui.write(ws, call, toast=lambda r: undone_toast(direction, r, ws.timezone), in_callback=True)
+
+
+def toggle_rating(ws: Workspace, target: Target) -> None:
+    """The star's click (its button's callback): the rating dialog (a rating needs a choice), or, while the star glows,
+    withdraw the story's ratings, by its briefing item when it has one, else by the story (POST /feedback/withdraw). The
+    editor stops using them from its next run. No undo route: the star rates again."""
+    if not target.rating:
+        open_rate(ws, target)
+        return
+    item_id = target.item_id
+    event_id = None if item_id is not None else target.event_id
+    ui.write(ws, lambda token: api.withdraw_ratings(ws, token, item_id=item_id, event_id=event_id),
+             toast=RATING_WITHDRAWN, in_callback=True)
+
+
+def toggle_request(ws: Workspace, target: Target) -> None:
+    """The arrow's click (its button's callback): the Should have been in dialog (it needs a note), or, while the arrow
+    glows, withdraw the request (POST /promote/withdraw). It is cancelled when the editor has not looked at the story
+    again yet; else only the note is withdrawn and the story stays where the editor put it. No undo route."""
+    if not target.requested or target.event_id is None:
+        open_promote(ws, target)
+        return
+    event_id = target.event_id
+    ui.write(ws, lambda token: api.withdraw_promote(ws, token, event_id), toast=request_toast, in_callback=True)
 
 
 def ctrl_click_support() -> None:
-    """The page script behind Ctrl/Cmd+click on More / Less like this (CTRL_CLICK_JS). Drawn once per run by each view
-    that shows story buttons, in a container feed.css hides (zx_ctrl_click), so it takes no room."""
+    """The page script behind Ctrl/Cmd+click on the thumbs and the star (CTRL_CLICK_JS). Drawn once per run by each
+    view that shows story icons, in a container feed.css hides (zx_ctrl_click), so it takes no room."""
     with st.container(key="zx_ctrl_click"):
         st.html(f"<script>{CTRL_CLICK_JS}</script>", unsafe_allow_javascript=True)
 
@@ -696,12 +865,6 @@ def unstar(ws: Workspace, entity_id: str, name: str, *, rerun: bool = True) -> N
                       in_callback=not rerun)
     if result is not None and rerun:
         st.rerun()
-
-
-def undo_preference(ws: Workspace, pref_id: str) -> None:
-    """The card's Undo for a preference made from this story (a button callback): end it as undone (WF5 AW-2)."""
-    ui.write(ws, lambda token: api.rule_action(ws, token, pref_id, "retire", {"reason": "undone"}),
-             toast="Preference removed.", in_callback=True)
 
 
 def report_not_about(ws: Workspace, entity_id: str, name: str, event_id: int, *, rerun: bool = True) -> None:
@@ -796,6 +959,30 @@ def preference_toast(direction: str, result: Any, tz: str) -> str:
     return f"Saved: {labels.DIRECTION_LABELS.get(direction, '')}.{replaced} {ui.effective_text(effective_of(result), tz)}"
 
 
+def switch_toast(direction: str, result: Any, tz: str) -> str:
+    """"Switched to less like this. Applies from the 12:30 PM briefing." """
+    return f"Switched to {WHAT.get(direction, 'this')}. {ui.effective_text(effective_of(result), tz)}"
+
+
+def stops_text(effective: Mapping | None, tz: str) -> str:
+    """When an undone preference stops applying, in ui.effective_text's words: "Stops applying from the 12:30 PM
+    briefing." """
+    text = ui.effective_text(effective, tz)
+    lead = "Applies from"
+    return "Stops applying from" + text[len(lead):] if text.startswith(lead) else text
+
+
+def undone_toast(direction: str, result: Any, tz: str) -> str:
+    """"Undone: more like this. Stops applying from tomorrow's 7:30 AM briefing." """
+    return f"Undone: {WHAT.get(direction, 'this')}. {stops_text(effective_of(result), tz)}"
+
+
+def request_toast(result: Any) -> str:
+    """A withdrawn "Should have been in": cancelled, or, when the editor already looked at the story again, only the
+    note withdrawn."""
+    return REQUEST_WITHDRAWN_LATE if pick(result, "already_reconsidered") is True else REQUEST_WITHDRAWN
+
+
 def wrong_facts_toast(result: Any, tz: str) -> str:
     when = pick(effective_of(result), "next_briefing_at")
     at = f"the {fmt_clock(when, tz)} briefing" if parse_time(when) != MIN_TIME else "the next briefing"
@@ -861,8 +1048,8 @@ def preference_dialog(workspace_id: str, target: Target, direction: str) -> None
     replace = st.session_state.get(REPLACE_KEY)
     if isinstance(replace, str) and replace:
         st.warning(md_label(replace))
-    elif target.my_prefs:
-        st.caption(md_label(f"{asked_text(target.my_prefs[0])} on this story. Saving asks whether to replace it."))
+    elif live_prefs(target):
+        st.caption(md_label(f"{asked_text(live_prefs(target)[0])} on this story. Saving asks whether to replace it."))
     scopes = [s for s in SCOPES if s != "this_story" or target.story_id]
     scope = st.radio("Apply to", scopes, index=scopes.index(DEFAULT_SCOPE), key="dlg_scope",
                      format_func=lambda s: labels.SCOPE_LABELS.get(s, s),

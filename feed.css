@@ -184,6 +184,8 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--zx-green-light
 .feed-tags { margin-top: 4px; gap: 5px; }
 /* On a story the headline leads; its tags stay small (owner, 2026-10-04). */
 .feed-tags :is(.module-tag, .zx-chip, .chip-state, .badge-top) { min-height: 18px; padding: 0 7px; font-size: 12px; font-weight: 600; line-height: 16px; letter-spacing: .3px; }
+/* The tier is plain grey words beside the tags, not a pill (docs/SPEC-ICON-ACTIONS.md). */
+.feed-tier { color: var(--zx-muted); font: 500 12px/18px var(--zx-font); letter-spacing: .2px; white-space: nowrap; }
 .feed-nolink { color: var(--zx-muted); font-size: 13px; }
 /* The edition's grading notes and its grade form sit inside the card, under a hairline. */
 [class*="st-key-zx_edition_"] [data-testid="stExpander"] details { background: transparent; border: 0; border-top: 1px solid var(--zx-line); border-radius: 0; }
@@ -193,7 +195,7 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--zx-green-light
 /* ------------------------------------------------------------------ pills and tags: tinted fill, coloured border, coloured text */
 .module-tag, .zx-chip, .rejected-chip, .loop-kind, .status-pill { display: inline-flex; align-items: center; gap: 6px; min-height: 22px; padding: 2px 10px; border: 1px solid var(--zx-line-strong); border-radius: 999px; background: rgba(255,255,255,.04); color: var(--zx-text-soft); font: 700 12px/1.4 var(--zx-font); letter-spacing: .8px; text-transform: uppercase; white-space: nowrap; }
 .zx-chip.tier, .rejected-chip { color: #bdbdbd; font-weight: 500; letter-spacing: .3px; text-transform: none; font-size: 12px; }
-.zx-chip.grade, .rejected-chip.score { color: var(--zx-sky); border-color: rgba(56,189,248,.55); background: rgba(56,189,248,.14); text-transform: none; letter-spacing: .3px; font-size: 12px; font-weight: 600; }
+.rejected-chip.score { color: var(--zx-sky); border-color: rgba(56,189,248,.55); background: rgba(56,189,248,.14); text-transform: none; letter-spacing: .3px; font-size: 12px; font-weight: 600; }
 .rejected-chip.decision { color: var(--zx-warn); border-color: rgba(251,191,36,.55); background: rgba(251,191,36,.14); text-transform: uppercase; letter-spacing: .8px; font-size: 12px; font-weight: 700; }
 .rejected-chip.auto { color: #F472B6; border-color: rgba(244,114,182,.55); background: rgba(244,114,182,.14); text-transform: uppercase; letter-spacing: .8px; font-size: 12px; font-weight: 700; }
 .loop-kind-rule, .loop-kind-track_source { color: var(--zx-sky); border-color: rgba(56,189,248,.55); background: rgba(56,189,248,.14); }
@@ -308,7 +310,6 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--zx-green-light
 .zx-confirm { color: var(--zx-text); font: 400 15px/23px var(--zx-font); }
 .zx-locked { color: var(--zx-muted); font: 400 13px/20px var(--zx-font); }
 .zx-jump { text-align: right; font: 500 14px/20px var(--zx-font); }
-.zx-asked { display: inline-block; padding: 2px 8px; color: var(--zx-text); background: var(--zx-raised); border: 1px solid var(--zx-line-strong); border-radius: 999px; font: 500 13px/18px var(--zx-font); }
 #zx-coverage-requests { scroll-margin-top: 3.5rem; }
 /* ------------------------------------------------------------------ cards, datelines, badges and state chips */
 [class*="st-key-zx_item_"] { gap: 6px !important; padding: 0 0 14px; border-bottom: 1px dashed var(--zx-line-strong); }
@@ -442,41 +443,60 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
   [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:not(:first-child) { flex: 1 1 0 !important; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
-/* Card actions (owner, 2026-10-04): More like this, Less like this and Rate this story as three separate outlined
-   pills, set off from the story above them by a hairline, each with its own colour. */
-/* A briefing story ends with its buttons and the dashed line under them (owner, 2026-10-04: a line above the buttons
-   read as the header of the next story); a filtered-out story is its own card, so the line inside it stays above. */
-[class*="st-key-zx_item_"] [class*="st-key-zx_actions_"] { margin-top: 2px; gap: 6px 8px !important; }
-[class*="st-key-zx_row_"] [class*="st-key-zx_actions_"] { margin-top: 2px; padding-top: 10px; border-top: 1px dashed var(--zx-line); gap: 6px 8px !important; }
-/* Ctrl/Cmd+click on More / Less like this lands on these hidden twins (actions.CTRL_CLICK_JS); the page script that
+/* The story's row under its headline (owner, 2026-10-04; docs/SPEC-ICON-ACTIONS.md): its tags on the left, its icons
+   on the right. On a briefing story the row lines up with the headline, the story number keeping its gutter (the number
+   column and its gap: 30px + 14px; phones 22px + 10px), close under the headline; the story ends with the dashed line
+   under it, and the whole story lights up on hover. A filtered-out story is its own card. */
+[class*="st-key-zx_item_"] { transition: background .16s; }
+[class*="st-key-zx_item_"]:hover { background: #181818; }
+[class*="st-key-zx_item_"] .feed-item { padding-bottom: 0; }
+:is([class*="st-key-zx_item_"], [class*="st-key-zx_row_"]) [class*="st-key-zx_actions_"] { flex-wrap: wrap !important; align-items: center !important; gap: 6px 12px !important; }
+[class*="st-key-zx_item_"] [class*="st-key-zx_actions_"] { padding-left: 44px; }
+/* The tags take the room the icons leave and wrap inside it, so the icons keep their place on the right. */
+[class*="st-key-zx_actions_"] > [data-testid="stElementContainer"]:has(:is(.feed-tags, .rejected-signals)) { flex: 1 1 0; min-width: 0; }
+[class*="st-key-zx_actions_"] :is(.feed-tags, .rejected-signals) { margin: 0; }
+[class*="st-key-zx_actions_"] > :has(> [class*="st-key-zx_icons_"]) { flex: 0 0 auto; margin-left: auto; }
+[class*="st-key-zx_icons_"] { flex-wrap: nowrap !important; align-items: center !important; gap: 6px !important; }
+/* Ctrl/Cmd+click on a thumb or the star lands on these hidden twins (actions.CTRL_CLICK_JS); the page script that
    forwards it takes no room either. */
-[class*="st-key-act_morefull_"], [class*="st-key-act_lessfull_"], .st-key-zx_ctrl_click { display: none !important; }
-/* The story buttons are compact (20px, under the 22px headline) so the headline stays the focus (owner, 2026-10-04). */
-.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] {
-  min-height: 20px !important; height: 20px !important; padding: 0 8px !important; gap: 3px; border-radius: 999px !important; background: var(--zx-raised) !important;
+[class*="st-key-act_morefull_"], [class*="st-key-act_lessfull_"], [class*="st-key-act_ratefull_"], .st-key-zx_ctrl_click { display: none !important; }
+/* The story icons: 20px circles (18px on phones), the icon only. The words stay the button's label for screen readers
+   (visually hidden) and its tooltip. Plain: no fill, no border, a grey icon; hover: white on a faint fill. Selected (a
+   primary button): the Northland green fill, a white icon and a soft green glow, the same green for every icon; hover
+   brightens it. Locked: disabled, and a selected icon keeps its green, dimmed. */
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind] {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
+  width: 20px !important; min-width: 20px !important; height: 20px !important; min-height: 20px !important; padding: 0 !important;
+  border: 0 !important; border-radius: 50% !important; background: transparent !important; box-shadow: none !important; color: #8a8a8a !important;
+  transition: background-color .15s, box-shadow .15s, color .15s;
 }
-.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] :is(p, span) { font-size: 12px !important; line-height: 14px !important; margin: 0 !important; }
-.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] [data-testid="stIconMaterial"] { font-size: 12px !important; }
-/* Phones: the headline is 19px there, so the buttons drop to 18px (after the rules above, so it wins). */
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind] :is(div, span) { margin: 0 !important; padding: 0 !important; gap: 0 !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind] [data-testid="stIconMaterial"] { color: inherit !important; font-size: 13px !important; line-height: 1 !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind] [data-testid="stMarkdownContainer"] { position: absolute !important; width: 1px !important; height: 1px !important; margin: -1px !important; overflow: hidden !important; clip-path: inset(50%) !important; white-space: nowrap !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind="tertiary"]:hover:not(:disabled) { background: rgba(255,255,255,.1) !important; color: var(--zx-white) !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind="primary"] { background: var(--zx-green) !important; color: var(--zx-white) !important; box-shadow: 0 0 8px 1px rgba(0,99,65,.9) !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind="primary"]:hover:not(:disabled) { background: var(--zx-green-hover) !important; box-shadow: 0 0 10px 2px rgba(0,119,78,.95) !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind]:disabled { cursor: not-allowed; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind="tertiary"]:disabled { color: #8a8a8a !important; }
+.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind="primary"]:disabled { background: rgba(0,99,65,.5) !important; color: rgba(255,255,255,.7) !important; box-shadow: 0 0 6px rgba(0,99,65,.45) !important; }
+/* Phones (after the rules above, so they win). */
 @media (max-width: 760px) {
-  .st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind] {
-    min-height: 18px !important; height: 18px !important; padding: 0 7px !important;
-  }
+  [class*="st-key-zx_item_"] [class*="st-key-zx_actions_"] { padding-left: 32px; }
+  .st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind] { width: 18px !important; min-width: 18px !important; height: 18px !important; min-height: 18px !important; }
+  .st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"]) button[kind] [data-testid="stIconMaterial"] { font-size: 12px !important; }
 }
-.st-key-zx_view [class*="st-key-act_more_"] button[kind] { border: 1px solid rgba(52,211,153,.6) !important; }
-.st-key-zx_view [class*="st-key-act_more_"] button[kind] :is(p, span) { color: var(--zx-ok) !important; }
-.st-key-zx_view [class*="st-key-act_more_"] button[kind]:hover { background: rgba(52,211,153,.14) !important; border-color: var(--zx-ok) !important; }
-.st-key-zx_view [class*="st-key-act_less_"] button[kind] { border: 1px solid rgba(248,113,113,.6) !important; }
-.st-key-zx_view [class*="st-key-act_less_"] button[kind] :is(p, span) { color: var(--zx-bad) !important; }
-.st-key-zx_view [class*="st-key-act_less_"] button[kind]:hover { background: rgba(248,113,113,.14) !important; border-color: var(--zx-bad) !important; }
-.st-key-zx_view [class*="st-key-act_rate_"] button[kind] { border: 1px solid rgba(251,191,36,.6) !important; }
-.st-key-zx_view [class*="st-key-act_rate_"] button[kind] :is(p, span) { color: var(--zx-warn) !important; }
-.st-key-zx_view [class*="st-key-act_rate_"] button[kind]:hover { background: rgba(251,191,36,.14) !important; border-color: var(--zx-warn) !important; }
-.st-key-zx_view [class*="st-key-act_promote_"] button[kind], .st-key-zx_view [class*="st-key-br_promote_"] button[kind] { border: 1px solid rgba(56,189,248,.6) !important; }
-.st-key-zx_view [class*="st-key-act_promote_"] button[kind] :is(p, span), .st-key-zx_view [class*="st-key-br_promote_"] button[kind] :is(p, span) { color: var(--zx-sky) !important; }
-.st-key-zx_view [class*="st-key-act_promote_"] button[kind]:hover, .st-key-zx_view [class*="st-key-br_promote_"] button[kind]:hover { background: rgba(56,189,248,.14) !important; border-color: var(--zx-sky) !important; }
-.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind]:disabled { border-color: var(--zx-line-strong) !important; background: transparent !important; }
-.st-key-zx_view :is([class*="st-key-act_more_"], [class*="st-key-act_less_"], [class*="st-key-act_rate_"], [class*="st-key-act_promote_"], [class*="st-key-br_promote_"]) button[kind]:disabled :is(p, span) { color: var(--zx-muted) !important; }
+/* The watchlist and near-miss shelves keep Should have been in as a compact outlined pill (20px; 18px on phones). */
+.st-key-zx_view [class*="st-key-br_promote_"] button[kind] {
+  min-height: 20px !important; height: 20px !important; padding: 0 8px !important; gap: 3px; border-radius: 999px !important; background: var(--zx-raised) !important; border: 1px solid rgba(56,189,248,.6) !important;
+}
+.st-key-zx_view [class*="st-key-br_promote_"] button[kind] :is(p, span) { font-size: 12px !important; line-height: 14px !important; margin: 0 !important; color: var(--zx-sky) !important; }
+.st-key-zx_view [class*="st-key-br_promote_"] button[kind] [data-testid="stIconMaterial"] { font-size: 12px !important; }
+.st-key-zx_view [class*="st-key-br_promote_"] button[kind]:hover { background: rgba(56,189,248,.14) !important; border-color: var(--zx-sky) !important; }
+.st-key-zx_view [class*="st-key-br_promote_"] button[kind]:disabled { border-color: var(--zx-line-strong) !important; background: transparent !important; }
+.st-key-zx_view [class*="st-key-br_promote_"] button[kind]:disabled :is(p, span) { color: var(--zx-muted) !important; }
+@media (max-width: 760px) {
+  .st-key-zx_view [class*="st-key-br_promote_"] button[kind] { min-height: 18px !important; height: 18px !important; padding: 0 7px !important; }
+}
 /* "Why am I seeing this?" under the editor's notes: one entry per story, headed by its number. */
 .why-item-head { display: flex; align-items: baseline; gap: 12px; margin: 12px 0 8px; }
 .why-num { flex: 0 0 auto; color: var(--zx-muted); font: 500 12px/1.5 var(--zx-mono); font-variant-numeric: tabular-nums; }

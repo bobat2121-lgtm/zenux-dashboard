@@ -88,6 +88,23 @@ class ToastAndUndoTests(UiCase):
         at.run()
         self.assertEqual(self.toasts(at), [])
 
+    def test_a_toast_right_after_another_takes_the_next_place(self):
+        # Streamlit draws every toast in its event area and skips one drawn at the place of a toast still showing (a
+        # run's first toast always takes the first place there); empty style blocks, which take no room, move each
+        # batch on, so a story icon clicked twice says both
+        def spacers(at) -> int:
+            return sum(1 for el in at.get("html") if str(el.value) == ui.TOAST_SPACER)
+
+        at = self.app()
+        at.button(key="probe_notify").click().run()
+        self.assertEqual((self.toasts(at), spacers(at), at.session_state[ui.TOAST_SLOT_KEY]), (["Hello there."], 0, 1))
+        at.button(key="probe_notify").click().run()
+        self.assertEqual((self.toasts(at), spacers(at), at.session_state[ui.TOAST_SLOT_KEY]), (["Hello there."], 1, 2))
+        at.run()  # no toast: nothing is drawn and the next place is kept
+        self.assertEqual((self.toasts(at), spacers(at), at.session_state[ui.TOAST_SLOT_KEY]), ([], 0, 2))
+        self.assertEqual([ui.as_slot(v) for v in (0, 5, ui.TOAST_SLOTS + 1, -1, True, "3", None)],
+                         [0, 5, 1, 0, 0, 0, 0])
+
     def test_write_toasts_and_offers_undo(self):
         at = self.app(pin=PIN)
         at.button(key="probe_mute").click().run()

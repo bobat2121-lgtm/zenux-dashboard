@@ -1,25 +1,57 @@
 """AppTest: the card actions on Briefing stories (docs/SPEC-PHASE03-UI.md 5.4), end to end: the button, the dialog,
-the exact write (method, URL, owner bearer, JSON body), the toast, and the undo. Also the lock: every action is drawn
-disabled with "Unlock to edit" and nothing is sent while locked."""
+the exact write (method, URL, owner bearer, JSON body), the toast, and the undo. The story icons
+(docs/SPEC-ICON-ACTIONS.md): what makes each glow, what a click on a plain or a glowing one sends, the switch between
+the thumbs, the Ctrl+click twins and the tooltips. Also the lock: every action is drawn disabled with "Unlock to edit"
+and nothing is sent while locked."""
 
 from __future__ import annotations
 
 import unittest
 from datetime import timedelta
+from pathlib import Path
 
 import fixtures as fx
 import fixtures_briefing as fb
-from helpers import AppCase, FakeResponse, OWNER, PILOT_HUB, PIN, hub_defaults
+from helpers import DASHBOARD, AppCase, FakeResponse, OWNER, PILOT_HUB, PIN, hub_defaults
 from zenux_dashboard import actions, labels, ui
 from zenux_dashboard.fmt import fmt_clock
 
 EDITIONS = PILOT_HUB + "/editions"
 PREFERENCES = PILOT_HUB + "/preferences"
 FEEDBACK = PILOT_HUB + "/feedback"
+WITHDRAW_RATINGS = PILOT_HUB + "/feedback/withdraw"
 MUTES = PILOT_HUB + "/mutes"
 STARS = PILOT_HUB + "/stars"
 PROMOTE = PILOT_HUB + "/promote"
 TZ = "America/New_York"
+# The tooltips, word for word (docs/SPEC-ICON-ACTIONS.md, Tooltips).
+MORE_PLAIN = ("More like this. Click to save it for stories like this, with no end date. Ctrl+click (Cmd+click on a "
+              "Mac) for options.")
+LESS_PLAIN = ("Less like this. Click to save it for stories like this, with no end date. Ctrl+click (Cmd+click on a "
+              "Mac) for options.")
+MORE_ON = "More like this is on. Click to undo it. Ctrl+click to change it."
+LESS_ON = "Less like this is on. Click to undo it. Ctrl+click to change it."
+RATE_PLAIN = "Rate this story."
+RATE_ON = "You rated it: {rating}. Click to withdraw your rating. Ctrl+click to change it."
+
+
+def holding(*prefs: dict, body: dict | None = None, item: int = 0) -> dict:
+    """GET /editions with item `item` of the latest briefing holding these preferences (why.my_preferences)."""
+    body = body or fb.editions(1)
+    body["editions"][0]["items"][item]["why"]["my_preferences"] = list(prefs)
+    return body
+
+
+def pref(pid: str, direction: str, status: str = "active") -> dict:
+    return {"id": pid, "direction": direction, "direction_label": labels.DIRECTION_LABELS[direction],
+            "scope": "similar", "status": status}
+
+
+def stops(effective: dict) -> str:
+    """When an undone preference stops applying, as the toast says it."""
+    text = ui.effective_text(effective, TZ)
+    assert text.startswith("Applies from "), text
+    return "Stops applying from " + text[len("Applies from "):]
 
 
 class ActionCase(AppCase):
@@ -102,7 +134,7 @@ class PreferenceTests(ActionCase):
         answer = fb.preference_created("R-0013")
         self.http.on("POST", PREFERENCES, FakeResponse(201, answer))
         at = self.briefing()
-        self.assertEqual(at.button(key="act_more_i1201").help, actions.QUICK_HELP["more"])
+        self.assertEqual(at.button(key="act_more_i1201").help, MORE_PLAIN)
         self.click(at, "act_more_i1201")
         self.assert_clean(at)
         self.assert_sent(PREFERENCES, {"direction": "more", "scope": "similar", "item_id": 1201})
@@ -113,7 +145,7 @@ class PreferenceTests(ActionCase):
     def test_a_plain_click_on_less_like_this(self):
         self.http.on("POST", PREFERENCES, FakeResponse(201, fb.preference_created("R-0014")))
         at = self.briefing()
-        self.assertEqual(at.button(key="act_less_i1202").help, actions.QUICK_HELP["less"])
+        self.assertEqual(at.button(key="act_less_i1202").help, LESS_PLAIN)
         self.click(at, "act_less_i1202")
         self.assert_clean(at)
         self.assert_sent(PREFERENCES, {"direction": "less", "scope": "similar", "item_id": 1202})
@@ -207,10 +239,15 @@ class PreferenceTests(ActionCase):
         self.assert_sent(PREFERENCES, {"direction": "more", "scope": "similar", "event_id": 9001})
         self.open_popover(at, "zx_more_e12r1")
         at.run()
-        self.click(at, "act_rate_e12r1")
+        self.click(at, "act_ratefull_e12r1")  # the story is rated: Ctrl+click (its twin) rates it again
         at.button(key="dlg_save").click().run()
         self.assert_clean(at)
         self.assert_sent(FEEDBACK, {"verdict": "digest", "scope": "item", "edition_id": 12, "item_rank": 1})
+        # withdrawing its rating goes by the story, since there is no briefing item id to name
+        self.http.on("POST", WITHDRAW_RATINGS, {"withdrawn": [4], "effective": fb.effective()})
+        self.click(at, "act_rate_e12r1")
+        self.assert_clean(at)
+        self.assert_sent(WITHDRAW_RATINGS, {"event_id": 9001})
 
 
 class FeedbackTests(ActionCase):
@@ -557,19 +594,262 @@ class HubTextTests(ActionCase):
         self.assert_plain(at)
 
 
+class IconTests(ActionCase):
+    """docs/SPEC-ICON-ACTIONS.md: icon-only story actions that glow while selected and undo on a click."""
+
+    def kind(self, at, key: str) -> str:
+        return at.button(key=key).proto.type
+
+    def test_icons_carry_their_words(self):
+        at = self.briefing()
+        for name, key in (("more", "act_more_i1202"), ("less", "act_less_i1202"), ("rate", "act_rate_i1202")):
+            with self.subTest(key=key):
+                button = at.button(key=key)
+                # the words are the label (feed.css hides them; screen readers read them) and the tooltip
+                self.assertEqual((button.label, button.proto.icon), (actions.ICON_LABELS[name], actions.ICONS[name]))
+                self.assertEqual(self.kind(at, key), "tertiary")
+        self.assertEqual(actions.ICONS, {"more": ":material/thumb_up:", "less": ":material/thumb_down:",
+                                         "rate": ":material/star:", "promote": ":material/arrow_upward:"})
+        self.assertEqual([at.button(key=k).help for k in ("act_more_i1202", "act_less_i1202", "act_rate_i1202")],
+                         [MORE_PLAIN, LESS_PLAIN, RATE_PLAIN])
+        self.assert_plain(at)
+
+    def test_the_glow_comes_from_what_the_story_holds(self):
+        body = holding(pref("I-0002", "less"))
+        body["editions"][0]["items"][1]["why"]["my_preferences"] = [pref("I-0004", "more", "paused")]
+        self.http.on("GET", EDITIONS, body)
+        at = self.briefing()
+        # story 1: a "less" preference and a rating (its newest, "Top story"; the "Should have been in" grade is not one)
+        self.assertEqual([self.kind(at, k) for k in ("act_more_i1201", "act_less_i1201", "act_rate_i1201")],
+                         ["tertiary", "primary", "primary"])
+        self.assertEqual(at.button(key="act_less_i1201").help, LESS_ON)
+        self.assertEqual(at.button(key="act_rate_i1201").help, RATE_ON.format(rating="Top story"))
+        # story 2: a paused "more" preference is still on; no rating
+        self.assertEqual([self.kind(at, k) for k in ("act_more_i1202", "act_less_i1202", "act_rate_i1202")],
+                         ["primary", "tertiary", "tertiary"])
+        self.assertEqual(at.button(key="act_more_i1202").help, MORE_ON)
+        # the glow says it: no "You asked for ..." or "You rated it" chip, no Undo or Change on the card
+        html = self.html(at)
+        for gone in ("zx-asked", "You asked for", "You rated it"):
+            self.assertNotIn(gone, html)
+        self.assertEqual([b.key for b in at.button if str(b.key).startswith(("act_undo_pref_", "act_change_pref_"))],
+                         [])
+        self.assert_plain(at)
+
+    def test_an_ended_preference_or_a_withdrawn_rating_does_not_glow(self):
+        body = holding(pref("I-0002", "less", "retired"))
+        for f in body["editions"][0]["items"][0]["feedback"]:
+            f["withdrawn_at"] = "2026-10-04T12:00:00Z"
+        self.http.on("GET", EDITIONS, body)
+        at = self.briefing()
+        self.assertEqual([self.kind(at, k) for k in ("act_more_i1201", "act_less_i1201", "act_rate_i1201")],
+                         ["tertiary", "tertiary", "tertiary"])
+
+    def test_a_click_on_a_glowing_thumb_undoes_it(self):
+        self.http.on("GET", EDITIONS, holding(pref("I-0002", "less")))
+        answer = fb.retired("I-0002")
+        self.http.on("POST", PILOT_HUB + "/rules/I-0002/retire", answer)
+        at = self.briefing()
+        self.click(at, "act_less_i1201")
+        self.assert_clean(at)
+        self.assert_sent(PILOT_HUB + "/rules/I-0002/retire", {"reason": "undone"})
+        self.assertEqual(self.http.find("POST", PREFERENCES), [])
+        self.assertEqual(self.toasts(at), [f"Undone: less like this. {stops(answer['effective'])}"])
+        self.assertIsNone(self.undo(at))  # the thumb is the way back: one more click saves it again
+        self.assert_dialog_closed(at)
+
+    def test_undo_also_ends_the_version_a_new_wording_replaced(self):
+        # the hub's undo of a version that replaced another (an approved wording, an edit) brings that one back
+        # (`restored`): the thumb ends it too, so it really goes plain
+        self.http.on("GET", EDITIONS, holding(pref("I-0005", "more")))
+        self.http.on("POST", PILOT_HUB + "/rules/I-0005/retire", dict(fb.retired("I-0005"), restored="I-0004"))
+        self.http.on("POST", PILOT_HUB + "/rules/I-0004/retire", fb.retired("I-0004"))
+        at = self.briefing()
+        self.click(at, "act_more_i1201")
+        self.assert_clean(at)
+        self.assertEqual([(c.url[len(PILOT_HUB):], c.body) for c in self.http.posts()],
+                         [("/rules/I-0005/retire", {"reason": "undone"}), ("/rules/I-0004/retire", {"reason": "undone"})])
+        self.assertEqual(len(self.toasts(at)), 1)
+        self.assertTrue(self.toasts(at)[0].startswith("Undone: more like this. Stops applying from "))
+
+    def test_save_then_undo_with_the_same_thumb(self):
+        held: list[dict] = []
+        self.http.on("GET", EDITIONS, lambda call: holding(*held))
+        saved, retired = fb.preference_created("R-0013"), fb.retired("R-0013")
+
+        def save(call):
+            held.append(pref("R-0013", "more"))
+            return FakeResponse(201, saved)
+
+        def retire(call):
+            held.clear()
+            return retired
+
+        self.http.on("POST", PREFERENCES, save)
+        self.http.on("POST", PILOT_HUB + "/rules/R-0013/retire", retire)
+        at = self.briefing()
+        self.click(at, "act_more_i1201")
+        self.assert_clean(at)
+        self.assertEqual(self.kind(at, "act_more_i1201"), "primary")  # it glows: the story holds it now
+        self.assertEqual(self.toasts(at), [f"Saved: Show me more like this. {ui.effective_text(saved['effective'], TZ)}"])
+        self.assertEqual((self.undo(at).text, self.undo(at).ref), ("Saved a preference.", "pref:R-0013"))
+        self.click(at, "act_more_i1201")
+        self.assert_clean(at)
+        self.assert_sent(PILOT_HUB + "/rules/R-0013/retire", {"reason": "undone"})
+        self.assertEqual(self.kind(at, "act_more_i1201"), "tertiary")
+        # the Undo bar would have done just this: it goes quietly, without "Undo now reverses only your newest change"
+        self.assertEqual(self.toasts(at), [f"Undone: more like this. {stops(retired['effective'])}"])
+        self.assertIsNone(self.undo(at))
+
+    def test_an_undo_keeps_the_undo_bar_of_another_change(self):
+        self.http.on("GET", EDITIONS, holding(pref("I-0002", "less")))
+        self.http.on("POST", PILOT_HUB + "/rules/I-0002/retire", fb.retired("I-0002"))
+        at = self.app(pin=PIN, run=False)
+        at.run()
+        ui_undo = ui.Undo(workspace_id="pilot", text="Muted Data Center Dynamics.", run=lambda token: None,
+                          expires_at=ui._now() + 60, ref="mute:4")
+        at.session_state["zx_undo"] = ui_undo
+        self.click(at, "act_less_i1201")
+        self.assert_clean(at)
+        self.assertIn(ui.REPLACED_UNDO.format(earlier="Muted Data Center Dynamics"), self.toasts(at))
+
+    def test_a_click_on_the_other_thumb_switches_in_one_click(self):
+        state = {"held": [pref("I-0002", "less")]}
+        self.http.on("GET", EDITIONS, lambda call: holding(*state["held"]))
+        answer = dict(fb.preference_created("I-0005"), replaced=["I-0002"])
+
+        def save(call):
+            state["held"] = [pref("I-0005", "more")]
+            return FakeResponse(201, answer)
+
+        self.http.on("POST", PREFERENCES, save)
+        at = self.briefing()
+        self.assertEqual(at.button(key="act_more_i1201").help, MORE_PLAIN)
+        self.click(at, "act_more_i1201")
+        self.assert_clean(at)
+        self.assert_sent(PREFERENCES, {"direction": "more", "scope": "similar", "item_id": 1201, "replace": True})
+        self.assert_dialog_closed(at)  # no dialog: one click
+        self.assertEqual(self.toasts(at), [f"Switched to more like this. {ui.effective_text(answer['effective'], TZ)}"])
+        self.assertEqual([self.kind(at, k) for k in ("act_more_i1201", "act_less_i1201")], ["primary", "tertiary"])
+        # the Undo bar switches back: the new one ends as undone and the one it replaced comes back
+        undo = self.undo(at)
+        self.assertEqual((undo.text, undo.done), ("Switched to more like this.", "Switched back to less like this."))
+        self.http.on("POST", PILOT_HUB + "/rules/I-0005/retire", fb.retired("I-0005"))
+        self.http.on("POST", PILOT_HUB + "/rules/I-0002/reactivate", fx.rule_action_answer("reactivate", "I-0002"))
+        self.click_undo(at)
+        self.assert_sent(PILOT_HUB + "/rules/I-0005/retire", {"reason": "undone"})
+        self.assert_sent(PILOT_HUB + "/rules/I-0002/reactivate", {})
+        self.assertIn("Switched back to less like this.", self.toasts(at))
+
+    def test_a_switch_right_after_a_save_drops_the_saves_undo_quietly(self):
+        # the save's Undo bar would end a preference the switch just replaced: the switch's own Undo takes its place,
+        # without "Undo now reverses only your newest change. Your earlier change (...) stays"
+        state = {"held": []}
+        self.http.on("GET", EDITIONS, lambda call: holding(*state["held"]))
+
+        def save(call):
+            if call.body.get("replace"):
+                state["held"] = [pref("I-0006", call.body["direction"])]
+                return FakeResponse(201, dict(fb.preference_created("I-0006"), replaced=["I-0005"]))
+            state["held"] = [pref("I-0005", call.body["direction"])]
+            return FakeResponse(201, fb.preference_created("I-0005"))
+
+        self.http.on("POST", PREFERENCES, save)
+        at = self.briefing()
+        self.click(at, "act_more_i1201")
+        self.assertEqual(self.undo(at).ref, "pref:I-0005")
+        self.click(at, "act_less_i1201")
+        self.assert_clean(at)
+        self.assertIs(self.http.find("POST", PREFERENCES)[-1].body["replace"], True)
+        self.assertEqual(len(self.toasts(at)), 1, self.toasts(at))
+        self.assertTrue(self.toasts(at)[0].startswith("Switched to less like this. Applies from "))
+        self.assertEqual(self.undo(at).text, "Switched to less like this.")
+
+    def test_a_refused_switch_is_said_in_a_toast(self):
+        self.http.on("GET", EDITIONS, holding(pref("I-0002", "less")))
+        self.http.on("POST", PREFERENCES, FakeResponse(503, {"error": "internal_error"}))
+        at = self.briefing()
+        self.click(at, "act_more_i1201")
+        self.assert_clean(at)
+        self.assertEqual(self.texts(at, "error"), [])  # nothing drawn inside the row of icons
+        self.assertIn("Not saved. Something went wrong on the server. Try again in a minute.", self.toasts(at))
+        self.assertEqual(self.kind(at, "act_less_i1201"), "primary")
+
+    def test_ctrl_click_on_a_glowing_thumb_opens_the_options_set_to_replace(self):
+        self.http.on("GET", EDITIONS, holding(pref("I-0002", "less")))
+        answer = dict(fb.preference_created("I-0003"), replaced=["I-0002"])
+        self.http.on("POST", PREFERENCES, FakeResponse(201, answer))
+        at = self.briefing()
+        self.click(at, "act_lessfull_i1201")  # what a Ctrl+click (Cmd+click) on it is forwarded to
+        self.assert_clean(at)
+        self.assertIn(actions.CHANGE_REPLACES, self.texts(at, "warning"))
+        self.assertEqual(at.button(key="dlg_save").label, "Replace it")
+        self.assertEqual(self.http.posts(), [])
+        at.radio(key="dlg_scope").set_value("this_story")
+        at.button(key="dlg_save").click().run()
+        self.assert_clean(at)
+        self.assert_sent(PREFERENCES, {"direction": "less", "scope": "this_story", "item_id": 1201, "replace": True})
+        self.assertTrue(any("It replaces your earlier one on this story." in t for t in self.toasts(at)))
+
+    def test_a_click_on_the_glowing_star_withdraws_the_rating(self):
+        answer = {"withdrawn": [3, 4], "effective": fb.effective()}
+        self.http.on("POST", WITHDRAW_RATINGS, answer)
+        at = self.briefing()
+        self.assertEqual(self.kind(at, "act_rate_i1201"), "primary")
+        self.click(at, "act_rate_i1201")
+        self.assert_clean(at)
+        self.assert_sent(WITHDRAW_RATINGS, {"item_id": 1201})  # the briefing item; the hub withdraws its story's too
+        self.assertEqual(self.http.find("POST", FEEDBACK), [])
+        self.assertEqual(self.toasts(at), [actions.RATING_WITHDRAWN])
+        self.assertEqual(actions.RATING_WITHDRAWN, "Rating withdrawn. The editor stops using it from the next briefing.")
+        self.assertIsNone(self.undo(at))
+        self.assert_dialog_closed(at)
+
+    def test_ctrl_click_on_the_star_opens_the_rating_dialog(self):
+        self.http.on("POST", FEEDBACK, FakeResponse(201, fb.feedback_stored()))
+        at = self.briefing()
+        self.assertIn("act_ratefull_i1201", {str(b.key) for b in at.button})
+        self.click(at, "act_ratefull_i1201")  # what a Ctrl+click (Cmd+click) on the star is forwarded to
+        self.assert_clean(at)
+        self.assertEqual(at.radio(key="dlg_choice").value, "digest")
+        self.assertEqual(self.http.posts(), [])  # nothing withdrawn
+        at.radio(key="dlg_choice").set_value("watch")
+        at.button(key="dlg_save").click().run()
+        self.assert_clean(at)
+        self.assert_sent(FEEDBACK, {"verdict": "watch", "scope": "item", "item_id": 1201})  # the newest rating now
+
+    def test_the_page_script_forwards_ctrl_click_on_the_thumbs_and_the_star(self):
+        at = self.briefing()
+        script = next(str(el.value) for el in at.get("html") if "zxCtrlClick" in str(el.value))
+        self.assertIn('[class*="st-key-act_rate_"]', script)
+        self.assertIn("st-key-act_(more|less|rate)_", script)
+        self.assertNotIn("act_promote_", script)  # the arrow has no options to open
+        css = (Path(DASHBOARD) / "feed.css").read_text(encoding="utf-8")
+        # the twins take no room
+        self.assertRegex(css, r'\[class\*="st-key-act_morefull_"\], \[class\*="st-key-act_lessfull_"\], '
+                              r'\[class\*="st-key-act_ratefull_"\][^{]*\{ display: none !important; \}')
+
+
 class LockTests(ActionCase):
     def test_every_action_is_disabled_while_locked(self):
         body = fb.with_shelves()
         self.http.on("GET", EDITIONS, body)
         at = self.briefing(pin=None, popover="zx_more_i1201")
+        # the icons show no words, so their tooltips keep them
+        icons = {"act_more_i1201": "More like this.", "act_less_i1201": "Less like this.",
+                 "act_rate_i1201": "You rated it: Top story."}
         for key in ("act_more_i1201", "act_less_i1201", "act_morefull_i1201", "act_lessfull_i1201", "act_wrong_i1201",
-                    "act_rate_i1201", "act_mute_source_i1201",
+                    "act_rate_i1201", "act_ratefull_i1201", "act_mute_source_i1201",
                     "act_mute_co_i1201_0", "act_star_i1201_0", "act_unstar_i1201_1", "act_mute_story_i1201",
                     "br_promote_0_near_1301"):
             with self.subTest(key=key):
                 button = at.button(key=key)
                 self.assertTrue(button.disabled)
-                self.assertEqual(button.help, labels.LOCKED_HELP)
+                self.assertEqual(button.help, f"{icons[key]} {labels.LOCKED_HELP}" if key in icons
+                                 else labels.LOCKED_HELP)
+        # a glowing icon keeps its green while locked (feed.css dims it)
+        self.assertEqual([at.button(key=k).proto.type for k in ("act_more_i1201", "act_rate_i1201")],
+                         ["tertiary", "primary"])
         self.assertIn(labels.STILL_COLLECTED, self.texts(at, "caption"))
 
     def test_nothing_is_sent_while_locked(self):

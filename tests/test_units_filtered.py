@@ -10,6 +10,7 @@ from fixtures import iso
 from helpers import one_workspace
 import helpers  # noqa: F401  (puts dashboard/ on sys.path)
 
+from zenux_dashboard import actions
 from zenux_dashboard import filtered_view as fv
 from zenux_dashboard import labels
 from zenux_dashboard.config import parse_config
@@ -69,15 +70,32 @@ class FieldTests(unittest.TestCase):
         self.assertEqual(fv.source_label(ff.row(3, source_label=None, url="javascript:alert(1)")), "")
 
     def test_newest_rating_skips_the_should_have_been_in_note(self):
-        self.assertEqual(fv.newest_rating(ff.near_rows()[3]), "lead")
-        self.assertIsNone(fv.newest_rating(ff.row(1)))
+        # the star glows for it (actions.newest_rating, Target.rating)
+        self.assertEqual(actions.newest_rating(ff.near_rows()[3]["feedback"]), "lead")
+        self.assertIsNone(actions.newest_rating(ff.row(1)["feedback"]))
         wrong = ff.row(2, feedback=[{"verdict": "factual_error", "created_at": iso(1)}])
-        self.assertIsNone(fv.newest_rating(wrong))
+        self.assertIsNone(actions.newest_rating(wrong["feedback"]))
+        self.assertEqual(actions.target_from_row(WS, ff.near_rows()[3]).rating, "lead")
+        self.assertIsNone(actions.target_from_row(WS, ff.row(1)).rating)
+
+    def test_a_withdrawn_rating_no_longer_counts(self):
+        # the hub leaves withdrawn ratings out of its lists; one that still comes with withdrawn_at is not counted
+        rows = ff.near_rows()[3]["feedback"]
+        rows[1]["withdrawn_at"] = iso(1)  # the "lead" one
+        self.assertEqual(actions.newest_rating(rows), "watch")
+        for row in rows:
+            row["withdrawn_at"] = iso(1)
+        self.assertIsNone(actions.newest_rating(rows))
 
     def test_requested_only_for_a_promotion(self):
         self.assertEqual(fv.requested_of(ff.near_rows()[3])["note"], "Big customer")
         self.assertIsNone(fv.requested_of(ff.row(1, requested={"reason": "unmute", "note": None})))
         self.assertIsNone(fv.requested_of(ff.row(1)))
+        # a cancelled request (withdrawn; the hub leaves it out) is not open: the arrow does not glow
+        cancelled = ff.row(1, requested={"reason": "promote", "note": "x", "cancelled_at": iso(1)})
+        self.assertIsNone(fv.requested_of(cancelled))
+        self.assertFalse(actions.target_from_row(WS, cancelled).requested)
+        self.assertTrue(actions.target_from_row(WS, ff.near_rows()[3]).requested)
 
     def test_auto_rationale_is_the_hubs_plain_sentence(self):
         row = ff.all_rows()[0]
@@ -171,26 +189,28 @@ class WhyTests(unittest.TestCase):
 
 class RowHtmlTests(unittest.TestCase):
     def test_row_card_is_escaped_linked_and_plain(self):
-        html = fv.row_html(ff.all_rows()[-1], "all", "America/New_York")
+        row = ff.all_rows()[-1]
+        html = fv.row_html(row, "all", "America/New_York")
         self.assertIn("Drone &lt;script&gt;alert(1)&lt;/script&gt; unveiled at trade show", html)
         self.assertNotIn("javascript:", html)
         self.assertNotIn("<script>", html)
         self.assertNotIn("\n\n", html)
-        self.assertIn('<span class="rejected-chip">Outside your coverage</span>', html)
         self.assertIn(">DEFENSE UNMANNED</span>", html)
         self.assertNotIn("uas-vision", html)
         self.assertNotIn("7303", html)
+        # the chips share the row under the card with the icons
+        self.assertNotIn("rejected-signals", html)
+        self.assertIn('<span class="rejected-chip">Outside your coverage</span>', fv.chips_html(row, "all"))
 
     def test_score_chip_in_every_view(self):
         row = ff.near_rows()[0]
         for view in ("near", "all"):  # a score order sorts by it, so every view shows it
-            self.assertIn('<span class="rejected-chip score">Score 64 of 100 · bar 70</span>',
-                          fv.row_html(row, view, "UTC"))
-        self.assertNotIn("Score", fv.row_html({**row, "score": None}, "all", "UTC"))  # old news, mutes: no score
+            self.assertIn('<span class="rejected-chip score">Score 64 of 100 · bar 70</span>', fv.chips_html(row, view))
+        self.assertNotIn("Score", fv.chips_html({**row, "score": None}, "all"))  # old news, mutes: no score
         # WF3 review CV9: the chip never names a band (a 74 is "Also notable" elsewhere)
         high = {**row, "score": 74, "bar": None}
-        self.assertIn('<span class="rejected-chip score">Score 74 of 100</span>', fv.row_html(high, "near", "UTC"))
-        self.assertNotIn("Near miss · score", fv.row_html(high, "near", "UTC"))
+        self.assertIn('<span class="rejected-chip score">Score 74 of 100</span>', fv.chips_html(high, "near"))
+        self.assertNotIn("Near miss · score", fv.chips_html(high, "near"))
 
     def test_same_view_leaves_the_reason_to_the_same_story_line(self):
         named = {"event_id": 9, "title": "Copy", "reason_code": "duplicate", "decision": "duplicate",
@@ -207,11 +227,20 @@ class RowHtmlTests(unittest.TestCase):
         self.assertIn(">Later in your briefing<", later)
         self.assertNotIn("You asked for this", later)
 
+    def test_the_glow_says_what_you_asked_and_rated(self):
+        # docs/SPEC-ICON-ACTIONS.md: where the row shows the arrow, its glow says the request; a rating has no chip
+        row = ff.near_rows()[3]
+        chips = fv.chips_html(row, "near", arrow=True)
+        self.assertNotIn("You asked for this", chips)
+        self.assertNotIn("You rated it", chips)
+        self.assertNotIn("You rated it", fv.chips_html(row, "near"))
+        self.assertIn("Near miss", chips)
+
     def test_muted_chip_in_the_muted_view(self):
-        muted = fv.row_html(ff.muted_rows()[0], "muted", "UTC")
+        muted = fv.chips_html(ff.muted_rows()[0], "muted")
         self.assertIn('<span class="zx-chip chip-state chip-muted">Muted</span>', muted)
         self.assertNotIn("Muted by you", muted)
-        self.assertIn('<span class="rejected-chip">Muted by you</span>', fv.row_html(ff.muted_rows()[0], "all", "UTC"))
+        self.assertIn('<span class="rejected-chip">Muted by you</span>', fv.chips_html(ff.muted_rows()[0], "all"))
 
     def test_mute_line(self):
         html = fv.mute_html(ff.mutes()["mutes"][0], "America/New_York")

@@ -41,6 +41,11 @@ class BriefingCase(AppCase):
     def cards(self, at) -> list[str]:
         return ITEM_CARD.findall(self.html(at))
 
+    @staticmethod
+    def tag_rows(at) -> list[str]:
+        """Each story's tags (the left of its row under the headline, beside the icons), in page order."""
+        return [str(m.value) for m in at.markdown if str(m.value).startswith('<div class="feed-tags">')]
+
     def editions_calls(self) -> list[dict]:
         return [c.params for c in self.http.find("GET", EDITIONS)]
 
@@ -113,23 +118,33 @@ class BriefingPageTests(BriefingCase):
         self.assertIn('<div class="feed-dateline">Oct 3 · war.gov</div>', second)
         self.assertNotIn("wargov-contracts", self.html(at))
         self.assertNotIn("ent-coreweave-1", self.html(at))
+        # one row under the headline (docs/SPEC-ICON-ACTIONS.md): the tags on the left, the icons on the right; the
+        # card's own HTML ends with the headline's text, metrics and links
+        first_tags, second_tags, *_ = self.tag_rows(at)
+        self.assertNotIn("feed-tags", first + second)
         # TOP STORY only at 90+
-        self.assertIn('<span class="badge-top">TOP STORY</span>', first)
-        self.assertNotIn("TOP STORY", second)
-        # plain tier names, coverage-area tags
+        self.assertIn('<span class="badge-top">TOP STORY</span>', first_tags)
+        self.assertNotIn("TOP STORY", second_tags)
+        # coverage-area tags, then the tier in plain grey words (no pill)
         violet = "color:#A78BFA;border-color:rgba(167,139,250,0.55);background:rgba(167,139,250,0.14)"
         teal = "color:#2DD4BF;border-color:rgba(45,212,191,0.55);background:rgba(45,212,191,0.14)"
-        self.assertIn(f'<div class="feed-tags"><span class="module-tag" style="{violet}">AI INFRASTRUCTURE</span>'
-                      '<span class="badge-top">TOP STORY</span><span class="zx-chip tier">Your coverage</span>', first)
-        self.assertIn(f'<div class="feed-tags"><span class="module-tag" style="{teal}">DEFENSE UNMANNED</span>'
-                      f'<span class="module-tag" style="{violet}">AI INFRASTRUCTURE</span>'
-                      '<span class="zx-chip tier">Industry and policy</span>', second)
+        self.assertTrue(first_tags.startswith(
+            f'<div class="feed-tags"><span class="module-tag" style="{violet}">AI INFRASTRUCTURE</span>'
+            '<span class="badge-top">TOP STORY</span><span class="feed-tier">Your coverage</span>'), first_tags)
+        self.assertTrue(second_tags.startswith(
+            f'<div class="feed-tags"><span class="module-tag" style="{teal}">DEFENSE UNMANNED</span>'
+            f'<span class="module-tag" style="{violet}">AI INFRASTRUCTURE</span>'
+            '<span class="feed-tier">Industry and policy</span>'), second_tags)
         self.assertNotIn("Tier", self.html(at))
-        # states: the newest plain rating (not the "Should have been in" note after it), a starred subject
-        self.assertIn('<span class="zx-chip grade">You rated it: Top story</span>', first)
-        self.assertNotIn("You rated it: In the briefing", first)
-        self.assertIn('<span class="zx-chip chip-state chip-starred">On your watchlist</span>', first)
-        self.assertNotIn("chip-state", second)
+        # states: a starred subject; the newest rating has no chip, the star glows (not for the "Should have been in"
+        # grade stored after it)
+        self.assertIn('<span class="zx-chip chip-state chip-starred">On your watchlist</span>', first_tags)
+        self.assertNotIn("chip-state", second_tags)
+        self.assertNotIn("You rated it", self.html(at))
+        self.assertEqual([at.button(key=k).proto.type for k in ("act_rate_i1201", "act_rate_i1202")],
+                         ["primary", "tertiary"])
+        # (locked here: the tooltip keeps the words and says how to edit)
+        self.assertEqual(at.button(key="act_rate_i1201").help, f"You rated it: Top story. {labels.LOCKED_HELP}")
         # headline, text, metrics and links, escaped; an unsafe link is dropped
         self.assertIn('<div class="feed-item-headline">CoreWeave signs 200 MW &lt;capacity&gt; deal with Microsoft</div>',
                       first)
@@ -155,9 +170,11 @@ class BriefingPageTests(BriefingCase):
         at = self.app()
         self.assert_clean(at)
         flagged, corrected = self.cards(at)
-        self.assertIn('<span class="zx-chip chip-state chip-flagged">Flagged by you · being re-checked</span>', flagged)
+        flagged_tags, corrected_tags = self.tag_rows(at)
+        self.assertIn('<span class="zx-chip chip-state chip-flagged">Flagged by you · being re-checked</span>',
+                      flagged_tags)
         # a corrected story shows the corrected headline, text and metrics instead of its own
-        self.assertIn('<span class="zx-chip chip-state chip-corrected">Corrected</span>', corrected)
+        self.assertIn('<span class="zx-chip chip-state chip-corrected">Corrected</span>', corrected_tags)
         self.assertIn('<div class="feed-item-headline">Army awards $12M counter-UAS order to Anduril</div>', corrected)
         self.assertIn("The Army awarded a $12 million order for interceptors.", corrected)
         self.assertIn('<span class="feed-metric">Obligated <b>$12M</b></span>', corrected)
@@ -180,7 +197,7 @@ class BriefingPageTests(BriefingCase):
         self.http.on("GET", EDITIONS, fb.upheld_item())
         at = self.app()
         self.assert_clean(at)
-        self.assertIn('<span class="zx-chip chip-state chip-upheld">Checked: stands</span>', self.cards(at)[0])
+        self.assertIn('<span class="zx-chip chip-state chip-upheld">Checked: stands</span>', self.tag_rows(at)[0])
 
     def test_watchlist_and_near_miss_shelves(self):
         self.http.on("GET", EDITIONS, fb.with_shelves())

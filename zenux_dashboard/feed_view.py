@@ -16,10 +16,11 @@ expander only), and under them "Why am I seeing this?": one collapsed section wi
 headed by the story's number ("01") and headline (lazy: drawn only while open).
 
 A story card: rank, dateline (date · plain source name, never a source key), the headline with its facts, metrics and
-source links (a corrected story shows the corrected text and metrics), coverage-area tags, TOP STORY at 90+, the plain
-tier, and its states (flagged by you, corrected, checked, your newest rating, on your watchlist); then the card
-actions (actions.py). Fields are read tolerantly, so an older or newer hub shape still
-renders; anything unknown is left out, not guessed.
+source links (a corrected story shows the corrected text and metrics), then one row under the headline
+(actions.action_bar, docs/SPEC-ICON-ACTIONS.md): on the left its tags (coverage areas, TOP STORY at 90+, the plain tier
+in grey words, and its states: flagged by you, corrected, checked, on your watchlist), on the right the story icons.
+What the analyst said about the story (a preference, a rating) shows as a glowing icon, not as a chip. Fields are read
+tolerantly, so an older or newer hub shape still renders; anything unknown is left out, not guessed.
 """
 
 from __future__ import annotations
@@ -56,7 +57,6 @@ LINKED_GONE = "The briefing you linked isn't available any more."
 STAGING_EMPTY = ("ZENUX is collecting. Briefings start after you sign off in My preferences › What ZENUX looks for.")
 SHELF_TITLES = {"watchlist": "On your watchlist · not in this briefing", "near": "Near misses · just under your bar"}
 SHELF_FIELDS = {"watchlist": "watchlist", "near": "near_misses"}
-PROMOTE_NOTE = "Should have been in:"  # the hub's note on the feedback row it stores with a promotion
 BRIEFING_LOCKED = "Sign in to edit (top right) to use More like this, Less like this, mute and star."
 SHELF_SHOWN = 5  # watchlist and near-miss shelf rows shown before "Show all" (WF5 SA-2)
 
@@ -182,18 +182,6 @@ def note_of(edition: Mapping) -> str:
     return str(note).strip() if one_line(note) else ""
 
 
-def newest_rating(feedback: Any) -> str | None:
-    """The verdict of the analyst's newest plain rating (lead, digest, watch or reject), or None. The digest grade the
-    hub stores with "Should have been in" (its note starts "Should have been in:") is not a rating."""
-    rows = [f for f in dicts(feedback) if one_line(f.get("verdict")) in labels.RATING_CHOICES
-            and not one_line(f.get("note")).startswith(PROMOTE_NOTE)]
-    if not rows:
-        return None
-    newest = max(enumerate(rows), key=lambda nf: (parse_time(nf[1].get("created_at")), as_int(nf[1].get("id")) or 0,
-                                                  nf[0]))[1]
-    return one_line(newest.get("verdict"))
-
-
 def on_watchlist(item: Mapping) -> bool:
     """A starred subject company, or a starred company the story is about."""
     why = _map(item.get("why"))
@@ -223,6 +211,7 @@ def dateline_html(item: Mapping, edition: Mapping, tz: str) -> str:
 
 
 def state_chips(item: Mapping) -> str:
+    """The story's states: its correction and the watchlist. A rating has no chip: the glowing star says it."""
     out = []
     correction = _map(item.get("correction"))
     state = one_line(correction.get("state"))
@@ -232,15 +221,25 @@ def state_chips(item: Mapping) -> str:
         out.append(chip("Corrected", "chip-state chip-corrected"))
     elif state == "upheld":
         out.append(chip("Checked: stands", "chip-state chip-upheld"))
-    rating = newest_rating(item.get("feedback"))
-    if rating:
-        out.append(chip(f"You rated it: {labels.VERDICT_LABELS.get(rating, rating)}", "grade"))
     if on_watchlist(item):
         out.append(chip("On your watchlist", "chip-state chip-starred"))
     return "".join(out)
 
 
+def item_tags_html(item: Mapping) -> str:
+    """The tags on the left of the story's row under its headline: coverage areas (coloured pills), TOP STORY at 90+, the
+    tier in plain grey words (no pill), its states, and a note when no source link was captured."""
+    score = score_of(item)
+    top = '<span class="badge-top">TOP STORY</span>' if score is not None and score >= labels.TOP_STORY_MIN else ""
+    tier = labels.tier_label(item.get("tier"))
+    tier_html = f'<span class="feed-tier">{esc(tier)}</span>' if tier else ""
+    nolink = "" if actions.item_sources(item) else '<span class="feed-nolink">No source link captured</span>'
+    return f'<div class="feed-tags">{module_tags_html(item)}{top}{tier_html}{state_chips(item)}{nolink}</div>'
+
+
 def item_html(item: Mapping, edition: Mapping, tz: str, focus: bool = False) -> str:
+    """The story card above its row (item_tags_html and the icons): number, dateline, and the headline that opens the
+    text, metrics and source links."""
     rank = as_int(item.get("rank"))
     marker = str(rank).zfill(2) if rank is not None else "–"
     correction = _map(item.get("correction"))
@@ -257,10 +256,6 @@ def item_html(item: Mapping, edition: Mapping, tz: str, focus: bool = False) -> 
     metrics_html = f'<div class="feed-metrics">{metrics}</div>' if metrics else ""
     sources = actions.item_sources(item)
     source_links = "".join(link(url, f"{label} ↗") for url, label in sources)
-    score = score_of(item)
-    top = '<span class="badge-top">TOP STORY</span>' if score is not None and score >= labels.TOP_STORY_MIN else ""
-    tags = (module_tags_html(item) + top + chip(labels.tier_label(item.get("tier")), "tier") + state_chips(item)
-            + ("" if source_links else '<span class="feed-nolink">No source link captured</span>'))
     summary = (f'<div class="feed-item-headline">{esc(headline)}</div>' if headline
                else '<span class="feed-summary-label">Read the story</span>')
     return (
@@ -274,7 +269,6 @@ def item_html(item: Mapping, edition: Mapping, tz: str, focus: bool = False) -> 
         f'{metrics_html}'
         f'<div class="feed-sources">{source_links}</div>'
         '</details>'
-        f'<div class="feed-tags">{tags}</div>'
         '</div></article>'
     )
 
@@ -511,7 +505,7 @@ def render_why(ws: Workspace, edition: Mapping, items: list[dict], index: Any) -
 
 def render_item(ws: Workspace, edition: Mapping, item: dict, index: Any, n: int, focus_item: int | None,
                 used: set[str]) -> None:
-    """One story card: the card HTML and the action row (its Why is listed under the editor's notes)."""
+    """One story card: the card HTML, then its row of tags and icons (its Why is listed under the editor's notes)."""
     eid = as_int(edition_id(edition))
     item_id = as_int(item.get("id"))
     rank = as_int(item.get("rank"))
@@ -527,7 +521,7 @@ def render_item(ws: Workspace, edition: Mapping, item: dict, index: Any, n: int,
     target = actions.target_from_item(ws, edition, item)
     with st.container(key=container):
         st.markdown(item_html(item, edition, ws.timezone, focus=focus), unsafe_allow_html=True)
-        actions.action_bar(ws, target, key=key)
+        actions.action_bar(ws, target, key=key, tags=item_tags_html(item))
 
 
 def render_shelf(ws: Workspace, edition: Mapping, index: Any, kind: str, used: set[str]) -> None:
@@ -696,7 +690,7 @@ def render_empty(ws: Workspace) -> None:
 
 def render(ws: Workspace) -> None:
     status.status_line(ws)
-    actions.ctrl_click_support()  # Ctrl/Cmd+click on More / Less like this opens the options
+    actions.ctrl_click_support()  # Ctrl/Cmd+click on a thumb or the star opens its dialog
     try:
         editions, more = load(ws)
     except api.ApiError as exc:

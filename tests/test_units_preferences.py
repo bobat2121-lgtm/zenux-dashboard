@@ -290,7 +290,7 @@ class WriteOrHandleTests(unittest.TestCase):
     """write_or_handle returns the refusals it was asked to handle instead of letting ui.write draw them."""
 
     @staticmethod
-    def fake_write(ws, call, *, toast, undo=None):  # ui.write as specified: ApiError -> drawn, None
+    def fake_write(ws, call, *, toast, undo=None, in_callback=False):  # ui.write as specified: ApiError -> drawn, None
         try:
             return call("owner-token")
         except api.ApiError:
@@ -316,7 +316,7 @@ class WriteOrHandleTests(unittest.TestCase):
     def test_a_broad_ui_write_still_reports_the_refusal(self):
         refusal = api.ApiError("http", "HTTP 409: target_retired", 409, "target_retired")
 
-        def broad_write(ws, call, *, toast, undo=None):
+        def broad_write(ws, call, *, toast, undo=None, in_callback=False):
             try:
                 return call("owner-token")
             except Exception:

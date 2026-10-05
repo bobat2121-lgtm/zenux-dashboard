@@ -21,10 +21,13 @@ The hub does the work: one row per story, the true `total`, the search box sent 
 title, the editor's reasoning, the source's name, the publisher or a company, over the whole window), the coverage-area
 filter as `module`, and pages of up to 500 (`offset`). Rows show 50 at a time; "Show 50 more" reads the next page when
 the loaded ones are all shown. A row a later briefing published after all (`published_later`) says so, with Show it.
-Every per-row action (More or Less like this, Should have been in, mute, star, rate, Why) comes from `actions`, the
-card-actions module the Briefing uses; writes need Sign in to edit. Nothing on this page shows an event id, a source
-key, a coverage-area id or a reason code: sources go by the hub's plain name (`source_label`, never the key), areas by
-`labels.area_name`, reasons by `labels.reason_label`, the editor's reasoning by `rationale_plain`.
+A row is its title (linked) and dateline, then one row of its chips (reason, score, states) on the left and the story
+icons on the right (More or Less like this, Rate this story, Should have been in; docs/SPEC-ICON-ACTIONS.md), then Why.
+Every per-row action comes from `actions`, the card-actions module the Briefing uses; writes need Sign in to edit.
+What the analyst said about a story (a preference, a rating, a request) shows as a glowing icon, not as a chip.
+Nothing on this page shows an event id, a source key, a coverage-area id or a reason code: sources go by the hub's
+plain name (`source_label`, never the key), areas by `labels.area_name`, reasons by `labels.reason_label`, the
+editor's reasoning by `rationale_plain`.
 """
 
 from __future__ import annotations
@@ -91,9 +94,8 @@ EMPTY = {
 }
 NO_MATCH = "No filtered-out story matches your search. Try another word, or choose more days."
 MUTE_GROUPS: tuple[tuple[str, str], ...] = (("source", "Sources"), ("entity", "Companies"), ("story", "Stories"))
-REQUESTED = "You asked for this · re-checked at the next briefing"
+REQUESTED = "You asked for this · re-checked at the next briefing"  # only where the row has no arrow to glow
 LATER = "Later in your briefing"
-PROMOTE_NOTE = "Should have been in"   # the hub's prefix on the rating a "Should have been in" stores
 AUTO_OLD = "It was already old when it arrived, so the ZENUX editor never saw it."
 CALIBRATED_RE = re.compile(r"calibrated:\s*owner grade #(\d+)", re.IGNORECASE)
 RULE_NOTE_RE = re.compile(r"\s*\(rule\s+[^)]*\)", re.IGNORECASE)
@@ -166,11 +168,8 @@ def muted_of(row: Mapping) -> dict | None:
 
 
 def requested_of(row: Mapping) -> dict | None:
-    """An open "Should have been in" request on the row's story, else None."""
-    req = row.get("requested")
-    if isinstance(req, Mapping) and one_line(req.get("reason")) == "promote":
-        return dict(req)
-    return None
+    """An open "Should have been in" request on the row's story (not cancelled), else None."""
+    return actions.requested_of(row.get("requested"))
 
 
 def canonical_of(row: Mapping) -> dict | None:
@@ -189,20 +188,6 @@ def briefing_of(value: Any) -> dict | None:
 def later_of(row: Mapping) -> dict | None:
     """The later briefing that published this very story after all (`published_later`), else None."""
     return briefing_of(row.get("published_later"))
-
-
-def newest_rating(row: Mapping) -> str | None:
-    """The verdict of the analyst's newest plain rating of this story (a "Should have been in" note is not a rating
-    here: the requested chip shows it)."""
-    best: tuple[float, int, str] | None = None
-    for n, fb in enumerate(dicts(row.get("feedback"))):
-        verdict = one_line(fb.get("verdict"))
-        if verdict not in labels.RATING_CHOICES or one_line(fb.get("note")).startswith(PROMOTE_NOTE):
-            continue
-        key = (parse_time(fb.get("created_at")).timestamp(), n, verdict)
-        if best is None or key[:2] >= best[:2]:
-            best = key
-    return best[2] if best else None
 
 
 def calibrated_ids(rationale: Any) -> list[int]:
@@ -329,11 +314,13 @@ def score_chip(row: Mapping) -> str:
     return f'<span class="rejected-chip score">{esc(text)}</span>'
 
 
-def chips_html(row: Mapping, view: str, later: bool = False) -> str:
-    """The plain reason, then the state chips. In the Muted view the "Muted" chip stands in for the reason when the
-    reason is the mute itself ("Muted by you" twice says nothing more); in the Same story view the "Same story as:
-    <headline>" line stands in for a "Same story as another" reason when the hub names the story. A scored story's
-    chip reads "Score 74 of 100 · bar 80" in every view. `later`: a later briefing published it."""
+def chips_html(row: Mapping, view: str, later: bool = False, arrow: bool = False) -> str:
+    """The plain reason, then the state chips: the left of the row's line of chips and icons. In the Muted view the
+    "Muted" chip stands in for the reason when the reason is the mute itself ("Muted by you" twice says nothing more);
+    in the Same story view the "Same story as: <headline>" line stands in for a "Same story as another" reason when
+    the hub names the story. A scored story's chip reads "Score 74 of 100 · bar 80" in every view. `later`: a later
+    briefing published it. `arrow`: the row shows Should have been in, whose glow says an open request (the chip says
+    it only where there is no arrow); a rating has no chip, the glowing star says it."""
     out = []
     reason = reason_text(row)
     named = bool(one_line(pick(canonical_of(row) or {}, "title")))
@@ -348,11 +335,8 @@ def chips_html(row: Mapping, view: str, later: bool = False) -> str:
         out.append(chip("Muted", "chip-state chip-muted"))
     if later:
         out.append(chip(LATER, "chip-state chip-corrected"))
-    elif requested_of(row):
+    elif requested_of(row) and not arrow:
         out.append(chip(REQUESTED, "chip-state chip-requested"))
-    rating = newest_rating(row)
-    if rating:
-        out.append(chip(f"You rated it: {labels.VERDICT_LABELS.get(rating, rating)}", "grade"))
     if any(s.get("starred") is True for s in subjects_of(row)):
         out.append(chip("On your watchlist", "chip-state chip-starred"))
     return f'<div class="rejected-signals">{"".join(out)}</div>'
@@ -371,16 +355,16 @@ def same_html(row: Mapping) -> str:
     return f'<div class="rejected-rationale">Same story as: <strong>{esc(title)}</strong>{esc(where)}</div>'
 
 
-def row_html(row: Mapping, view: str, tz: str, later: bool = False) -> str:
-    """One filtered-out story: title (linked), dateline, the plain reason and state chips; for Same story the story
-    it repeats. The editor's reasoning stays inside Why."""
+def row_html(row: Mapping, view: str, tz: str) -> str:
+    """One filtered-out story: title (linked) and dateline; for Same story the story it repeats. Its chips share the row
+    under it with the icons (chips_html, render_row); the editor's reasoning stays inside Why."""
     title = one_line(row.get("title")) or "Untitled story"
     title_html = link(row.get("url"), title, "filtered-link")
     extra = same_html(row) if view == "same" else ""
     return (
         '<article class="filtered-row">'
         f'<div class="rejected-title">{title_html}</div>'
-        f'{dateline_html(row, tz)}{chips_html(row, view, later)}{extra}'
+        f'{dateline_html(row, tz)}{extra}'
         '</article>'
     )
 
@@ -623,29 +607,33 @@ def render_mutes(ws: Workspace) -> None:
 
 
 def render_row(ws: Workspace, row: dict, view: str) -> None:
-    """One row card (6.4): its HTML, Show it for a repeated story whose briefing is known (or for one a later
-    briefing published), the action bar and the Why expander."""
+    """One row card (6.4): its HTML, then one row of its chips, Show it (for a repeated story whose briefing is known,
+    or one a later briefing published) and the story icons, then the Why expander."""
     eid = event_id_of(row)
     key = f"r{eid}"
     later = later_of(row)
+    found = briefing_of(pick(canonical_of(row) or {}, "briefing")) if view == "same" else later
+    promote = view != "same" and decision_of(row) == "rejected" and not later
+
+    def show_it() -> None:
+        focus = {"edition": as_int(found["edition_id"])}
+        if as_int(found.get("item_id")) is not None:
+            focus["item"] = as_int(found["item_id"])
+        # in a callback: it runs before the tab bar is drawn, so the tab can change in this same rerun
+        st.button("Show it", key=f"fo_show_{eid}", type="tertiary", icon=":material/arrow_forward:",
+                  on_click=links.go, args=("briefing",), kwargs=focus)
+
     with st.container(key=f"zx_row_{eid}"):
-        st.markdown(row_html(row, view, ws.timezone, later=bool(later)), unsafe_allow_html=True)
-        found = briefing_of(pick(canonical_of(row) or {}, "briefing")) if view == "same" else later
-        if found:
-            focus = {"edition": as_int(found["edition_id"])}
-            if as_int(found.get("item_id")) is not None:
-                focus["item"] = as_int(found["item_id"])
-            # in a callback: it runs before the tab bar is drawn, so the tab can change in this same rerun
-            st.button("Show it", key=f"fo_show_{eid}", type="tertiary", icon=":material/arrow_forward:",
-                      on_click=links.go, args=("briefing",), kwargs=focus)
+        st.markdown(row_html(row, view, ws.timezone), unsafe_allow_html=True)
         target = actions.target_from_row(ws, row)
-        promote = view != "same" and decision_of(row) == "rejected" and not later
-        actions.action_bar(ws, target, key=key, promote=promote)
+        actions.action_bar(ws, target, key=key, promote=promote,
+                           tags=chips_html(row, view, later=bool(later), arrow=promote),
+                           extra=show_it if found else None)
         actions.why_expander(ws, target, why_of(row), key=key, extra=extra_of(row) or None)
 
 
 def render(ws: Workspace) -> None:
-    actions.ctrl_click_support()  # Ctrl/Cmd+click on More / Less like this opens the options
+    actions.ctrl_click_support()  # Ctrl/Cmd+click on a thumb or the star opens its dialog
     view = current_view()
     sort = current_sort(view)
     days = current_days()

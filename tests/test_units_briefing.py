@@ -85,13 +85,17 @@ class ShapeTests(unittest.TestCase):
         self.assertIsNone(feed_view.score_of({}))
 
     def test_newest_rating(self):
+        # what makes the star glow (Target.rating): the newest plain rating, never "Should have been in"'s grade
         rows = [{"id": 1, "verdict": "watch", "created_at": "2026-10-03T10:00:00Z"},
                 {"id": 2, "verdict": "lead", "created_at": "2026-10-03T11:00:00Z"},
                 {"id": 3, "verdict": "factual_error", "created_at": "2026-10-03T12:00:00Z"},
                 {"id": 4, "verdict": "digest", "note": "Should have been in: x", "created_at": "2026-10-03T13:00:00Z"}]
-        self.assertEqual(feed_view.newest_rating(rows), "lead")
-        self.assertIsNone(feed_view.newest_rating([]))
-        self.assertIsNone(feed_view.newest_rating("nope"))
+        self.assertEqual(actions.newest_rating(rows), "lead")
+        self.assertIsNone(actions.newest_rating([]))
+        self.assertIsNone(actions.newest_rating("nope"))
+        self.assertEqual(actions.newest_rating(rows + [{"id": 5, "verdict": "reject", "scope": "rule",
+                                                        "created_at": "2026-10-03T14:00:00Z"}]), "lead")
+        self.assertEqual(actions.newest_rating([dict(rows[1], withdrawn_at="2026-10-04T10:00:00Z"), rows[0]]), "watch")
 
 
 class CardHtmlTests(unittest.TestCase):
@@ -109,19 +113,28 @@ class CardHtmlTests(unittest.TestCase):
         self.assertEqual(feed_view.dateline_html(bare, {}, TZ), "")
 
     def test_top_story_tier_and_states(self):
-        first = feed_view.item_html(self.first, self.edition, TZ)
-        second = feed_view.item_html(self.second, self.edition, TZ, focus=True)
+        # the tags sit in the row under the headline (item_tags_html), beside the icons, not in the card's HTML
+        first = feed_view.item_tags_html(self.first)
+        second = feed_view.item_tags_html(self.second)
+        self.assertNotIn("feed-tags", feed_view.item_html(self.first, self.edition, TZ))
+        self.assertTrue(feed_view.item_html(self.second, self.edition, TZ, focus=True).startswith(
+            '<article class="feed-item zx-focus">'))
         self.assertIn('<span class="badge-top">TOP STORY</span>', first)
         self.assertNotIn("badge-top", second)
-        self.assertTrue(second.startswith('<article class="feed-item zx-focus">'))
-        self.assertIn('<span class="zx-chip tier">Your coverage</span>', first)
-        self.assertIn('<span class="zx-chip tier">Industry and policy</span>', second)
+        # the tier in plain grey words, no pill
+        self.assertIn('<span class="feed-tier">Your coverage</span>', first)
+        self.assertIn('<span class="feed-tier">Industry and policy</span>', second)
+        self.assertNotIn("zx-chip tier", first + second)
+        self.assertNotIn("feed-tier", feed_view.item_tags_html(dict(self.first, tier=None)))
         self.assertNotIn("score", first.lower())
         exactly_90 = dict(self.second, score=90)
-        self.assertIn("TOP STORY", feed_view.item_html(exactly_90, self.edition, TZ))
-        self.assertNotIn("TOP STORY", feed_view.item_html(dict(self.second, score=89), self.edition, TZ))
+        self.assertIn("TOP STORY", feed_view.item_tags_html(exactly_90))
+        self.assertNotIn("TOP STORY", feed_view.item_tags_html(dict(self.second, score=89)))
         self.assertNotIn("feed-nolink", first)
-        self.assertIn("No source link captured", feed_view.item_html(dict(self.first, sources=[]), self.edition, TZ))
+        self.assertIn("No source link captured", feed_view.item_tags_html(dict(self.first, sources=[])))
+        # a rating has no chip: the glowing star says it (docs/SPEC-ICON-ACTIONS.md)
+        self.assertNotIn("You rated it", first)
+        self.assertIn("On your watchlist", first)
 
     def test_correction_chips_and_replacement(self):
         def chips(correction):
@@ -179,10 +192,10 @@ class TargetTests(unittest.TestCase):
             subjects=({"entity_id": "coreweave", "name": "CoreWeave", "muted": False, "starred": False},
                       {"entity_id": "microsoft", "name": "Microsoft", "muted": False, "starred": True}),
             url="https://example.com/coreweave", published=True, in_briefing=True, reason="Material news",
-            item_rank=1, score=93))
+            item_rank=1, score=93, rating="lead"))
         second = actions.target_from_item(WS, edition, edition["items"][1])
-        self.assertEqual((second.source_label, second.module, second.source_key, second.story_id),
-                         ("war.gov", "defense-unmanned", "wargov-contracts", None))
+        self.assertEqual((second.source_label, second.module, second.source_key, second.story_id, second.rating,
+                          second.requested), ("war.gov", "defense-unmanned", "wargov-contracts", None, None, False))
         bare = actions.target_from_item(WS, {}, {"rank": "x"})
         self.assertEqual((bare.title, bare.event_id, bare.item_id, bare.subjects, bare.source_label),
                          ("This story", None, None, (), None))

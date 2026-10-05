@@ -7,7 +7,8 @@
 - **Undo.** Toasts cannot hold buttons, so a write the hub can reverse also leaves one pending Undo (offer_undo); the
   shell draws it as a slim bar that floats at the bottom of the screen (undo_bar), so it is in view wherever the
   analyst acted. It lasts until the next write, Dismiss, or UNDO_SECONDS, and belongs to one workspace; a newer write
-  that replaces a live Undo says so in a toast.
+  that replaces a live Undo says so in a toast, unless that write reversed the very change the Undo would (its `ref`,
+  dropped with forget_undo: a story icon clicked again).
 - **Dialogs.** One at a time, through the shell: a button calls open_dialog(name, **args), which only stores
   {name, args}; at the end of every run the shell calls render_dialog(), which opens the registered dialog with
   on_dismiss=close_dialog (closing with X or Escape clears it). Save and Cancel call close_dialog() then st.rerun().
@@ -46,6 +47,9 @@ from .fmt import UTC, MIN_TIME, clock_text, esc, fmt_day, md_label, one_line, pa
 LOG = logging.getLogger(__name__)
 
 TOAST_KEY = "zx_toasts"
+TOAST_SLOT_KEY = "zx_toast_slot"  # where the next toast goes (flush_toasts)
+TOAST_SLOTS = 12  # toasts take turns over this many places, so a new one never lands where one still shows
+TOAST_SPACER = "<style></style>"  # takes a place in Streamlit's event area and no room (flush_toasts)
 UNDO_KEY = "zx_undo"
 DIALOG_KEY = "zx_dialog"
 WRITE_KEY = "zx_last_write"  # "ok" | "failed": what the last ui.write() in this run did (the confirm dialog reads it)
@@ -63,6 +67,7 @@ class Undo:
     run: Callable[[str], Any]  # the inverse call; receives the owner token
     done: str = "Undone."
     expires_at: float = 0.0  # _now() + UNDO_SECONDS, set by offer_undo
+    ref: str = ""  # what it reverses ("pref:R-0013"), so a click that reverses it another way can drop it (forget_undo)
 
 
 def _now() -> float:
@@ -82,21 +87,43 @@ def notify(text: str, *, icon: str | None = None) -> None:
 
 
 def flush_toasts() -> None:
-    """Shell, top of every run: show and forget the queued toasts."""
-    for text, icon in st.session_state.pop(TOAST_KEY, None) or []:
+    """Shell, top of every run: show and forget the queued toasts. Streamlit draws every toast in its event area and
+    skips one drawn at the place of a toast still showing (its delta path; a run's first toast always takes the first
+    place there), so a toast right after another (a story icon clicked twice) would be lost. Empty style blocks, which
+    Streamlit also puts there and which take no room, move each batch on to the next of TOAST_SLOTS places."""
+    queue = st.session_state.pop(TOAST_KEY, None) or []
+    if not queue:
+        return
+    start = as_slot(st.session_state.get(TOAST_SLOT_KEY))
+    for _ in range(start):
+        st.html(TOAST_SPACER)
+    for text, icon in queue:
         st.toast(md_label(text), icon=icon, duration="long")
+    st.session_state[TOAST_SLOT_KEY] = (start + len(queue)) % TOAST_SLOTS
+
+
+def as_slot(value: Any) -> int:
+    return value % TOAST_SLOTS if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
 # ---------------------------------------------------------------------------------------------- undo
 
 
-def offer_undo(ws: Workspace, text: str, run: Callable[[str], Any], done: str = "Undone.") -> None:
+def offer_undo(ws: Workspace, text: str, run: Callable[[str], Any], done: str = "Undone.", ref: str = "") -> None:
     st.session_state[UNDO_KEY] = Undo(workspace_id=ws.id, text=text, run=run, done=done or "Undone.",
-                                      expires_at=_now() + UNDO_SECONDS)
+                                      expires_at=_now() + UNDO_SECONDS, ref=ref or "")
 
 
 def clear_undo() -> None:
     st.session_state.pop(UNDO_KEY, None)
+
+
+def forget_undo(ws: Workspace, refs: set[str]) -> None:
+    """Drop the pending Undo, without a word, when it reverses one of `refs`: the change it would undo was just undone
+    another way (a glowing story icon clicked again), so there is nothing left for it to do."""
+    undo = pending_undo(ws)
+    if undo is not None and undo.ref and undo.ref in refs:
+        clear_undo()
 
 
 def pending_undo(ws: Workspace) -> Undo | None:
@@ -323,10 +350,11 @@ def write(ws: Workspace, call: Callable[[str], Any], *, toast: str | Callable[[A
           undo: Callable[[Any], tuple | None] | None = None, in_callback: bool = False) -> Any | None:
     """The one way to send an owner write. Locked: st.warning(LOCKED_HELP), nothing sent, None. ApiError: a plain
     error in the current container (the dialog stays open), None. Success: the read caches are cleared, the toast is
-    queued (toast, or toast(result)), undo(result) -> (text, run) or (text, run, done) is offered (else any older undo
-    is cleared), each string in result["warnings"] is queued as one more toast, and the result is returned. The caller
-    then closes its dialog and calls st.rerun(). in_callback (a menu item's write, run in its button's callback): the
-    lock or the error is said in a toast instead, since anything drawn in a callback lands at the top of the page."""
+    queued (toast, or toast(result)), undo(result) -> (text, run), (text, run, done) or (text, run, done, ref) is
+    offered (else any older undo is cleared), each string in result["warnings"] is queued as one more toast, and the
+    result is returned. The caller then closes its dialog and calls st.rerun(). in_callback (a write run in its
+    button's callback: a menu item, a story icon): the lock or the error is said in a toast instead, since anything
+    drawn in a callback lands at the top of the page."""
     tok = owner.token(ws)
     if tok is None:
         st.session_state[WRITE_KEY] = "failed"
@@ -358,7 +386,7 @@ def write(ws: Workspace, call: Callable[[str], Any], *, toast: str | Callable[[A
             pair = None
     notify(text or "Saved.")
     if pair:
-        offer_undo(ws, *tuple(pair)[:3])
+        offer_undo(ws, *tuple(pair)[:4])
     if earlier is not None:
         # Only the newest change has an Undo button; say so instead of silently dropping the earlier one.
         notify(REPLACED_UNDO.format(earlier=one_line(earlier.text).rstrip(".")))
@@ -371,12 +399,13 @@ def write(ws: Workspace, call: Callable[[str], Any], *, toast: str | Callable[[A
 
 def write_button(label: str, *, ws: Workspace, key: str, type: str = "secondary", help: str | None = None,
                  icon: str | None = None, width: str = "content", on_click: Callable[..., Any] | None = None,
-                 args: tuple | None = None, kwargs: dict | None = None) -> bool:
-    """st.button for a write: drawn disabled with LOCKED_HELP while this session cannot edit ws. The label and help may
-    hold hub text (a company or source name), so both are Markdown-escaped (fmt.md_label). on_click/args/kwargs pass
-    through (a menu item runs its action in the callback; see menu_item)."""
+                 args: tuple | None = None, kwargs: dict | None = None, locked_help: str | None = None) -> bool:
+    """st.button for a write: drawn disabled with LOCKED_HELP (or `locked_help`: a story icon's tooltip keeps its words,
+    since the icon shows none) while this session cannot edit ws. The label and help may hold hub text (a company or
+    source name), so both are Markdown-escaped (fmt.md_label). on_click/args/kwargs pass through (a menu item runs its
+    action in the callback; see menu_item)."""
     locked = not owner.can_edit(ws)
-    tip = labels.LOCKED_HELP if locked else help
+    tip = (locked_help or labels.LOCKED_HELP) if locked else help
     return st.button(md_label(label), key=key, type=type, help=md_label(tip) if tip else None, icon=icon, width=width,
                      disabled=locked, on_click=on_click, args=args, kwargs=kwargs)
 

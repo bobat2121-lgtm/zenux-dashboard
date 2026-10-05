@@ -80,7 +80,7 @@ class AppTests(AppCase):
     def test_a_write_uses_the_owner_token(self):
         self.http.on("POST", FEEDBACK, FakeResponse(201, fb.feedback_stored()))
         at = self.app(open_secrets())
-        at.button(key="act_rate_i1201").click().run()
+        at.button(key="act_rate_i1202").click().run()  # not rated yet: the star opens the rating dialog
         at.button(key="dlg_save").click().run()
         self.assert_clean(at)
         post = self.http.find("POST", FEEDBACK)[-1]

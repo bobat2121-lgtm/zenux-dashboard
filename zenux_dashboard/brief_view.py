@@ -55,10 +55,11 @@ class Handled(Exception):
 
 
 def write_or_handle(ws: Workspace, call: Callable[[str], Any], *, toast: str | Callable[[Any], str],
-                    codes: Iterable[str], undo: Callable[[Any], Any] | None = None
+                    codes: Iterable[str], undo: Callable[[Any], Any] | None = None, in_callback: bool = False
                     ) -> tuple[Any | None, api.ApiError | None]:
     """ui.write, except that a refusal whose hub code is in `codes` comes back to the caller instead of being drawn
-    as an error. -> (result or None, the refusal or None)."""
+    as an error. in_callback: as ui.write's (a button callback says the lock or an error in a toast). -> (result or
+    None, the refusal or None)."""
     wanted = set(codes)
     caught: list[api.ApiError] = []
 
@@ -72,7 +73,7 @@ def write_or_handle(ws: Workspace, call: Callable[[str], Any], *, toast: str | C
             raise
 
     try:
-        result = ui.write(ws, guarded, toast=toast, undo=undo)
+        result = ui.write(ws, guarded, toast=toast, undo=undo, in_callback=in_callback)
     except Handled:
         result = None
     return (None, caught[0]) if caught else (result, None)
