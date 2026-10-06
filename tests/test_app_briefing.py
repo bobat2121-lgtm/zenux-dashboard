@@ -70,7 +70,7 @@ class BriefingPageTests(BriefingCase):
         self.assertEqual(html.count('<span class="latest-badge">LATEST</span>'), 1)
         # the fallback title says stories, and names coverage areas plainly
         self.assertIn('<div class="edition-title" role="heading" aria-level="2">2 stories across AI infrastructure (1) '
-                      'and defense unmanned (1), led by CoreWeave signs 200 MW &lt;capacity&gt; deal with Microsoft.'
+                      'and defense tech (1), led by CoreWeave signs 200 MW &lt;capacity&gt; deal with Microsoft.'
                       '</div>', latest)
         # five briefings per page, read with the read token
         first = self.http.find("GET", EDITIONS)[0]
@@ -102,7 +102,7 @@ class BriefingPageTests(BriefingCase):
                       '<div class="stat stat-medium"><div class="stat-n">1</div><div class="stat-l">ALSO NOTABLE</div></div>'
                       '</div>', latest)
         self.assertIn('<div class="theme-legend"><span><i style="background:#A78BFA"></i>AI INFRASTRUCTURE 1</span>'
-                      '<span><i style="background:#2DD4BF"></i>DEFENSE UNMANNED 1</span></div>', latest)
+                      '<span><i style="background:#2DD4BF"></i>DEFENSE TECH 1</span></div>', latest)
         for old in ("ITEMS", "REVIEWED", "LEAD 90+", "DIGEST", "AI-INFRA", "DEFENSE-UNMANNED"):
             self.assertNotIn(old, latest)
         self.assertNotIn("stat-grid", older)
@@ -132,7 +132,7 @@ class BriefingPageTests(BriefingCase):
             f'<div class="feed-tags"><span class="module-tag" style="{violet}">AI INFRASTRUCTURE</span>'
             '<span class="badge-top">TOP STORY</span><span class="feed-tier">Your coverage</span>'), first_tags)
         self.assertTrue(second_tags.startswith(
-            f'<div class="feed-tags"><span class="module-tag" style="{teal}">DEFENSE UNMANNED</span>'
+            f'<div class="feed-tags"><span class="module-tag" style="{teal}">DEFENSE TECH</span>'
             f'<span class="module-tag" style="{violet}">AI INFRASTRUCTURE</span>'
             '<span class="feed-tier">Industry and policy</span>'), second_tags)
         self.assertNotIn("Tier", self.html(at))
@@ -590,6 +590,61 @@ class StateTests(BriefingCase):
         calls = self.http.find("GET", BETA_HUB + "/editions")
         self.assertTrue(calls)
         self.assertEqual({c.bearer for c in calls}, {BETA_READ})
+
+
+class ConferenceListTests(BriefingCase):
+    """The Friday "Conferences coming up" item (docs/SPEC-MIGRATION-BUILD.md section 7): a plain card at the top of
+    the briefing, with no story icons and no score, never counted as a story."""
+
+    def conference_cards(self, at) -> list[str]:
+        return [str(m.value) for m in at.markdown if str(m.value).startswith('<article class="conf-card">')]
+
+    def test_the_list_leads_the_briefing_as_a_plain_card(self):
+        self.http.on("GET", EDITIONS, fb.with_conferences())
+        at = self.app(pin=PIN, run=False)
+        self.open_expander(at, "zx_whyall_0")
+        at.run()
+        self.assert_clean(at)
+        html = self.html(at)
+        [card] = self.conference_cards(at)
+        self.assertIn('<div class="conf-title" role="heading" aria-level="3">Conferences coming up</div>', card)
+        self.assertIn('<div class="conf-month-label">October 2026</div><ul class="conf-lines"><li class="conf-line '
+                      'conf-flagged"><span class="conf-flag">NOW PRESENTING: DPRO</span>', card)
+        self.assertLess(html.index(card), html.index('<article class="feed-item'))
+        # not a story: no number, tags, score or icons; the stories keep their numbers and counts
+        self.assertEqual(len(self.cards(at)), 4)
+        self.assertEqual(len(self.tag_rows(at)), 4)
+        conf_id = str(fb.conference_item()["id"])
+        self.assertEqual([w.key for w in self.walk(at._tree) if conf_id in str(getattr(w, "key", "") or "")], [])
+        latest = self.edition_blocks(at)[0]
+        self.assertIn('<span>2 stories</span>', latest)
+        self.assertIn('<div class="stat-n">2</div><div class="stat-l">STORIES</div>', latest)
+        heads = [str(m.value) for m in at.markdown if 'class="why-item-head"' in str(m.value)]
+        self.assertEqual([h.split('class="why-num">')[1][:2] for h in heads], ["01", "02"])
+        self.assertNotIn("Conferences coming up", "".join(heads))
+        self.assert_plain(at)
+        self.assert_no_secrets(at)
+
+    def test_search_finds_a_conference(self):
+        self.http.on("GET", EDITIONS, fb.with_conferences())
+        at = self.app()
+        at.text_input(key="br_search").set_value("ausa").run()
+        self.assert_clean(at)
+        self.assertEqual(len(self.conference_cards(at)), 1)
+        self.assertEqual(self.cards(at), [])
+        self.assertNotIn("Nothing new cleared your bar", self.html(at))
+
+    def test_a_briefing_with_only_the_list(self):
+        body = fb.with_conferences(body_as_text=True)
+        body["editions"][0]["items"] = body["editions"][0]["items"][:1]
+        self.http.on("GET", EDITIONS, body)
+        at = self.app()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertEqual(len(self.conference_cards(at)), 1)
+        self.assertIn('<div class="edition-empty">Nothing new cleared your bar in this briefing.</div>', html)
+        self.assertIn('<div class="stat-n">0</div><div class="stat-l">STORIES</div>', html)
+        self.assertIn("An empty briefing: nothing new cleared your bar.", html)
 
 
 class PlainWordsTests(BriefingCase):

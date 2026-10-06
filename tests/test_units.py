@@ -656,7 +656,11 @@ class FmtTests(unittest.TestCase):
     def test_module_colors(self):
         self.assertEqual(fmt.module_color("ai-infra"), "#A78BFA")  # violet
         self.assertEqual(fmt.module_color("defense-unmanned"), "#2DD4BF")  # teal
-        others = ["space-launch", "grid-power", "coverage", "biotech", "nuclear", "shipbuilding", "x"]
+        # every area of the pilot has its own colour, and every named area a colour
+        self.assertEqual(set(fmt.MODULE_COLORS), set(fmt.MODULE_NAMES))
+        self.assertEqual(len(set(fmt.MODULE_COLORS.values())), len(fmt.MODULE_COLORS))
+        self.assertEqual(fmt.module_color("conferences"), "#E879F9")  # fuchsia
+        others = ["space-launch", "grid-power", "biotech", "nuclear", "shipbuilding", "x"]
         for mid in others:  # any other module: a palette colour, the same in every process (no salted hash())
             self.assertEqual(fmt.module_color(mid),
                              fmt.TAG_COLORS[zlib.crc32(mid.encode("utf-8")) % len(fmt.TAG_COLORS)])
@@ -716,7 +720,10 @@ class StylesheetTests(unittest.TestCase):
                     "st-key-zx_ok_banner", "st-key-zx_tuneup_banner", "zx-banner-text", "st-key-zx_tu_", "tu-row",
                     "tu-editor", "tu-done", "edition-receipt", "zx-group-title", "zx-group-empty", "st-key-zx_leftout_",
                     "zx-leftout-auto", "tn-title", "tn-rule", "tn-hint", "st-key-zx_rule_", "st-key-zx_how_much",
-                    "st-key-zx_rules_bar", "st-key-zx_ended_", "brief-title", "st-key-zx_routine_"):
+                    "st-key-zx_rules_bar", "st-key-zx_ended_", "brief-title", "st-key-zx_routine_",
+                    # docs/SPEC-MIGRATION-BUILD.md section 7: the Friday "Conferences coming up" card
+                    "st-key-zx_conf_", "conf-card", "conf-title", "conf-summary", "conf-month", "conf-month-label",
+                    "conf-lines", "conf-line", "conf-flag", "conf-link", "conf-more", "conf-text-block"):
             with self.subTest(cls=cls):
                 self.assertIn(cls, self.css)
         for colour in ("#34d399", "#fbbf24", "#f87171", "#38bdf8"):  # the pill colours of the contrast test
@@ -821,10 +828,20 @@ class LabelsTests(unittest.TestCase):
         self.assertEqual(labels.area_name("ai-infra", "AI infrastructure: data centers, colocation"),
                          "AI infrastructure")
         self.assertEqual(labels.area_name("ai-infra"), "AI infrastructure")
-        self.assertEqual(labels.area_name("defense-unmanned"), "Defense unmanned")
+        self.assertEqual(labels.area_name("defense-unmanned"), "Defense tech")
         # a known area keeps the name the Briefing's tags use, whatever its catalog title says
-        self.assertEqual(labels.area_name("defense-unmanned", "Defense tech: unmanned and counter-unmanned systems"),
-                         "Defense unmanned")
+        self.assertEqual(labels.area_name("defense-unmanned", "Defense unmanned: drones, counter-drone and autonomy"),
+                         "Defense tech")
+        # the nine areas of docs/SPEC-MIGRATION-BUILD.md section 2: each module title's part before ":"
+        for mid, name in (("coverage", "Your coverage"), ("ai-infra", "AI infrastructure"),
+                          ("defense-unmanned", "Defense tech"), ("drones-aviation", "Drones and aviation autonomy"),
+                          ("autonomous-vehicles", "Autonomous vehicles"),
+                          ("robotics-automation", "Robotics and automation"),
+                          ("public-safety", "Public safety and security"),
+                          ("space-eo", "Space and Earth observation"), ("conferences", "Conferences")):
+            with self.subTest(mid=mid):
+                self.assertEqual(labels.area_name(mid), name)
+                self.assertEqual(labels.find_jargon(name), [])
         self.assertEqual(labels.area_name("space-launch", "Space launch: rockets and pads"), "Space launch")
         self.assertEqual(labels.area_name("space-launch_ops"), "Space launch ops")
         self.assertEqual(labels.area_name(""), "Coverage area")
@@ -860,6 +877,16 @@ class LabelsTests(unittest.TestCase):
                      "Still collected, kept out of your briefing.", "Coverage area", "Top story", "release",
                      "airplanes", "hubbub", "Cursory look", "#12", "scouting"]
         for text in negatives:
+            with self.subTest(text=text):
+                self.assertEqual(labels.find_jargon(text), [])
+        # every hyphenated coverage-area id; "coverage" and "conferences" are plain words, and so is "public-safety"
+        # before a noun
+        for mid in ("ai-infra", "defense-unmanned", "drones-aviation", "autonomous-vehicles", "robotics-automation",
+                    "public-safety", "space-eo"):
+            with self.subTest(mid=mid):
+                self.assertEqual(labels.find_jargon(f"Added to {mid}."), [mid])
+                self.assertEqual(labels.find_jargon(f"area {mid}"), [mid])
+        for text in ("Sheriff buyers of plate readers and public-safety drones.", "Your coverage", "Conferences coming up"):
             with self.subTest(text=text):
                 self.assertEqual(labels.find_jargon(text), [])
 

@@ -23,8 +23,31 @@ MIN_TIME = datetime.min.replace(tzinfo=UTC)
 DEFAULT_GRADER_TIMES = ("07:30", "12:30", "16:30")  # the Grader's default local schedule (hub ROUTINE_SCHEDULE)
 SLOT_RE = re.compile(r"^\s*([01]?\d|2[0-3]):([0-5]\d)\s*$")
 
-MODULE_NAMES = {"ai-infra": "AI infrastructure", "defense-unmanned": "defense unmanned"}
-MODULE_COLORS = {"ai-infra": "#A78BFA", "defense-unmanned": "#2DD4BF"}  # violet, teal
+# The coverage areas of the pilot (docs/SPEC-MIGRATION-BUILD.md section 2): each module title's part before ":", in
+# sentence case so it reads inside a sentence ("across AI infrastructure (4) and defense tech (5)"); area_name
+# capitalises it.
+MODULE_NAMES = {
+    "coverage": "your coverage",
+    "ai-infra": "AI infrastructure",
+    "defense-unmanned": "defense tech",
+    "drones-aviation": "drones and aviation autonomy",
+    "autonomous-vehicles": "autonomous vehicles",
+    "robotics-automation": "robotics and automation",
+    "public-safety": "public safety and security",
+    "space-eo": "space and Earth observation",
+    "conferences": "conferences",
+}
+MODULE_COLORS = {
+    "coverage": "#FBBF24",  # amber
+    "ai-infra": "#A78BFA",  # violet
+    "defense-unmanned": "#2DD4BF",  # teal
+    "drones-aviation": "#38BDF8",  # sky
+    "autonomous-vehicles": "#4ADE80",  # green
+    "robotics-automation": "#FB923C",  # orange
+    "public-safety": "#FB7185",  # rose
+    "space-eo": "#818CF8",  # indigo
+    "conferences": "#E879F9",  # fuchsia
+}
 TAG_COLORS = ("#FBBF24", "#F472B6", "#38BDF8", "#A3E635")  # amber, pink, sky, lime: any other module, by a stable hash
 TAG_FILL = 0.14  # a tag's translucent fill; its text stays at 4.5:1 or more on the dark cards
 TAG_LINE = 0.55  # a tag's border

@@ -257,9 +257,9 @@ def _capitalised(text: str) -> str:
 
 
 def area_name(module_id: Any, title: Any = None) -> str:
-    """A coverage area's plain name: the known name capitalised ("Defense unmanned"; the same name the Briefing's
-    area tags use, so one area never goes by two names), else the catalog title before ":" ("AI infrastructure"),
-    else the id with dashes as spaces, capitalised."""
+    """A coverage area's plain name: the known name capitalised ("Defense tech"; the same name the Briefing's area
+    tags use, so one area never goes by two names), else the catalog title before ":" ("AI infrastructure"), else the
+    id with dashes as spaces, capitalised."""
     mid = one_line(module_id)
     known = MODULE_NAMES.get(mid.lower())
     if known:
@@ -338,7 +338,10 @@ JARGON_PATTERNS: tuple[re.Pattern, ...] = tuple(re.compile(p, re.IGNORECASE) for
     r"\bdeploy(?:s|ed|ing|ment)?\b",
     r"\bid \d+\b",
     r"\b(?:draft|request|item|event|run|edition) #?\d+\b",
-    r"\b(?:ai-infra|defense-unmanned)\b",  # the configured coverage-area ids (fmt.MODULE_NAMES)
+    # the configured coverage-area ids (fmt.MODULE_NAMES); "coverage" and "conferences" are plain words, and
+    # "public-safety" is one too before a noun ("public-safety drones")
+    r"\b(?:ai-infra|defense-unmanned|drones-aviation|autonomous-vehicles|robotics-automation|space-eo)\b",
+    r"\bpublic-safety\b(?![  -][A-Za-z])",
 ))
 
 

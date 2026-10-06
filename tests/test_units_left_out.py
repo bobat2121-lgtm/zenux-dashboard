@@ -155,7 +155,7 @@ class RowHtmlTests(unittest.TestCase):
         self.assertNotIn("javascript:", html)
         self.assertNotIn("<script>", html)
         self.assertNotIn("\n\n", html)
-        self.assertIn(">DEFENSE UNMANNED</span>", html)
+        self.assertIn(">DEFENSE TECH</span>", html)
         self.assertNotIn("uas-vision", html)
         self.assertNotIn("7303", html)
 

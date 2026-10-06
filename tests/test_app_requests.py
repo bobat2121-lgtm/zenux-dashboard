@@ -70,7 +70,7 @@ class ListTests(RequestsCase):
                       + self.step("", "Approved, waiting for setup") + self.step("", "Set up") + self.step("", "Live")
                       + "</div>", html)
         self.assertIn("A missed story · asked ", html)
-        self.assertIn(" · Defense unmanned</div>", html)
+        self.assertIn(" · Defense tech</div>", html)
         self.assertIn("You asked: We missed the Shield AI Hivemind award", html)
         self.assertIn("The source finder looks into it at its next run.", html)
         # proposal: the plain summary (the area id replaced by its name), the diagnosis and the source's state

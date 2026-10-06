@@ -9,6 +9,7 @@ and cleaning.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 LATEST_ID = 12
@@ -125,6 +126,65 @@ def editions(count: int = 2) -> dict:
     if count > 1:
         out.append(edition(OLDER_ID, OLDER_AT))
     return {"editions": out[:count], "next_before": None, "has_more": False}
+
+
+CONFERENCE_SUMMARY = ("Conferences for your coverage from Fri Oct 9, 2026 to Thu Apr 8, 2027. Changes this week: 1 new, "
+                      "1 with a covered company now presenting.")
+CONFERENCE_LATER = "Later (Apr 2027 to Sep 2027): Space Symposium (42nd) (Apr); MOVED - DSEI 2027 (Sep)."
+CONFERENCE_UNDATED = "Dates not posted yet: Needham Growth Conference (29th) (expected Jan 2027)."
+
+
+def _conference_line(cid: str, text: str, flags: list[str], url: str, presenting: list[str] | None = None) -> dict:
+    return {"conference_id": cid, "text": text, "flags": flags, "dates_text": text.split(":", 1)[0], "start": None,
+            "end": None, "name": cid, "city": None, "url": url, "tickers": [], "presenting": presenting or []}
+
+
+def conference_item(edition_id: int = LATEST_ID, *, body_as_text: bool = False) -> dict:
+    """The hub's Friday "Conferences coming up" item as GET /editions serves it (hub/src/brain.js leadView: kind
+    conference_list, rank 0, score null, story_actions false, the list in `conferences`, built by hub/src/conferences.js
+    conferenceList). body_as_text: an older shape, the stored `body` column as JSON text. Its October lines come
+    unsorted (a flagged line second) to check that flags lead; one name carries markup and one link is a javascript:
+    URL."""
+    body = {
+        "from": "2026-10-09", "until": "2027-04-08", "months_ahead": 6, "summary": CONFERENCE_SUMMARY,
+        "changes": {"new": 1, "dates_set": 0, "now_presenting": 1, "moved": 0},
+        "months": [
+            {"month": "2026-10", "label": "October 2026", "lines": [
+                _conference_line("thinkequity-conference-2026", "Oct 15: ThinkEquity Conference, New York, NY. For RCAT. "
+                                 "Small-cap investor day.", [], "https://www.think-equity.com/thinkequity-conference"),
+                _conference_line("ausa-meeting-exposition-2026", "NOW PRESENTING: DPRO - Oct 12-14: AUSA Annual Meeting "
+                                 "& Exposition 2026, Washington, DC. Presenting: DPRO. Also for RCAT, ONDS.",
+                                 ["NOW PRESENTING: DPRO"], "https://meetings.ausa.org/annual/2026/", ["DPRO"]),
+            ]},
+            {"month": "2026-11", "label": "November 2026", "lines": []},
+            {"month": "2026-12", "label": "December 2026", "lines": [
+                _conference_line("humanoids-summit-2026", "NEW - Dec 1-2: Humanoids <Summit> Silicon Valley 2026, San Mateo, "
+                                 "CA. For MBAI, SYM. Sheriffs and public-safety drones, too.", ["NEW", "SOMETHING_ELSE"],
+                                 "javascript:alert(1)"),
+            ]},
+        ],
+        "later": {"text": CONFERENCE_LATER, "conferences": []},
+        "undated": {"text": CONFERENCE_UNDATED, "conferences": []},
+    }
+    text = "\n\n".join([CONFERENCE_SUMMARY, "October 2026\n- line", CONFERENCE_LATER, CONFERENCE_UNDATED])
+    item = {
+        "id": 100 * edition_id + 9, "edition_id": edition_id, "rank": 0, "kind": "conference_list", "event_id": None,
+        "event_ids": [], "score": None, "tier": None, "headline": "Conferences coming up", "text": text, "metrics": [],
+        "sources": [], "story_id": None, "module": None, "modules": [], "feedback": [], "why": None, "correction": None,
+        "story_actions": False,
+    }
+    if body_as_text:
+        item["body"] = json.dumps(body)
+    else:
+        item["conferences"] = body
+    return item
+
+
+def with_conferences(**kwargs) -> dict:
+    """The latest briefing led by the conference list."""
+    body = editions()
+    body["editions"][0]["items"].insert(0, conference_item(**kwargs))
+    return body
 
 
 def shelf_row(event_id: int, title: str, score: int, *, stars: list[dict] | None = None,

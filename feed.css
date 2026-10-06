@@ -344,6 +344,19 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 .shelf-row:last-child { border-bottom: 0; }
 .correction-note { margin: 12px 24px 0; padding: 10px 14px; border: 1px solid rgba(52,211,153,.55); border-left: 3px solid var(--zx-ok); border-radius: 8px; color: var(--zx-text-soft); font: 400 14px/21px var(--zx-font); overflow-wrap: anywhere; }
 .correction-note b, .correction-note strong { color: var(--zx-white); }
+/* "Conferences coming up" (the Friday list): a plain card in the conferences colour, no number and no story icons. */
+[class*="st-key-zx_conf_"] { padding: 0 0 14px; border-bottom: 1px dashed var(--zx-line-strong); }
+.conf-card { margin: 12px 24px 0; padding: 14px 18px; border: 1px solid var(--zx-line-strong); border-left: 3px solid #e879f9; border-radius: 8px; background: var(--zx-card); color: var(--zx-text-soft); font: 400 14px/21px var(--zx-font); overflow-wrap: anywhere; }
+.conf-title { color: var(--zx-white); font: 700 20px/1.35 var(--zx-font); letter-spacing: -.1px; }
+.conf-summary { margin-top: 4px; color: var(--zx-muted); font: 400 13px/20px var(--zx-font); }
+.conf-month { margin-top: 12px; }
+.conf-month-label { margin-bottom: 2px; color: var(--zx-text); font: 700 13px/18px var(--zx-font); letter-spacing: .6px; text-transform: uppercase; }
+.conf-lines { margin: 0; padding: 0; list-style: none; }
+.conf-line { margin: 0; padding: 6px 0; border-bottom: 1px solid var(--zx-line); }
+.conf-line:last-child { border-bottom: 0; }
+.conf-flag { display: inline-flex; margin-right: 8px; padding: 0 7px; border: 1px solid rgba(232,121,249,.55); border-radius: 999px; background: rgba(232,121,249,.14); color: #e879f9; font: 700 12px/18px var(--zx-font); letter-spacing: .4px; white-space: nowrap; }
+.conf-link { margin-left: 8px; font: 500 13px/21px var(--zx-font); white-space: nowrap; }
+.conf-more, .conf-text-block { margin-top: 10px; color: var(--zx-text-soft); font: 400 14px/21px var(--zx-font); }
 .filtered-row { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .filtered-row .rejected-title { font-size: 17px; }
 /* ------------------------------------------------------------------ Tuning and What ZENUX looks for */
@@ -436,6 +449,8 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
   .timeline-step.current { border-left-color: var(--zx-white); }
   .shelf, [class*="st-key-zx_item_"] > :not(:first-child) { padding-inline: 18px; }
   .correction-note { margin-inline: 18px; }
+  .conf-card { margin-inline: 18px; padding: 12px 14px; }
+  .conf-title { font-size: 18px; }
   [class*="st-key-zx_row_"] { padding: 14px 14px 8px; }
   /* Phone: the tabs take the first row; the workspace switcher and the popovers share the second. */
   [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) { flex-wrap: wrap !important; row-gap: 6px; padding-bottom: 10px; }

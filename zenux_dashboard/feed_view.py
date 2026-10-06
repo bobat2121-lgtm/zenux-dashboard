@@ -29,10 +29,17 @@ in grey words, and its states: flagged by you, corrected, checked, on your watch
 What the analyst said about the story (a preference, a rating) shows as a glowing icon, not as a chip. Fields are read
 tolerantly, so an older or newer hub shape still renders (a briefing without `left_out` or `tuning` simply has no
 receipt and no left-out section); anything unknown is left out, not guessed.
+
+"Conferences coming up" (docs/SPEC-MIGRATION-BUILD.md section 7): the first briefing of Friday's first scheduled time
+leads with an item of kind `conference_list`. It is a plain card, not a story: its title, the hub's summary, the next
+six months grouped by month (lines with a flag first: NEW, DATES SET, NOW PRESENTING: TICKER, MOVED), then one line
+for later months and one for dates not posted yet. It has no number, no score, no tags and no story icons, and it is
+left out of the story counts, the hero tiles, the coverage-area split and "Why am I seeing this?".
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any, Mapping
 
 import streamlit as st
@@ -41,7 +48,7 @@ from . import actions, api, data, labels, left_out, links, owner, status, tuneup
 from .config import Workspace
 from .fmt import (MIN_TIME, as_int, as_list, chip, clip, dicts, empty_state, esc, esc_lines, fmt_clock, fmt_date,
                   fmt_day, join_and, link, md_label, module_color, module_name, one_line, parse_time, pick, plural,
-                  relative_time, tag_style)
+                  relative_time, safe_url, tag_style)
 
 PAGE_SIZE = 5
 MAX_PAGES = 20
@@ -73,6 +80,11 @@ OK_REVIEW = "Review"
 RECEIPT_LEAD = "Your tuning here: "
 # The briefing's `tuning` (docs/SPEC-SIMPLIFY.md 1.4): what the analyst's rules did in that run, in this order.
 RECEIPT_EFFECTS = (("brought_in", "brought in"), ("kept_out", "kept out"), ("raised", "raised"), ("lowered", "lowered"))
+CONFERENCE_KIND = "conference_list"  # the hub's Friday "Conferences coming up" item
+CONFERENCE_TITLE = "Conferences coming up"
+CONFERENCE_LINK = "Event page ↗"
+# The flags a conference line can carry, in the order the hub shows them; "NOW PRESENTING" takes its tickers.
+NEW_FLAG, DATES_FLAG, PRESENTING_FLAG, MOVED_FLAG = "NEW", "DATES SET", "NOW PRESENTING", "MOVED"
 
 
 def _map(value: Any) -> Mapping:
@@ -106,6 +118,16 @@ def all_items(edition: Mapping) -> list[dict]:
     """Every item of the edition, also when a search narrowed `items` to the hits."""
     full = edition.get(FULL_ITEMS)
     return items_of({"items": full}) if isinstance(full, list) else items_of(edition)
+
+
+def is_conference_list(item: Mapping) -> bool:
+    """The Friday "Conferences coming up" item, not a story."""
+    return one_line(item.get("kind")).lower() == CONFERENCE_KIND
+
+
+def story_items(items: list[dict]) -> list[dict]:
+    """The stories among a briefing's items (the conference list is not one)."""
+    return [item for item in items if not is_conference_list(item)]
 
 
 def edition_id(edition: Mapping) -> Any:
@@ -310,6 +332,81 @@ def item_html(item: Mapping, edition: Mapping, tz: str, focus: bool = False) -> 
     )
 
 
+def conference_body(item: Mapping) -> Mapping:
+    """The conference list's structured body: the item's `conferences` (the hub's lead item view), else its `body`
+    (the stored column), an object or the JSON text of one; {} when there is none."""
+    body = item.get("conferences") if item.get("conferences") is not None else item.get("body")
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except ValueError:
+            body = None
+    return body if isinstance(body, Mapping) else {}
+
+
+def conference_flags(flags: Any) -> str:
+    """A line's flags in the hub's order, the presenting tickers merged: "NEW, NOW PRESENTING: RCAT, ONDS". Anything
+    else is left out."""
+    given = [one_line(f) for f in as_list(flags) if isinstance(f, str)]
+    tickers: list[str] = []
+    for flag in given:
+        if flag.startswith(f"{PRESENTING_FLAG}: "):
+            for ticker in flag[len(PRESENTING_FLAG) + 2:].split(","):
+                if one_line(ticker) and one_line(ticker) not in tickers:
+                    tickers.append(one_line(ticker))
+    out = [f for f in (NEW_FLAG, DATES_FLAG) if f in given]
+    if tickers:
+        out.append(f"{PRESENTING_FLAG}: {', '.join(tickers)}")
+    if MOVED_FLAG in given:
+        out.append(MOVED_FLAG)
+    return ", ".join(out)
+
+
+def conference_line_html(line: Mapping) -> str:
+    """One conference: its flags as a label, the hub's line without its flag prefix, and its event page."""
+    flags = conference_flags(line.get("flags"))
+    text = one_line(line.get("text"))
+    if flags and text.startswith(f"{flags} - "):
+        text = text[len(flags) + 3:]
+    flag_html = f'<span class="conf-flag">{esc(flags)}</span>' if flags else ""
+    page = link(line.get("url"), CONFERENCE_LINK, "conf-link") if safe_url(line.get("url")) else ""
+    return (f'<li class="conf-line{" conf-flagged" if flags else ""}">{flag_html}'
+            f'<span class="conf-text">{esc(text)}</span>{page}</li>')
+
+
+def conference_html(item: Mapping) -> str:
+    """The "Conferences coming up" card: title, summary, the months with their lines (flagged lines first), then the
+    later months and the dates not posted yet. Without a body (an older hub), the item's text, line by line."""
+    body = conference_body(item)
+    title = one_line(pick(item, "headline", "title")) or CONFERENCE_TITLE
+    parts = [f'<div class="conf-title" role="heading" aria-level="3">{esc(title)}</div>']
+    months = dicts(body.get("months"))
+    if body and (months or one_line(pick(body, "later.text", "undated.text"))):
+        summary = one_line(body.get("summary"))
+        if summary:
+            parts.append(f'<div class="conf-summary">{esc(summary)}</div>')
+        for month in months:
+            lines = dicts(month.get("lines"))
+            if not lines:
+                continue
+            flagged = [line for line in lines if conference_flags(line.get("flags"))]
+            ordered = flagged + [line for line in lines if not conference_flags(line.get("flags"))]
+            label = one_line(pick(month, "label", "month"))
+            parts.append('<section class="conf-month">'
+                         + (f'<div class="conf-month-label">{esc(label)}</div>' if label else "")
+                         + '<ul class="conf-lines">' + "".join(conference_line_html(line) for line in ordered) + "</ul>"
+                         + "</section>")
+        for key in ("later", "undated"):
+            text = one_line(pick(body, f"{key}.text"))
+            if text:
+                parts.append(f'<div class="conf-more">{esc(text)}</div>')
+    else:
+        text = item.get("text") if isinstance(item.get("text"), str) else ""
+        if one_line(text):
+            parts.append(f'<div class="conf-text-block">{esc_lines(text)}</div>')
+    return f'<article class="conf-card">{"".join(parts)}</article>'
+
+
 def stats_html(edition: Mapping, items: list[dict]) -> str:
     """The hero's right side: 2x2 tiles, then the coverage-area split bar and its legend."""
     scores = [score_of(i) for i in items]
@@ -338,8 +435,8 @@ def stats_html(edition: Mapping, items: list[dict]) -> str:
 def head_html(edition: Mapping, tz: str, latest: bool = False, matched: int | None = None) -> str:
     """The briefing header: the kicker (LATEST, the briefing's name, age, time, stories, the "how much" setting when
     it is not Standard), then the summary as the title. The newest briefing is the hero: its stats sit on the right.
-    The editor's note never appears here."""
-    items = all_items(edition)
+    The editor's note never appears here. The conference list is not a story: it is left out of the counts."""
+    items = story_items(all_items(edition))
     when = edition_time(edition)
     meta = [relative_time(when), fmt_clock(when, tz)] if known_time(when) else []
     meta.append(plural(len(items), "story", "stories"))
@@ -422,7 +519,14 @@ def shelf_row(row: Mapping, edition: Mapping) -> dict:
 
 
 def item_haystack(item: Mapping) -> str:
-    """What the search box covers for one story: headline, text, companies, sources and coverage areas."""
+    """What the search box covers for one story: headline, text, companies, sources and coverage areas. The conference
+    list: its title, text, summary and lines (never its field names)."""
+    if is_conference_list(item):
+        body = conference_body(item)
+        lines = [line.get("text") for month in dicts(body.get("months")) for line in dicts(month.get("lines"))]
+        parts = [item.get("headline"), item.get("text"), body.get("summary"), *lines, pick(body, "later.text"),
+                 pick(body, "undated.text")]
+        return " ".join(one_line(p) for p in parts if isinstance(p, str)).casefold()
     why = _map(item.get("why"))
     correction = _map(item.get("correction"))
     modules = item_modules(item)
@@ -583,11 +687,19 @@ def render_shelf(ws: Workspace, edition: Mapping, index: Any, kind: str, used: s
                         draw(row)
 
 
+def render_conferences(item: Mapping, index: Any, n: int) -> None:
+    """The "Conferences coming up" card: plain text, no story icons."""
+    with st.container(key=f"zx_conf_{index}_{n}"):
+        st.markdown(conference_html(item), unsafe_allow_html=True)
+
+
 def render_edition(ws: Workspace, edition: Mapping, index: Any, *, latest: bool, searching: bool,
                    focus_item: int | None, used: set[str]) -> None:
-    """One briefing card: its header (with the tuning receipt), corrections, stories, shelves, what it left out, the
-    editor's notes and every story's Why. A search narrows it to its matching stories."""
+    """One briefing card: its header (with the tuning receipt), corrections, the conference list on a Friday morning,
+    stories, shelves, what it left out, the editor's notes and every story's Why. A search narrows it to its matching
+    stories."""
     items = items_of(edition)
+    stories = story_items(items)
     with st.container(key=f"zx_edition_{index}"):
         st.markdown(edition_html(edition, ws.timezone, latest=latest, matched=len(items) if searching else None),
                     unsafe_allow_html=True)
@@ -595,16 +707,19 @@ def render_edition(ws: Workspace, edition: Mapping, index: Any, *, latest: bool,
             corrections = corrections_html(edition, ws.timezone)
             if corrections:
                 st.markdown(corrections, unsafe_allow_html=True)
-        if not items:
-            st.markdown(f'<div class="edition-empty">{esc(EMPTY_BRIEFING)}</div>', unsafe_allow_html=True)
         for n, item in enumerate(items):
+            if is_conference_list(item):
+                render_conferences(item, index, n)
+        if not stories and not searching:
+            st.markdown(f'<div class="edition-empty">{esc(EMPTY_BRIEFING)}</div>', unsafe_allow_html=True)
+        for n, item in enumerate(stories):
             render_item(ws, edition, item, index, n, focus_item, used)
         if not searching:
             render_shelf(ws, edition, index, "watchlist", used)
             render_shelf(ws, edition, index, "near", used)
             left_out.render_edition_section(ws, edition, used)
         render_notes(edition)
-        render_why(ws, edition, items, index)
+        render_why(ws, edition, stories, index)
 
 
 def render_search() -> str:

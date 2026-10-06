@@ -1,0 +1,184 @@
+{
+  "id": 2,
+  "edition_id": 1,
+  "rank": 0,
+  "kind": "conference_list",
+  "event_id": null,
+  "event_ids": [],
+  "score": null,
+  "tier": null,
+  "headline": "Conferences coming up",
+  "text": "Conferences for your coverage from Fri Oct 9, 2026 to Fri Apr 30, 2027. Changes this week: 1 new, 2 with dates set, 2 with a covered company now presenting, 1 moved.\n\nOctober 2026\n- NOW PRESENTING: RCAT - Oct 15: ThinkEquity Conference, New York, NY. Presenting: RCAT. Small-cap investor day; Red Cat presented in 2025.\n- Oct 12-14: AUSA Annual Meeting & Exposition 2026, Washington, DC. For RCAT, ONDS, DPRO. The Army's largest show; drone, counter-UAS and Army-buying news clusters here.\n\nNovember 2026\n- NEW - Nov 18: Wolfe Research Autonomy Summit 2026. For KDK. KDK announced an appearance: Kodiak to Join Fireside Chat at the Wolfe Research Autonomy Summit.\n\nJanuary 2027\n- DATES SET, NOW PRESENTING: ONDS - Jan 12-15: Needham Growth Conference (29th). Presenting: ONDS. Also for DPRO, SPAI. The growth conference small caps use in January.\n- Jan 6-9: CES 2027, Las Vegas, NV. For AUR, KDK. Autonomy and robotics launches cluster at CES.\n\nLater (Jun 2027 to May 2028): MOVED - XPONENTIAL 2027 (Jun); Paris Air Show 2027 (Jun); DATES SET - XPONENTIAL 2028 (May).\n\nDates not posted yet: DSI Loitering Munitions Systems Summit 2027 (expected Sep 2027).",
+  "metrics": [],
+  "sources": [],
+  "story_id": null,
+  "module": null,
+  "modules": [],
+  "feedback": [],
+  "why": null,
+  "correction": null,
+  "story_actions": false,
+  "conferences": {
+    "from": "2026-10-09",
+    "until": "2027-04-30",
+    "months_ahead": 6,
+    "summary": "Conferences for your coverage from Fri Oct 9, 2026 to Fri Apr 30, 2027. Changes this week: 1 new, 2 with dates set, 2 with a covered company now presenting, 1 moved.",
+    "changes": {
+      "new": 1,
+      "dates_set": 2,
+      "now_presenting": 2,
+      "moved": 1
+    },
+    "months": [
+      {
+        "month": "2026-10",
+        "label": "October 2026",
+        "lines": [
+          {
+            "conference_id": "thinkequity-conference-2026",
+            "text": "NOW PRESENTING: RCAT - Oct 15: ThinkEquity Conference, New York, NY. Presenting: RCAT. Small-cap investor day; Red Cat presented in 2025.",
+            "flags": [
+              "NOW PRESENTING: RCAT"
+            ],
+            "dates_text": "Oct 15",
+            "start": "2026-10-15",
+            "end": "2026-10-15",
+            "name": "ThinkEquity Conference",
+            "city": "New York, NY",
+            "url": "https://www.think-equity.com/",
+            "tickers": [
+              "RCAT"
+            ],
+            "presenting": [
+              "RCAT"
+            ]
+          },
+          {
+            "conference_id": "ausa-meeting-exposition-2026",
+            "text": "Oct 12-14: AUSA Annual Meeting & Exposition 2026, Washington, DC. For RCAT, ONDS, DPRO. The Army's largest show; drone, counter-UAS and Army-buying news clusters here.",
+            "flags": [],
+            "dates_text": "Oct 12-14",
+            "start": "2026-10-12",
+            "end": "2026-10-14",
+            "name": "AUSA Annual Meeting & Exposition 2026",
+            "city": "Washington, DC",
+            "url": "https://meetings.ausa.org/annual/2026/",
+            "tickers": [
+              "RCAT",
+              "ONDS",
+              "DPRO"
+            ],
+            "presenting": []
+          }
+        ]
+      },
+      {
+        "month": "2026-11",
+        "label": "November 2026",
+        "lines": [
+          {
+            "conference_id": "wolfe-research-autonomy-summit-2026",
+            "text": "NEW - Nov 18: Wolfe Research Autonomy Summit 2026. For KDK. KDK announced an appearance: Kodiak to Join Fireside Chat at the Wolfe Research Autonomy Summit.",
+            "flags": [
+              "NEW"
+            ],
+            "dates_text": "Nov 18",
+            "start": "2026-11-18",
+            "end": "2026-11-18",
+            "name": "Wolfe Research Autonomy Summit 2026",
+            "city": null,
+            "url": "https://www.wolferesearch.com/conferences",
+            "tickers": [
+              "KDK"
+            ],
+            "presenting": []
+          }
+        ]
+      },
+      {
+        "month": "2027-01",
+        "label": "January 2027",
+        "lines": [
+          {
+            "conference_id": "needham-growth-conference-2027",
+            "text": "DATES SET, NOW PRESENTING: ONDS - Jan 12-15: Needham Growth Conference (29th). Presenting: ONDS. Also for DPRO, SPAI. The growth conference small caps use in January.",
+            "flags": [
+              "NOW PRESENTING: ONDS",
+              "DATES SET"
+            ],
+            "dates_text": "Jan 12-15",
+            "start": "2027-01-12",
+            "end": "2027-01-15",
+            "name": "Needham Growth Conference (29th)",
+            "city": null,
+            "url": "https://www.needhamco.com/",
+            "tickers": [
+              "DPRO",
+              "SPAI"
+            ],
+            "presenting": [
+              "ONDS"
+            ]
+          },
+          {
+            "conference_id": "ces-2027",
+            "text": "Jan 6-9: CES 2027, Las Vegas, NV. For AUR, KDK. Autonomy and robotics launches cluster at CES.",
+            "flags": [],
+            "dates_text": "Jan 6-9",
+            "start": "2027-01-06",
+            "end": "2027-01-09",
+            "name": "CES 2027",
+            "city": "Las Vegas, NV",
+            "url": "https://www.ces.tech/",
+            "tickers": [
+              "AUR",
+              "KDK"
+            ],
+            "presenting": []
+          }
+        ]
+      }
+    ],
+    "later": {
+      "text": "Later (Jun 2027 to May 2028): MOVED - XPONENTIAL 2027 (Jun); Paris Air Show 2027 (Jun); DATES SET - XPONENTIAL 2028 (May).",
+      "conferences": [
+        {
+          "conference_id": "xponential-2027",
+          "name": "XPONENTIAL 2027",
+          "start": "2027-06-07",
+          "end": "2027-06-10",
+          "flags": [
+            "MOVED"
+          ]
+        },
+        {
+          "conference_id": "paris-air-show-2027",
+          "name": "Paris Air Show 2027",
+          "start": "2027-06-14",
+          "end": "2027-06-20",
+          "flags": []
+        },
+        {
+          "conference_id": "xponential-2028",
+          "name": "XPONENTIAL 2028",
+          "start": "2028-05-08",
+          "end": "2028-05-11",
+          "flags": [
+            "DATES SET"
+          ]
+        }
+      ]
+    },
+    "undated": {
+      "text": "Dates not posted yet: DSI Loitering Munitions Systems Summit 2027 (expected Sep 2027).",
+      "conferences": [
+        {
+          "conference_id": "dsi-loitering-munitions-systems-summit-2027",
+          "name": "DSI Loitering Munitions Systems Summit 2027",
+          "expected": "2027-09",
+          "flags": []
+        }
+      ]
+    }
+  }
+}

@@ -73,7 +73,7 @@ class AreaTests(CoverageCase):
         self.assert_clean(at)
         area = at.segmented_control(key="cv_area")
         self.assertEqual(area.value, "ai-infra")
-        self.assertEqual(list(area.options), ["AI infrastructure", "Defense unmanned"])
+        self.assertEqual(list(area.options), ["AI infrastructure", "Defense tech"])
         html = self.html(at)
         self.assertIn('<div class="cov-title">AI infrastructure: data centers, colocation, AI cloud, bitcoin miners</div>'
                       '<div class="cov-desc">Data center leases, power deals, AI cloud capacity and miners moving to '

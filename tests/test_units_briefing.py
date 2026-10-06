@@ -59,13 +59,13 @@ class ShapeTests(unittest.TestCase):
         self.assertEqual(feed_view.module_tags_html({"modules": ["ai-infra", "<x>"]}),
                          f'<span class="module-tag" style="{fmt.tag_style("#A78BFA")}">AI INFRASTRUCTURE</span>'
                          f'<span class="module-tag" style="{fmt.tag_style(fmt.module_color("<x>"))}">&lt;X&gt;</span>')
-        self.assertEqual(feed_view.module_tag("defense-unmanned").rsplit(">", 2)[-2], "DEFENSE UNMANNED</span")
+        self.assertEqual(feed_view.module_tag("defense-unmanned").rsplit(">", 2)[-2], "DEFENSE TECH</span")
 
     def test_fallback_summary_says_stories(self):
         items = [item(1, "defense-unmanned", "Army orders a new autonomy command.")] + [
             item(n, "ai-infra" if n <= 5 else "defense-unmanned") for n in range(2, 10)]
         self.assertEqual(feed_view.fallback_summary(items),
-                         "9 stories across AI infrastructure (4) and defense unmanned (5), led by Army orders a new "
+                         "9 stories across AI infrastructure (4) and defense tech (5), led by Army orders a new "
                          "autonomy command.")
         self.assertEqual(feed_view.fallback_summary([item(1, "ai-infra", "Lead"), item(2, "ai-infra")]),
                          "2 stories in AI infrastructure, led by Lead.")
@@ -179,6 +179,80 @@ class CardHtmlTests(unittest.TestCase):
         self.assertEqual(row["bar"], 70)
         self.assertEqual(feed_view.shelf_row({"bar": 80}, shelves)["bar"], 80)
         self.assertNotIn("bar", feed_view.shelf_row({}, {}))
+
+
+class ConferenceListTests(unittest.TestCase):
+    """The Friday "Conferences coming up" item (docs/SPEC-MIGRATION-BUILD.md section 7): a plain card, not a story."""
+
+    def test_kind_and_stories(self):
+        conf = fb.conference_item()
+        self.assertTrue(feed_view.is_conference_list(conf))
+        self.assertFalse(feed_view.is_conference_list(fb.items(12)[0]))
+        self.assertEqual(feed_view.story_items([conf] + fb.items(12)), fb.items(12))
+        # the hub serves the list in `conferences`; the stored `body` (an object or its JSON text) is read too
+        listed = feed_view.conference_body(conf)
+        self.assertEqual(listed["summary"], fb.CONFERENCE_SUMMARY)
+        self.assertEqual(feed_view.conference_body(fb.conference_item(body_as_text=True)), listed)
+        self.assertEqual(feed_view.conference_body({"body": dict(listed)}), listed)
+        self.assertEqual(feed_view.conference_body({"body": "not json"}), {})
+        self.assertEqual(feed_view.conference_body({"body": ["x"]}), {})
+
+    def test_flags_in_the_hubs_order(self):
+        self.assertEqual(feed_view.conference_flags(["MOVED", "NOW PRESENTING: RCAT", "NEW",
+                                                     "NOW PRESENTING: ONDS, RCAT"]),
+                         "NEW, NOW PRESENTING: RCAT, ONDS, MOVED")
+        self.assertEqual(feed_view.conference_flags(["DATES SET"]), "DATES SET")
+        self.assertEqual(feed_view.conference_flags(["SOMETHING_ELSE", None, 3]), "")
+        self.assertEqual(feed_view.conference_flags(None), "")
+
+    def test_card(self):
+        html = feed_view.conference_html(fb.conference_item())
+        self.assertTrue(html.startswith('<article class="conf-card"><div class="conf-title" role="heading" '
+                                        'aria-level="3">Conferences coming up</div>'
+                                        f'<div class="conf-summary">{fb.CONFERENCE_SUMMARY}</div>'), html)
+        # months with lines, flagged lines first; a month without lines is left out
+        self.assertIn('<section class="conf-month"><div class="conf-month-label">October 2026</div>'
+                      '<ul class="conf-lines"><li class="conf-line conf-flagged"><span class="conf-flag">NOW PRESENTING: '
+                      'DPRO</span>'
+                      '<span class="conf-text">Oct 12-14: AUSA Annual Meeting &amp; Exposition 2026, Washington, DC. '
+                      'Presenting: DPRO. Also for RCAT, ONDS.</span><a class="conf-link" '
+                      'href="https://meetings.ausa.org/annual/2026/" target="_blank" rel="noopener noreferrer">'
+                      'Event page ↗</a></li><li class="conf-line"><span class="conf-text">Oct 15: ThinkEquity', html)
+        self.assertNotIn("November 2026", html)
+        # markup is escaped, an unsafe link dropped, an unknown flag never shown
+        self.assertIn('<li class="conf-line conf-flagged"><span class="conf-flag">NEW</span><span class="conf-text">'
+                      'Dec 1-2: Humanoids &lt;Summit&gt; Silicon Valley 2026', html)
+        self.assertNotIn("javascript", html)
+        self.assertNotIn("SOMETHING", html)
+        # then the later months and the dates not posted yet
+        self.assertTrue(html.endswith(f'<div class="conf-more">{fb.CONFERENCE_LATER}</div>'
+                                      f'<div class="conf-more">{fb.CONFERENCE_UNDATED}</div></article>'), html)
+        # no number, score, tags or icons; plain words; one raw HTML block
+        for word in ("rank-marker", "feed-tags", "badge-top", "TOP STORY", "module-tag"):
+            self.assertNotIn(word, html)
+        self.assertEqual(labels.find_jargon(html.replace("conf-", "")), [])
+        self.assertNotIn("\n\n", html)
+
+    def test_card_without_a_body_shows_the_text(self):
+        conf = dict(fb.conference_item(), conferences=None,
+                    text="Conferences for your coverage.\n\nOctober 2026\n- Oct 15: <b>X</b>")
+        self.assertEqual(feed_view.conference_html(conf),
+                         '<article class="conf-card"><div class="conf-title" role="heading" aria-level="3">Conferences '
+                         'coming up</div><div class="conf-text-block">Conferences for your coverage.<br>October 2026<br>'
+                         '- Oct 15: &lt;b&gt;X&lt;/b&gt;</div></article>')
+        self.assertIn("Conferences coming up", feed_view.conference_html({"kind": "conference_list"}))
+
+    def test_not_counted_as_a_story(self):
+        edition = fb.with_conferences()["editions"][0]
+        head = feed_view.head_html(edition, TZ, latest=True)
+        self.assertIn("<span>2 stories</span>", head)
+        self.assertIn('<div class="stat-n">2</div><div class="stat-l">STORIES</div>', head)
+        self.assertIn('<div class="stat stat-medium"><div class="stat-n">1</div><div class="stat-l">ALSO NOTABLE</div>',
+                      head)
+        self.assertIn("led by CoreWeave signs 200 MW", head)
+        hits = feed_view.search([edition], "ausa")
+        self.assertEqual([i.get("kind") for i in hits[0]["items"]], ["conference_list"])
+        self.assertEqual(feed_view.search([edition], "conference_id"), [])
 
 
 class ReceiptTests(unittest.TestCase):
