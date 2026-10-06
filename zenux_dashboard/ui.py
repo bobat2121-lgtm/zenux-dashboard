@@ -235,8 +235,8 @@ def _module_ids() -> set[str]:
 
 def looks_technical(text: Any) -> bool:
     """The last guard on a hub sentence: engine words (labels.find_jargon), a configured module id, a record id used as
-    a name ("ent-coreweave-1"), JSON or an ISO date."""
-    words = one_line(text)
+    a name ("ent-coreweave-1"), JSON or an ISO date. Names drawn with labels.name_html are data and skipped."""
+    words = one_line(labels.strip_names(one_line(text)))
     if labels.find_jargon(words) or _ID_LIKE_RE.search(words) or _TECHNICAL_RE.search(words):
         return True
     lower = words.lower()

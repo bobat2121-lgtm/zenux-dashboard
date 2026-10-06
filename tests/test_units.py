@@ -342,8 +342,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(self.read(api.star_preview, "/stars/preview", "coreweave")[1], {"entity": "coreweave"})
         for fn, path in ((api.preferences, "/preferences"), (api.rules, "/rules"), (api.settings, "/settings"),
                          (api.brief, "/brief"), (api.radar, "/radar"), (api.repairs, "/repairs"),
-                         (api.diagnostics, "/diagnostics")):
+                         (api.diagnostics, "/diagnostics"), (api.company_suggestions, "/companies/suggestions")):
             self.assertEqual(self.read(fn, path)[1], {})
+        self.assertEqual(self.read(api.company_suggestions, "/companies/suggestions", "approved")[1],
+                         {"status": "approved"})
         self.assertEqual(self.read(api.volume_preview, "/settings/volume/preview", "top")[1], {"mode": "top"})
         self.assertEqual(self.read(api.volume_preview, "/settings/volume/preview", "broad", True)[1],
                          {"mode": "broad", "near_miss_shelf": 1})
@@ -496,6 +498,13 @@ class ApiTests(unittest.TestCase):
                          {"note": "looks right"})
         self.assertEqual(self.post(api.repair_action, "/repairs/21/reject", "21", "reject", note="  "), {})
         self.assertEqual(self.post(api.repair_action, "/repairs/17/withdraw", 17, "withdraw"), {})
+        # suggested company names (docs/SPEC-COMPANY-MAP.md 5.2): {use?} on approve, {note?}, the owner token
+        self.assertEqual(self.post(api.company_suggestion_action, "/companies/suggestions/CS-6f708192/approve",
+                                   " CS-6f708192 ", "approve", use="proposal"), {"use": "proposal"})
+        self.assertEqual(self.post(api.company_suggestion_action, "/companies/suggestions/CS-6F708192/reject",
+                                   "CS-6F708192", "reject"), {})
+        self.assertEqual(self.post(api.company_suggestion_action, "/companies/suggestions/CS-6f708192/withdraw",
+                                   "CS-6f708192", "withdraw", note="  sent by mistake "), {"note": "sent by mistake"})
 
     def test_writes_validate_before_sending(self):
         bad = [
@@ -530,6 +539,12 @@ class ApiTests(unittest.TestCase):
             lambda: api.repair_action(self.ws, OWNER, 0, "approve"),
             lambda: api.repair_action(self.ws, OWNER, "../x", "approve"),
             lambda: api.repair_action(self.ws, OWNER, 21, "reject", note="n" * (api.LONG_TEXT_MAX + 1)),
+            lambda: api.company_suggestion_action(self.ws, OWNER, "CS-6f708192", "applied"),  # the builder's tool
+            lambda: api.company_suggestion_action(self.ws, OWNER, "../x", "approve"),
+            lambda: api.company_suggestion_action(self.ws, OWNER, "CS-6f70819", "approve"),
+            lambda: api.company_suggestion_action(self.ws, OWNER, "CS-6f708192", "approve", use="mine"),
+            lambda: api.company_suggestion_action(self.ws, OWNER, "CS-6f708192", "reject", use="proposal"),
+            lambda: api.company_suggestions(self.ws, "open"),
         ]
         for n, call in enumerate(bad):
             with self.subTest(n=n):
@@ -721,6 +736,12 @@ class StylesheetTests(unittest.TestCase):
                     "tu-editor", "tu-done", "edition-receipt", "zx-group-title", "zx-group-empty", "st-key-zx_leftout_",
                     "zx-leftout-auto", "tn-title", "tn-rule", "tn-hint", "st-key-zx_rule_", "st-key-zx_how_much",
                     "st-key-zx_rules_bar", "st-key-zx_ended_", "brief-title", "st-key-zx_routine_",
+                    # docs/SPEC-COMPANY-MAP.md 6.1: "Your companies' big names" in What ZENITH looks for
+                    "co-name", "cm-lede", "cm-legend", "cm-call", "st-key-zx_cmrow_", "st-key-zx_cmhead_", "cm-head",
+                    "cm-title", "cm-ticker", "cm-summary", "cm-grid", "cm-cell", "cm-col", "cm-chips", "cm-chip",
+                    "cm-reason", "cm-hit", "cm-none", "cm-pendings", "cm-pending", "cm-pending-state", "cm-all",
+                    "cm-all-col", "cm-entry", "cm-big", "cm-entry-name", "cm-entry-reason", "cm-entry-aka",
+                    "cm-entry-note", "cm-entry-meta", "cm-dlg-head",
                     # docs/SPEC-MIGRATION-BUILD.md section 7: the Friday "Conferences coming up" card
                     "st-key-zx_conf_", "conf-card", "conf-title", "conf-summary", "conf-month", "conf-month-label",
                     "conf-lines", "conf-line", "conf-flag", "conf-link", "conf-more", "conf-text-block"):

@@ -109,6 +109,12 @@ def repairs(workspace_id: str) -> dict:
     return api.repairs(_ws(workspace_id))
 
 
+@st.cache_data(ttl=READ_TTL, show_spinner=False)
+def company_suggestions(workspace_id: str, status: str = "") -> dict:
+    """GET /companies/suggestions?status=: suggested company names (the Control room's "Company names to build in")."""
+    return api.company_suggestions(_ws(workspace_id), status or None)
+
+
 # ---------------------------------------------------------------------------------------------- tuning
 
 
@@ -225,8 +231,8 @@ def workspace_health(workspace_id: str) -> dict:
 
 
 READS = (editions, edition, latest_edition_id, search_editions, status, rejected, tuneup, modules, inspect, radar,
-         repairs, mutes, mute_preview, bring_back_preview, stars, star_preview, preferences, rules, settings,
-         volume_preview, brief, diagnostics, hub_sources)
+         repairs, company_suggestions, mutes, mute_preview, bring_back_preview, stars, star_preview, preferences,
+         rules, settings, volume_preview, brief, diagnostics, hub_sources)
 
 
 def clear_reads() -> None:

@@ -73,8 +73,14 @@ class SummaryAndStatsTests(unittest.TestCase):
 class NeedsYourOkShapeTests(unittest.TestCase):
     def test_suggestions_and_legacy_drafts_newest_first_without_duplicates(self):
         cards = pv.needs_ok(fp.preferences(), fp.rules())
-        self.assertEqual([c["id"] for c in cards], [45, 41, 19, 44, 46, 31])
+        # the suggested company names (docs/SPEC-COMPANY-MAP.md 6.3) are in the same list, by when they arrived
+        self.assertEqual([c["id"] for c in cards], [45, 41, 19, "CS-6f708192", 44, 46, "CS-7081920a", 31])
         self.assertEqual(pv.needs_ok(None, None), [])
+        # only proposed company names, each once; a row whose id is not a company suggestion's is left out
+        body = fp.preferences(suggestions=[], companies=[
+            fp.company_add(), fp.company_add(), fp.company_fix(status="approved"), {**fp.company_remove(), "id": 7},
+            fp.company_remove(status=None), "x"])
+        self.assertEqual([c["id"] for c in pv.needs_ok(body, None)], ["CS-6f708192", "CS-7081920a"])
         # gap 29: drafts the analyst sent that are with the wording assistant, from with_assistant (not GET /rules)
         self.assertEqual(pv.waiting_count(fp.preferences()), 1)  # the brief suggestion; the wording is the hub's own
         self.assertEqual(pv.waiting_count({"with_assistant": {"by_origin": {"feedback": 2, "owner": 1, "grades": 4}}}),

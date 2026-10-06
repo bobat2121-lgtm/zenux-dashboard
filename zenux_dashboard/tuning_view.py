@@ -9,6 +9,12 @@
    reasoning, the wording box and the conflict checkboxes (on by default). Approve: POST /rules/<draft>/approve
    {proposed_at, text?, retire?, as_new?}; the other: POST /rules/<draft>/reject {} with Undo (reopen). The 409 answers
    (proposal_changed, merge_outdated, target_retired) are said on the card in plain words (brief_view.write_or_handle).
+   Suggested company names the source finder has checked (GET /preferences `company_suggestions`,
+   docs/SPEC-COMPANY-MAP.md 6.3) are cards of the same list: "Suggested name for <Company>", what it changes, the note,
+   a big customer's reason and the source finder's result (company_names_view; a name the hub left out comes from the
+   cached GET /brief), then Approve and Reject: POST /companies/suggestions/<id>/{approve|reject}, never /rules. No
+   route reverses either, so they have no Undo, and Reject asks first; a 409 suggestion_closed re-reads the list and
+   says so at the top.
 3. "How much": one row with the three choices, the near-miss switch, the preview line and "Use this setting" (enabled
    only when changed): GET /settings, GET /settings/volume/preview, POST /settings/volume, with Undo.
 4. "Your rules · N": one list of the preferences (GET /preferences, active and paused), mutes (GET /mutes?all=1,
@@ -38,7 +44,7 @@ from typing import Any, Callable, Mapping
 
 import streamlit as st
 
-from . import actions, api, brief_view, data, labels, links, ui
+from . import actions, api, brief_view, company_names_view, data, labels, links, ui
 from .config import Workspace, load_config
 from .fmt import (MIN_TIME, UTC, as_int, as_list, chip, clip, dicts, empty_state, esc, fmt_date, md_label, one_line,
                   parse_time, pick, plural, relative_time, unique_by_id, zone)
@@ -201,14 +207,15 @@ def ended_preferences(prefs_body: Any) -> list[dict]:
 
 
 def needs_ok(prefs_body: Any, rules_body: Any) -> list[dict]:
-    """GET /preferences suggestions plus the legacy proposed drafts of GET /rules that are not among them, newest
-    first (by when the proposal arrived, then by id). The Briefing's banner counts the same list."""
+    """GET /preferences suggestions, the legacy proposed drafts of GET /rules that are not among them and the
+    suggested company names (`company_suggestions`; company_names_view.is_suggestion tells them apart), newest first
+    (by when the proposal arrived, then by id). The Briefing's banner counts the same list."""
     suggestions = [d for d in unique_by_id(dicts(pick(prefs_body, "suggestions", default=[])))
-                   if status_of(d, "proposed") == "proposed"]
+                   if status_of(d, "proposed") == "proposed" and not company_names_view.is_suggestion(d)]
     seen = {one_line(d.get("id")) for d in suggestions}
     legacy = [d for d in drafts_of(rules_body)
               if status_of(d, "queued") == "proposed" and one_line(d.get("id")) not in seen]
-    cards = suggestions + legacy
+    cards = suggestions + legacy + company_names_view.proposed(prefs_body)
     return sorted(cards, key=lambda d: (parse_time(pick(d, "proposed_at", "updated_at", "created_at")),
                                         as_int(d.get("id")) or 0), reverse=True)
 
@@ -666,9 +673,15 @@ def render_ok(ws: Workspace, prefs: Any, rules: Any) -> None:
         return
     section(f"Needs your OK · {len(cards)}")
     by_id = preferences_by_id(prefs)
-    lines = brief_lines(ws) if any(origin_of(d) == "brief" for d in cards) else {}
+    companies = {one_line(d.get("id")): d for d in company_names_view.named(
+        [d for d in cards if company_names_view.is_suggestion(d)], lambda: data.brief(ws.id))}
+    lines = (brief_lines(ws) if any(origin_of(d) == "brief" for d in cards if one_line(d.get("id")) not in companies)
+             else {})
     for draft in cards:
-        suggestion_card(ws, draft, by_id, lines)
+        if one_line(draft.get("id")) in companies:
+            company_card(ws, companies[one_line(draft.get("id"))])
+        else:
+            suggestion_card(ws, draft, by_id, lines)
 
 
 def brief_lines(ws: Workspace) -> dict[str, str]:
@@ -869,6 +882,45 @@ def reject_suggestion(ws: Workspace, draft: Mapping) -> None:
     if result is not None:
         forget_card(one_line(rule_id))
         st.rerun()
+
+
+def company_card(ws: Workspace, row: Mapping) -> None:
+    """A suggested company name: the card (company_names_view.card_html), Approve and Reject (which asks first: no
+    route reverses it), then Details when the source finder left more to read."""
+    sid = one_line(row.get("id"))
+    with st.container(border=True, key=f"zx_card_cs_{sid}"):
+        st.markdown(company_names_view.card_html(row, ws.timezone), unsafe_allow_html=True)
+        with st.container(horizontal=True, key=f"zx_actions_cs_{sid}"):
+            approve = ui.write_button(company_names_view.APPROVE_LABEL, ws=ws, key=f"cs_approve_{sid}",
+                                      type="primary")
+            reject = ui.write_button(company_names_view.REJECT_LABEL, ws=ws, key=f"cs_reject_{sid}", type="tertiary")
+        details = company_names_view.details_html(row, ws.timezone)
+        if details:
+            with st.expander("Details", key=f"cs_details_{sid}"):
+                st.markdown(details, unsafe_allow_html=True)
+        if approve:
+            if decide_company(ws, row, "approve"):
+                st.rerun()
+        if reject:
+            ui.ask_confirm(company_names_view.REJECT_TITLE, company_names_view.REJECT_MESSAGE,
+                           company_names_view.REJECT_LABEL, lambda: decide_company(ws, row, "reject"),
+                           detail=labels.NO_UNDO)
+
+
+def decide_company(ws: Workspace, row: Mapping, action: str) -> bool:
+    """POST /companies/suggestions/<id>/approve {use} (the version the card shows) or /reject {} (run inside the
+    confirmation, which closes and reruns): a toast and no undo (no route reverses either). A 409 suggestion_closed
+    re-reads the list and says so at the top. -> True when something changed (the caller reruns)."""
+    sid = one_line(row.get("id"))
+    use = company_names_view.use_of(row) if action == "approve" else None
+    result, handled = brief_view.write_or_handle(
+        ws, lambda token: api.company_suggestion_action(ws, token, sid, action, use=use),
+        toast=company_names_view.approved_toast(row) if action == "approve" else company_names_view.REJECTED,
+        codes=company_names_view.CLOSED_CODES)
+    if handled is not None:
+        data.clear_reads()
+        st.session_state[NOTICE_KEY] = company_names_view.CLOSED
+    return handled is not None or result is not None
 
 
 # ---------------------------------------------------------------------------------------------- How much

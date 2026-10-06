@@ -205,7 +205,8 @@ def _flag(params: dict | None, name: str) -> bool:
 
 def hub_defaults(http: FakeHttp, base: str = PILOT_HUB) -> FakeHttp:
     """Route every hub read (docs/SPEC-PHASE03-UI.md 3.3, plus the WF5 reads of docs/SPEC-PHASE05.md, GET /repairs of
-    docs/SPEC-REPAIR-PHASE-B.md and GET /tuneup of docs/SPEC-SIMPLIFY.md) to a fixtures.py body. Query-dependent reads
+    docs/SPEC-REPAIR-PHASE-B.md, GET /tuneup of docs/SPEC-SIMPLIFY.md and GET /companies/suggestions of
+    docs/SPEC-COMPANY-MAP.md, none yet) to a fixtures.py body. Query-dependent reads
     answer by their parameters: /rejected by filter and include_auto, /mutes by all=1, the previews by their target and
     mode, /modules/<id>/inspect for both pilot modules, /editions/<id> for 10 to 12, /editions/search with no hits.
     GET /tuneup answers "not due" (fixtures.tuneup), so no tune-up banner shows unless a test routes one. Returns http
@@ -237,6 +238,8 @@ def hub_defaults(http: FakeHttp, base: str = PILOT_HUB) -> FakeHttp:
     http.on("GET", base + "/brief", fx.brief())
     http.on("GET", base + "/radar", fx.radar_v8())
     http.on("GET", base + "/repairs", fx.repairs_v9())
+    http.on("GET", base + "/companies/suggestions",
+            lambda call: fx.company_suggestions_v13((call.params or {}).get("status")))
     http.on("GET", base + "/diagnostics", fx.diagnostics())
     http.on("GET", base + "/tuneup", fx.tuneup())
     return http
@@ -332,16 +335,19 @@ class AppCase(unittest.TestCase):
             yield from AppCase.walk(children[key])
 
     @staticmethod
-    def visible_text(at: AppTest) -> str:
+    def visible_text(at: AppTest, *, names: bool = True) -> str:
         """What a reader sees, one piece per line: markdown with tags and attributes stripped (plus its title=""
         tooltips), captions, button, widget (with options, radio captions, placeholders and help tooltips), expander,
-        popover and dialog labels, toasts, warnings, infos, errors. Material icon codes are left out."""
+        popover and dialog labels, toasts, warnings, infos, errors. Material icon codes are left out. names=False leaves
+        out the names drawn with labels.name_html (data, which the jargon guard skips)."""
         parts: list[str] = []
         for node in AppCase.walk(at._tree):
             kind = getattr(node, "type", "")
             proto = getattr(node, "proto", None)
             if kind == "markdown":
                 raw = STYLE_RE.sub("", str(node.value))
+                if not names:
+                    raw = labels.strip_names(raw)
                 parts.append(html_lib.unescape(TAG_RE.sub(" ", raw)))
                 parts.extend(html_lib.unescape(t) for t in TITLE_ATTR_RE.findall(raw))
             elif kind in ("caption", "warning", "info", "error", "success", "toast", "text", "header", "subheader",
@@ -369,8 +375,9 @@ class AppCase(unittest.TestCase):
 
     def assert_plain(self, at: AppTest) -> None:
         """The jargon guard: no engine word, source key, entity id or coverage-area id anywhere a reader can see
-        (tooltips included)."""
-        text = self.visible_text(at)
+        (tooltips included). Company, product and customer names drawn with labels.name_html are data and skipped
+        (docs/SPEC-COMPANY-MAP.md 6.4); the words around them are not."""
+        text = self.visible_text(at, names=False)
         self.assertEqual(labels.find_jargon(text) + ENGINE_KEY_RE.findall(text), [], text)
 
     def open_popover(self, at: AppTest, key: str) -> None:

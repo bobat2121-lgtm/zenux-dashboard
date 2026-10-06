@@ -6,8 +6,8 @@ an engine code into visible text: unknown codes fall back to a plain default, ne
 
 The jargon guard (JARGON_PATTERNS, find_jargon) is what the tests run over every analyst tab: no event ids, source
 keys, module ids, lanes, tiers, reason codes, "lease", "cursor", "dead letters", "refiner", "scout", "hub",
-"Grader", "radar", "rule draft", "precedent", "edition", "deploy" or a bare record number ("id 7101", "draft 43")
-outside the Control room. The tests also fail on every fixture source key (tests/helpers.assert_plain).
+"Grader", "radar", "rule draft", "precedent", "edition", "deploy", "registry", "entity", "rubric", "routine" or a
+bare record number ("id 7101", "draft 43") outside the Control room. The tests also fail on every fixture source key (tests/helpers.assert_plain).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import re
 from datetime import datetime
 from typing import Any, Mapping
 
-from .fmt import MIN_TIME, MODULE_NAMES, as_int, one_line, parse_time, zone
+from .fmt import MIN_TIME, MODULE_NAMES, as_int, esc, one_line, parse_time, zone
 
 # ---------------------------------------------------------------------------------------------- tabs
 
@@ -336,6 +336,12 @@ JARGON_PATTERNS: tuple[re.Pattern, ...] = tuple(re.compile(p, re.IGNORECASE) for
     r"\bprecedents?\b",
     r"\beditions?\b",
     r"\bdeploy(?:s|ed|ing|ment)?\b",
+    # engine words the approved vocabulary leaves out (docs/SPEC-COMPANY-MAP.md): the source finder's own notes ("No
+    # registry has this name; new entity id ...") pass this guard before Tuning shows them
+    r"\bregistr(?:y|ies)\b",
+    r"\bentit(?:y|ies)\b",
+    r"\brubrics?\b",
+    r"\broutines?\b",
     r"\bid \d+\b",
     r"\b(?:draft|request|item|event|run|edition) #?\d+\b",
     # the configured coverage-area ids (fmt.MODULE_NAMES); "coverage" and "conferences" are plain words, and
@@ -351,3 +357,20 @@ def find_jargon(text: str) -> list[str]:
     for pattern in JARGON_PATTERNS:
         found.extend(m.group(0) for m in pattern.finditer(text or ""))
     return found
+
+
+# Company, product and customer names are data, and real ones trip the guard ("Sentinel Hub", "Rekor Scout";
+# docs/SPEC-COMPANY-MAP.md 6.4). They are drawn inside a NAME_CLASS span (name_html), which the guard skips: the tests'
+# assert_plain and ui.looks_technical drop those spans first (strip_names). The words around a name stay guarded.
+NAME_CLASS = "co-name"
+_NAME_SPAN_RE = re.compile(r'<span class="' + NAME_CLASS + r'">[^<]*</span>')
+
+
+def name_html(name: Any) -> str:
+    """A name from data, escaped, inside the span the jargon guard skips."""
+    return f'<span class="{NAME_CLASS}">{esc(one_line(name))}</span>'
+
+
+def strip_names(text: str) -> str:
+    """text without its name spans (name_html), for the jargon guard."""
+    return _NAME_SPAN_RE.sub(" ", text or "")

@@ -15,6 +15,9 @@ Oct 3" / "· not signed off yet"), open while the workspace is staging, under th
 The sign-off sends exactly the versions the analyst was looking at (the cached read that drew the page), so a change
 made meanwhile is refused by the hub rather than signed off unseen. Neither write has an undo route (gap 8).
 
+Right after the "Your coverage" section, company_map_view draws "Your companies' big names" from the same read (its
+`companies` block, docs/SPEC-COMPANY-MAP.md 6.1), with its own Suggest a change per company.
+
 `write_or_handle` is ui.write for a write whose particular refusals (a 409 that needs its own plain message) the caller
 answers itself; tuning_view uses it for approvals.
 """
@@ -25,7 +28,7 @@ from typing import Any, Callable, Iterable, Mapping
 
 import streamlit as st
 
-from . import api, data, labels, ui
+from . import api, company_map_view, data, labels, ui
 from .config import Workspace, load_config
 from .fmt import clip, dicts, empty_state, esc, fmt_clock, fmt_date, fmt_day, md_label, one_line, pick
 
@@ -210,6 +213,7 @@ def render_body(ws: Workspace, brief: Mapping, staging: bool) -> None:
     sections = dicts(brief.get("sections"))
     if not sections:
         st.markdown(empty_state(EMPTY_BRIEF), unsafe_allow_html=True)
+    names_drawn = False
     for index, section in enumerate(sections):
         section_id = one_line(section.get("id")) or f"s{index}"
         heading = one_line(section.get("heading"))
@@ -222,6 +226,11 @@ def render_body(ws: Workspace, brief: Mapping, staging: bool) -> None:
                                          type="tertiary"):
                 ui.open_dialog("brief_suggest", workspace_id=ws.id, section=heading, part=part_title(part),
                                lines=lines)
+        if not names_drawn and company_map_view.follows(section):
+            company_map_view.render(ws, brief)  # "Your companies' big names" (docs/SPEC-COMPANY-MAP.md 6.1)
+            names_drawn = True
+    if not names_drawn:
+        company_map_view.render(ws, brief)
     ui.locked_hint(ws)
 
 

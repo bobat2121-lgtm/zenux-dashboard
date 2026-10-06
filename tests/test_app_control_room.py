@@ -9,10 +9,13 @@ from typing import Any
 
 import fixtures as fx
 import fixtures_coverage as fc
+import fixtures_tuning as fp
 from helpers import (AppCase, BETA_COV, BETA_HUB, BETA_READ, BETA_RUN, BUILDER_PIN, Call, FakeResponse, OWNER,
                      PILOT_AI, PILOT_DEF, PILOT_HUB, PIN, READ, RUN_AI, RUN_DEF, hub_defaults, one_workspace,
                      two_workspaces)
+from zenux_dashboard import company_names_view as cnv
 from zenux_dashboard import control_view, ui
+from zenux_dashboard.fmt import esc
 INSPECT_AI = PILOT_HUB + "/modules/ai-infra/inspect"
 INSPECT_DEF = PILOT_HUB + "/modules/defense-unmanned/inspect"
 STAGE = PILOT_HUB + "/admin/stage"
@@ -66,6 +69,7 @@ class ControlCase(AppCase):
         self.http.on("GET", BETA_COV + "/backfill", FakeResponse(404, {"error": "no_backfill_job"}))
         self.http.on("GET", BETA_HUB + "/settings", fc.settings())
         self.http.on("GET", BETA_HUB + "/radar", {"requests": []})
+        self.http.on("GET", BETA_HUB + "/companies/suggestions", fx.company_suggestions_v13())
 
 
 class AccessTests(ControlCase):
@@ -111,6 +115,11 @@ class BackfillTests(ControlCase):
         html = self.html(self.control())
         self.assertLess(html.index('<div class="health-card '), html.index("<span>Backfill</span>"))
         self.assertLess(html.index("<span>Backfill</span>"), html.index("<span>Coverage requests to review</span>"))
+        # then the source repairs and the company names to build in (docs/SPEC-COMPANY-MAP.md 6.3)
+        self.assertLess(html.index("<span>Coverage requests to review</span>"),
+                        html.index("<span>Source repairs to review</span>"))
+        self.assertLess(html.index("<span>Source repairs to review</span>"),
+                        html.index("<span>Company names to build in · 0</span>"))
 
     def test_run_posts_the_job_then_polls_progress_until_done(self):
         stage = {"n": 0}
@@ -763,6 +772,148 @@ class ReviewTests(ControlCase):
         self.assert_clean(at)
         self.assertIn("Could not load coverage requests from Pilot.", self.html(at))
         self.assertIn("HTTP 200: response is not JSON", self.html(at))
+
+
+COMPANIES = PILOT_HUB + "/companies/suggestions"
+APPLY_ADD = "node tools/zenux.js company apply pilot CS-6f708192"
+DEPLOY = "node deploy/workspace.mjs pilot"
+
+
+class CompanyNamesTests(ControlCase):
+    """docs/SPEC-COMPANY-MAP.md 6.3: after the source repairs, the company names the analyst approved, each with the
+    command that builds it in, then the deploy, then the applied ones waiting for that deploy."""
+
+    def route(self, rows: list[dict], *, base: str = PILOT_HUB, by_status: bool = True) -> None:
+        """GET /companies/suggestions?status= answers these rows (by_status=False: all of them, as a hub that ignores
+        the status would)."""
+        self.http.on("GET", base + "/companies/suggestions", lambda call: fp.company_list(
+            rows, (call.params or {}).get("status") if by_status else None))
+
+    @staticmethod
+    def block(at, sid: str) -> str:
+        return next(v for v in (str(m.value) for m in at.markdown) if f"pilot {sid} · " in v)
+
+    def test_nothing_to_build_in_is_one_quiet_line(self):
+        at = self.control()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertLess(html.index("<span>Source repairs to review</span>"),
+                        html.index("<span>Company names to build in · 0</span>"))
+        self.assertIn("Pilot: no company names to build in.", self.texts(at, "caption"))
+        calls = self.http.find("GET", COMPANIES)
+        self.assertEqual(sorted(c.params.get("status") for c in calls), ["applied", "approved"])
+        self.assertEqual({c.bearer for c in calls}, {READ})
+        self.assertEqual([c.value for c in at.code if "company apply" in c.value], [])
+        self.assertTrue(any(e.label.startswith("Configuration · ") for e in at.expander))
+
+    def test_approved_with_their_commands_then_the_applied(self):
+        # a hub that ignores ?status=: each list still keeps only its own; proposed and live ones are not listed
+        self.route([fp.company_approved(), fp.company_applied(), fp.company_remove(), fp.company_fix(status="live")],
+                   by_status=False)
+        at = self.control()
+        self.assert_clean(at)
+        html = self.html(at)
+        self.assertIn("<span>Company names to build in · 2</span>", html)
+        captions = self.texts(at, "caption")
+        self.assertIn("Pilot: 1 approved, waiting to be built in · 1 applied, waiting for a deploy", captions)
+        self.assertIn(cnv.APPLY_HINT, captions)
+        self.assertIn(cnv.DEPLOY_AFTER_APPLY, captions)
+        codes = [c.value for c in at.code]
+        self.assertIn(APPLY_ADD, codes)
+        self.assertEqual(codes.count(DEPLOY), 1)
+        self.assertLess(codes.index(APPLY_ADD), codes.index(DEPLOY))
+        approved = self.block(at, "CS-6f708192")
+        self.assertIn('<span class="loop-kind">Add a name</span><span class="status-pill ok">approved</span>', approved)
+        self.assertIn("pilot CS-6f708192 · RCAT · ", approved)
+        self.assertIn('Add <span class="co-name">Army Drone Dominance program</span> to Customers &amp; programs of '
+                      '<span class="co-name">Red Cat Holdings</span>', approved)
+        self.assertIn("Big customer: Expected: the Army plans to buy about 1 million drones", approved)
+        self.assertIn(f'Source finder: Confirmed: <a class="source-link" href="{fp.DRONE_URL}"', approved)
+        self.assertNotIn(esc(cnv.AS_TYPED), approved)
+        applied = self.block(at, "CS-8192a3b4")
+        self.assertIn(f"{cnv.APPLIED_HEAD} · 1", applied)
+        self.assertIn('<span class="status-pill ok">applied</span>', applied)
+        self.assertIn('Add <span class="co-name">Bundeswehr</span> to Customers &amp; programs of <span '
+                      'class="co-name">Planet Labs</span>', applied)  # as the analyst typed it
+        self.assertIn(esc(cnv.AS_TYPED), applied)
+        self.assertLess(html.index("pilot CS-6f708192 · "), html.index("pilot CS-8192a3b4 · "))
+        for sid in ("CS-7081920a", "CS-2b3c4d5e"):
+            self.assertNotIn(sid, html)
+        self.assertEqual(self.http.posts(), [])
+        self.assert_no_secrets(at)
+
+    def test_a_removal_or_fix_without_names_names_the_entry_on_file(self):
+        """The hub sent neither the company's name nor the entry's (a removal without its name, a fix of the big flag
+        only): the names on file (GET /brief, read only for these) give both. A check that could not confirm says so
+        with what the source finder found, since the Control room has no Details."""
+        self.http.on("GET", PILOT_HUB + "/brief", fp.brief())
+        self.route([fp.company_remove(name=None, company_name=None, status="approved", use="as_typed"),
+                    fp.company_row("CS-0b1c2d3e", "RCAT", None, "customers", "change", None, status="applied",
+                                   target_id="c-air-force", big=1, applied_at=fp.iso(1),
+                                   basis_text="Named as a top customer on the Q2 2026 call")])
+        at = self.control()
+        self.assert_clean(at)
+        removal = self.block(at, "CS-7081920a")
+        self.assertIn('Remove <span class="co-name">Rekor Scout</span> from Products &amp; brands of <span '
+                      'class="co-name">Rekor Systems</span>', removal)
+        self.assertIn(f"Source finder: {cnv.NOT_CONFIRMED}</div>", removal)
+        self.assertIn('What it found: The 2025 annual report still lists <span class="co-name">Rekor Scout</span> as '
+                      'a product', removal)
+        fix = self.block(at, "CS-0b1c2d3e")
+        self.assertIn('Fix <span class="co-name">U.S. Air Force</span> in Customers &amp; programs of <span '
+                      'class="co-name">Red Cat Holdings</span>', fix)
+        self.assertIn("Big customer: Named as a top customer on the Q2 2026 call", fix)
+        self.assertEqual(len(self.http.find("GET", PILOT_HUB + "/brief")), 1)
+
+    def test_only_applied_ones_say_how_to_make_them_live(self):
+        self.route([fp.company_applied()])
+        at = self.control()
+        self.assert_clean(at)
+        self.assertIn("<span>Company names to build in · 1</span>", self.html(at))
+        self.assertIn(cnv.DEPLOY_ONLY, self.texts(at, "caption"))
+        self.assertNotIn(cnv.APPLY_HINT, self.texts(at, "caption"))
+        self.assertEqual([c.value for c in at.code if "company apply" in c.value or c.value == DEPLOY], [DEPLOY])
+
+    def test_a_failed_read_is_one_plain_line(self):
+        self.http.on("GET", COMPANIES, FakeResponse(404, {"error": "not_found", "message": "ZENITH has no such page."}))
+        at = self.control()
+        self.assert_clean(at)
+        self.assertIn("Pilot: this hub does not list company names yet; deploy the hub (schema 13) to add them.",
+                      self.texts(at, "caption"))
+        self.assertIn("<span>Company names to build in · 0</span>", self.html(at))
+        self.fresh()
+        self.http.on("GET", COMPANIES, FakeResponse(503, {"error": "unavailable", "message": "The database is busy."}))
+        at = self.control()
+        self.assert_clean(at)
+        self.assertIn("Could not load company names from Pilot (HTTP 503: unavailable (The database is busy.)).",
+                      self.texts(at, "caption"))
+        self.assertIn("<span>Source repairs to review</span>", self.html(at))  # the rest of the room still works
+        self.assertTrue(any(e.label.startswith("Configuration · ") for e in at.expander))
+        for body in ({"suggestions": "x"}, {"suggestions": [None, 7, {"id": "x", "status": "approved"}]},
+                     {"suggestions": [{"id": "CS-6f708192"}]}):
+            with self.subTest(body=body):
+                self.fresh()
+                self.http.on("GET", COMPANIES, body)
+                at = self.control()
+                self.assert_clean(at)
+                self.assertIn("Pilot: no company names to build in.", self.texts(at, "caption"))
+
+    def test_hidden_without_the_builder(self):
+        at = self.app(tab="control")  # open access is off in the tests, and no PIN was typed
+        self.assert_clean(at)
+        self.assertNotIn("Company names to build in", self.html(at))
+        self.assertEqual(self.http.find("GET", COMPANIES), [])
+
+    def test_every_workspace(self):
+        self.beta_routes()
+        self.route([fp.company_approved()])
+        self.route([], base=BETA_HUB)
+        at = self.control(with_builder(two_workspaces()))
+        self.assert_clean(at)
+        self.assertIn("<span>Company names to build in · 1</span>", self.html(at))
+        self.assertIn("Beta analyst: no company names to build in.", self.texts(at, "caption"))
+        self.assertIn(APPLY_ADD, [c.value for c in at.code])
+        self.assertEqual(self.http.find("GET", BETA_HUB + "/companies/suggestions")[0].bearer, BETA_READ)
 
 
 class ConfigurationTests(ControlCase):

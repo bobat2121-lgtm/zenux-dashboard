@@ -36,7 +36,10 @@ Builder vocabulary is allowed here (source keys, lanes, routines by role); sente
 4. Source repairs to review (repairs_view.render_review): the Radar scout's proposed fixes for broken sources, each
    with before and after and the probe's evidence, approve or reject; then the approved ones with their apply command
    (and Withdraw), the applied, recovered, rejected and withdrawn ones.
-5. Configuration (collapsed): what is set, never a value, and where the builder PIN comes from.
+5. Company names to build in · N (company_names_view.render_review, docs/SPEC-COMPANY-MAP.md 6.3): the suggested names
+   the analyst approved, each with `node tools/zenux.js company apply <ws> <id>`, then the deploy, then the applied
+   ones waiting for that deploy (GET /companies/suggestions?status=approved and applied).
+6. Configuration (collapsed): what is set, never a value, and where the builder PIN comes from.
 """
 
 from __future__ import annotations
@@ -47,7 +50,7 @@ from typing import Any, Mapping
 
 import streamlit as st
 
-from . import api, data, labels, links, owner, radar_view, repairs_view, ui
+from . import api, company_names_view, data, labels, links, owner, radar_view, repairs_view, ui
 from .config import Config, Module, Workspace
 from .fmt import (as_int, as_list, clip, count_of, dicts, empty_state, esc, every_text, fmt_clock, fmt_day, fmt_short,
                   label_of, link, one_line, parse_time, pick, pill, plural, relative_time, safe_url, section_label,
@@ -1744,8 +1747,8 @@ def render_config(conf: Config) -> None:
 
 
 def render(conf: Config, ws: Workspace) -> None:
-    """The Control room: today's diagnostics, backfill, coverage requests and source repairs to review, configuration
-    (builder only)."""
+    """The Control room: today's diagnostics, backfill, coverage requests and source repairs to review, company names
+    to build in, configuration (builder only)."""
     if not owner.is_builder(conf):
         st.info(NOT_BUILDER)
         return
@@ -1753,6 +1756,7 @@ def render(conf: Config, ws: Workspace) -> None:
     render_backfill(conf, ws)
     radar_view.render_review(conf)
     repairs_view.render_review(conf)
+    company_names_view.render_review(conf)
     render_config(conf)
 
 

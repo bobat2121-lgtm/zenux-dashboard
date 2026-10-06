@@ -12,6 +12,7 @@ from datetime import timedelta
 import fixtures_tuning as fp
 from helpers import AppCase, Call, OWNER, PILOT_HUB, PIN, READ, hub_defaults
 
+from zenux_dashboard import company_names_view as cnv
 from zenux_dashboard import labels, ui
 from zenux_dashboard import tuning_view as tv
 from zenux_dashboard.fmt import esc
@@ -99,9 +100,9 @@ class PageTests(TuningCase):
         self.assertIn("This week your preferences changed 23 decisions: 4 brought into a briefing, 15 kept out, "
                       "3 raised.", html)
         sections = re.findall(r'<div class="rules-section">(.*?)</div>', html)
-        self.assertEqual(sections, ["Needs your OK · 6", "How much", "Your rules · 9"])
+        self.assertEqual(sections, ["Needs your OK · 8", "How much", "Your rules · 9"])
         self.assertEqual([e.label for e in at.expander if e.label.startswith("Ended")], ["Ended · 5"])
-        self.assertLess(html.index("Needs your OK · 6"), html.index("How much"))
+        self.assertLess(html.index("Needs your OK · 8"), html.index("How much"))
         self.assertIsNotNone(at.button(key="zx_refresh_tuning"))
         # no sub-tabs, no Filtered out, no preference sections
         self.assertEqual([c for c in at.get("segmented_control") if getattr(c, "key", "") == "pf_section"], [])
@@ -114,7 +115,7 @@ class PageTests(TuningCase):
         self.assert_no_secrets(at)
 
     def test_needs_your_ok_shows_only_when_something_waits(self):
-        self.http.on("GET", PILOT_HUB + "/preferences", fp.preferences(suggestions=[]))
+        self.http.on("GET", PILOT_HUB + "/preferences", fp.preferences(suggestions=[], companies=[]))
         self.http.on("GET", PILOT_HUB + "/rules", {"precedents": [], "drafts": []})
         at = self.open()
         html = self.html(at)
@@ -200,7 +201,7 @@ class NeedsYourOkTests(TuningCase):
     def test_details_hold_the_rest(self):
         at = self.open()
         details = [e for e in at.expander if e.label == "Details"]
-        self.assertEqual(len(details), 6)
+        self.assertEqual(len(details), 8)  # six suggestions, two company names
         self.assertEqual({e.proto.expanded for e in details}, {False})  # collapsed
         inside = "\n".join(str(m.value) for m in self.walk(details[2]) if getattr(m, "type", "") == "markdown")
         # the ratings behind it (at most five), which stories, the reasoning, the wording box, the conflicts
@@ -365,6 +366,238 @@ class NeedsYourOkTests(TuningCase):
         self.assertIn("Not saved. This suggestion was already handled meanwhile. Refresh to see where it stands.",
                       self.texts(at, "error"))
         self.assert_plain(at)
+
+
+# ---------------------------------------------------------------------------------------------- suggested company names
+
+
+ADD, REMOVE, FIX = "CS-6f708192", "CS-7081920a", "CS-2b3c4d5e"
+
+
+def company_url(sid: str, action: str) -> str:
+    return f"{PILOT_HUB}/companies/suggestions/{sid}/{action}"
+
+
+class CompanyNamesTests(TuningCase):
+    """docs/SPEC-COMPANY-MAP.md 6.3: suggested company names the source finder checked, under Needs your OK."""
+
+    @staticmethod
+    def pending_undo(at):
+        try:
+            return at.session_state[ui.UNDO_KEY]
+        except KeyError:
+            return None
+
+    @staticmethod
+    def card(at, sid: str) -> str:
+        """The HTML of one suggested company name's card (inside its container zx_card_cs_<id>)."""
+        box = next(n for n in AppCase.walk(at._tree) if getattr(n, "key", None) == f"zx_card_cs_{sid}")
+        return "\n".join(str(m.value) for m in AppCase.walk(box) if getattr(m, "type", "") == "markdown")
+
+    def test_the_cards_say_what_changes_and_what_the_source_finder_found(self):
+        at = self.open()
+        html = self.html(at)
+        # in the one list, by when they arrived: after the ratings' suggestion, before the merge; then near the end
+        order = [html.index(text) for text in ("Suggested from your ratings", "Red Cat Holdings",
+                                               "Suggested merge of 2 preferences", "From a coverage request",
+                                               "Rekor Systems", "Your draft, worded by the wording assistant")]
+        self.assertEqual(order, sorted(order))
+        add = self.card(at, ADD)
+        self.assertIn('<span class="zx-chip suggested">Suggested name for <span class="co-name">Red Cat Holdings</span>'
+                      '</span>', add)
+        # the source finder's version (what an approval writes), the analyst's own name, the note and the reason
+        self.assertIn('<div class="pref-text">Add <span class="co-name">Army Drone Dominance program</span> to '
+                      'Customers &amp; programs</div>', add)
+        self.assertIn('You wrote: <span class="co-name">Drone Dominance</span>', add)
+        self.assertIn("U.S. Army plan to buy small drones in large numbers from 2026.", add)
+        self.assertIn("Big customer: Expected: the Army plans to buy about 1 million drones", add)
+        self.assertIn(f'<div class="preview-line">Confirmed: <a class="source-link" href="{fp.DRONE_URL}" '
+                      'target="_blank" rel="noopener noreferrer">Red Cat selected for the Army&#x27;s &lt;Drone '
+                      'Dominance&gt; program</a>, Sep 30, 2026</div>', add)
+        # Details: what the source finder found, its sources (a javascript: link is no link), what the analyst sent
+        self.assertIn("What the source finder found", add)
+        self.assertIn("Red Cat&#x27;s September release names the program; management expects orders in 2026.", add)
+        self.assertIn("2 sources", add)
+        self.assertIn('<div class="grade-line">Red Cat Q2 2026 earnings call, Aug 2026</div>', add)
+        self.assertNotIn("javascript:", html)
+        self.assertIn('Also known as</div><div class="grade-line"><span class="co-name">Drone Dominance</span>', add)
+        for line in ("What it is: Army plan to buy drones at scale", "Big customer: Management expects big orders",
+                     "Your note: Heard it on the Q2 call.", 'href="https://example.com/drone-dominance-news"'):
+            self.assertIn(line, add)
+        # a removal the source finder could not confirm; its name trips the jargon guard, so it is drawn as a name
+        remove = self.card(at, REMOVE)
+        self.assertIn('<div class="pref-text">Remove <span class="co-name">Rekor Scout</span> from Products &amp; '
+                      'brands</div>', remove)
+        self.assertIn("Folded into Rekor Discover in 2025", remove)
+        self.assertNotIn("Big customer", remove)
+        self.assertIn('<div class="preview-line">Could not confirm. What the source finder found is under '
+                      'Details.</div>', remove)
+        self.assertIn('still lists <span class="co-name">Rekor Scout</span> as a product', remove)
+        self.assertIn('“<span class="co-name">Rekor Scout</span> remains our license-plate recognition product.”',
+                      remove)
+        self.assertEqual([at.button(key=f"cs_{verb}_{sid}").label for sid in (ADD, REMOVE)
+                          for verb in ("approve", "reject")], ["Approve", "Reject", "Approve", "Reject"])
+        self.assertEqual({e.proto.expanded for e in at.expander if e.label == "Details"}, {False})
+        # Tuning makes no new read, and nothing is sent
+        self.assertEqual(self.http.find("GET", PILOT_HUB + "/companies/suggestions"), [])
+        self.assertEqual(self.http.posts(), [])
+        self.assert_plain(at)
+        self.assert_no_secrets(at)
+
+    def test_a_rename_without_a_company_name_or_a_check(self):
+        unchecked = fp.company_row("CS-3c4d5e6f", "RCAT", "Red Cat Holdings", "units", "add", "Skypersonic",
+                                   hours=9, verdict=None)
+        self.http.on("GET", PILOT_HUB + "/preferences", fp.preferences(
+            suggestions=[], companies=[fp.company_fix(), unchecked, {"id": "CS-zz", "status": "proposed"}, None]))
+        self.http.on("GET", PILOT_HUB + "/rules", {"drafts": []})
+        at = self.open()
+        self.assertIn("Needs your OK · 2", self.html(at))
+        fix = self.card(at, FIX)
+        # the hub sent no company name: the names on file (GET /brief, cached) give it
+        self.assertIn('Suggested name for <span class="co-name">Planet Labs</span>', fix)
+        self.assertIn('Fix <span class="co-name">Planet Insights Platform</span> in Products &amp; brands: call it '
+                      '<span class="co-name">Planet Insights</span>', fix)
+        self.assertIn('<div class="preview-line">Could not confirm.</div>', fix)
+        unchecked = self.card(at, "CS-3c4d5e6f")
+        self.assertIn(esc(cnv.NOT_CHECKED), unchecked)
+        self.assertNotIn("What the source finder found", unchecked)  # Details holds only what the analyst sent
+        self.assertIn('What you sent</div><div class="grade-lines"><div class="grade-line">Name: <span '
+                      'class="co-name">Skypersonic</span></div></div>', unchecked)
+        self.assert_plain(at)
+
+    def test_a_removal_or_fix_without_names_names_the_entry_on_file(self):
+        """A removal sent without its name and a fix that changes only the big flag (the hub sends neither the company's
+        name nor the entry's): the card names both from the names on file, and big comes as the stored 1."""
+        removal = fp.company_remove(name=None, company_name=None)
+        big_only = fp.company_row("CS-0b1c2d3e", "RCAT", None, "customers", "change", None, hours=3,
+                                  target_id="c-air-force", big=1,
+                                  basis_text="Named as a top customer on the Q2 2026 call")
+        self.http.on("GET", PILOT_HUB + "/preferences", fp.preferences(suggestions=[], companies=[removal, big_only]))
+        self.http.on("GET", PILOT_HUB + "/rules", {"drafts": []})
+        at = self.open()
+        self.assert_clean(at)
+        self.assertIn("Needs your OK · 2", self.html(at))
+        card = self.card(at, "CS-0b1c2d3e")
+        self.assertIn('Suggested name for <span class="co-name">Red Cat Holdings</span>', card)
+        self.assertIn('<div class="pref-text">Fix <span class="co-name">U.S. Air Force</span> in Customers &amp; '
+                      'programs</div>', card)
+        self.assertIn("Big customer: Named as a top customer on the Q2 2026 call", card)
+        card = self.card(at, REMOVE)
+        self.assertIn('Suggested name for <span class="co-name">Rekor Systems</span>', card)
+        self.assertIn('<div class="pref-text">Remove <span class="co-name">Rekor Scout</span> from Products &amp; '
+                      'brands</div>', card)
+        self.assertEqual(len(self.http.find("GET", PILOT_HUB + "/brief")), 1)
+        self.assert_plain(at)
+
+    def test_approve_sends_the_version_shown_never_rules(self):
+        def approve(call: Call):  # the hub now lists it approved: the card is gone
+            self.http.on("GET", PILOT_HUB + "/preferences", fp.preferences(companies=[fp.company_remove()]))
+            return fp.company_decided(ADD, "approved")
+
+        self.http.on("POST", company_url(ADD, "approve"), approve)
+        at = self.open(pin=PIN)
+        at.button(key=f"cs_approve_{ADD}").click().run()
+        self.assert_clean(at)
+        self.assert_post(company_url(ADD, "approve"), {"use": "proposal"})
+        self.assertEqual([c.url for c in self.http.posts()], [company_url(ADD, "approve")])  # never /rules
+        self.assertIn(cnv.APPROVED, self.toasts(at))
+        self.assertEqual(cnv.APPROVED,
+                         "Approved. The ZENITH editor uses it from the next briefing. The builder adds it to story "
+                         "tagging with the next update.")
+        self.assertIsNone(self.pending_undo(at))  # no undo
+        self.assertEqual(len(self.http.find("GET", PILOT_HUB + "/preferences")), 2)  # read again
+        self.assertNotIn(f"cs_approve_{ADD}", [b.key for b in at.button])
+        self.assertIn("Needs your OK · 7", self.html(at))
+
+    def test_approve_as_typed_when_there_is_no_proposal_and_reject(self):
+        self.http.on("POST", company_url(REMOVE, "approve"), fp.company_decided(REMOVE, "approved"))
+        self.http.on("POST", company_url(ADD, "reject"), fp.company_decided(ADD, "rejected"))
+        at = self.open(pin=PIN)
+        at.button(key=f"cs_approve_{REMOVE}").click().run()
+        self.assert_clean(at)
+        self.assert_post(company_url(REMOVE, "approve"), {"use": "as_typed"})
+        self.assertIn(cnv.APPROVED_REMOVAL, self.toasts(at))  # a removal stops counting: never "uses it"
+        at.button(key=f"cs_reject_{ADD}").click().run()
+        self.assert_clean(at)
+        self.assertEqual(len(self.http.posts()), 1)  # Reject asks first: no route reverses it
+        self.assertIn(esc(cnv.REJECT_MESSAGE), self.html(at))
+        self.assertIn(labels.NO_UNDO, self.texts(at, "caption"))
+        at.button(key="dlg_save").click().run()
+        self.assert_clean(at)
+        self.assert_post(company_url(ADD, "reject"), {})
+        self.assertIn(cnv.REJECTED, self.toasts(at))
+        self.assertIsNone(self.pending_undo(at))
+        self.assertNotIn("dlg_save", [b.key for b in at.button])  # closed
+        self.assertFalse(any("/rules/" in c.url for c in self.http.posts()))
+
+    def test_reject_can_be_cancelled_and_a_suggestion_decided_meanwhile_is_said(self):
+        self.http.on("POST", company_url(ADD, "reject"), fp.refusal(
+            409, "suggestion_closed", "This suggestion was already decided.", status="approved"))
+        at = self.open(pin=PIN)
+        at.button(key=f"cs_reject_{ADD}").click().run()
+        at.button(key="dlg_cancel").click().run()
+        self.assert_clean(at)
+        self.assertEqual(self.http.posts(), [])
+        self.assertNotIn("dlg_save", [b.key for b in at.button])
+        reads = len(self.http.find("GET", PILOT_HUB + "/preferences"))
+        at.button(key=f"cs_reject_{ADD}").click().run()
+        at.button(key="dlg_save").click().run()
+        self.assert_clean(at)
+        self.assertIn(cnv.CLOSED, self.texts(at, "warning"))
+        self.assertEqual((self.texts(at, "error"), self.toasts(at)), ([], []))
+        self.assertNotIn("dlg_save", [b.key for b in at.button])
+        self.assertGreater(len(self.http.find("GET", PILOT_HUB + "/preferences")), reads)
+
+    def test_a_suggestion_decided_meanwhile_is_said_and_read_again(self):
+        self.http.on("POST", company_url(ADD, "approve"), fp.refusal(
+            409, "suggestion_closed", "This suggestion was already decided.", status="rejected"))
+        at = self.open(pin=PIN)
+        reads = len(self.http.find("GET", PILOT_HUB + "/preferences"))
+        at.button(key=f"cs_approve_{ADD}").click().run()
+        self.assert_clean(at)
+        self.assertIn(cnv.CLOSED, self.texts(at, "warning"))
+        self.assertEqual(self.texts(at, "error"), [])
+        self.assertEqual(self.toasts(at), [])
+        self.assertGreater(len(self.http.find("GET", PILOT_HUB + "/preferences")), reads)
+        self.assert_plain(at)
+
+    def test_other_refusals_in_plain_words(self):
+        self.http.on("POST", company_url(REMOVE, "reject"), fp.refusal(503, "unavailable", "The database is busy."))
+        at = self.open(pin=PIN)
+        at.button(key=f"cs_reject_{REMOVE}").click().run()
+        at.button(key="dlg_save").click().run()
+        self.assert_clean(at)
+        self.assertIn("Not saved. The database is busy.", self.texts(at, "error"))
+        self.assertIn("dlg_save", [b.key for b in at.button])  # the confirmation stays open
+        self.assertEqual(self.toasts(at), [])
+        self.assert_plain(at)
+
+    def test_locked_buttons_are_visible_but_disabled(self):
+        at = self.open()
+        for key in (f"cs_approve_{ADD}", f"cs_reject_{ADD}", f"cs_approve_{REMOVE}", f"cs_reject_{REMOVE}"):
+            self.assertTrue(at.button(key=key).disabled, key)
+            self.assertEqual(at.button(key=key).help, labels.LOCKED_HELP)
+        self.assertEqual(self.http.posts(), [])
+
+    def test_an_older_hub_or_odd_rows_never_break_the_page(self):
+        for companies in ("x", [None, 7, {"id": "CS-6f708192", "status": "proposed", "verdict": "{not json",
+                                         "column": "x", "action": "x", "big": "yes"}]):
+            with self.subTest(companies=companies):
+                self.fresh()
+                body = fp.preferences(suggestions=[])
+                body["company_suggestions"] = companies
+                self.http.on("GET", PILOT_HUB + "/preferences", body)
+                self.http.on("GET", PILOT_HUB + "/rules", {"drafts": []})
+                at = self.open()
+                self.assert_plain(at)
+        self.assertIn("Needs your OK · 1", self.html(at))
+        self.assertIn("Change a name", self.card(at, ADD))
+        self.assertNotIn(f"cs_details_{ADD}", [e.key for e in at.expander])  # nothing more to read: no Details
+        body = fp.preferences(suggestions=[])
+        body.pop("company_suggestions")  # a hub before schema 13
+        self.fresh()
+        self.http.on("GET", PILOT_HUB + "/preferences", body)
+        self.assertNotIn("Needs your OK", self.html(self.open()))
 
 
 # ---------------------------------------------------------------------------------------------- How much

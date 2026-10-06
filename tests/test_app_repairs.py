@@ -73,6 +73,7 @@ class RepairsCase(AppCase):
         self.http.on("GET", BETA_HUB + "/settings", fc.settings())
         self.http.on("GET", BETA_HUB + "/radar", {"requests": []})
         self.http.on("GET", BETA_HUB + "/repairs", fr.repairs(rows or []))
+        self.http.on("GET", BETA_HUB + "/companies/suggestions", fx.company_suggestions_v13())
 
     @staticmethod
     def card(at, rid: int, ws: str = "pilot") -> str:
@@ -92,6 +93,9 @@ class ReviewTests(RepairsCase):
         html = self.html(at)
         self.assertLess(html.index("<span>Coverage requests to review</span>"),
                         html.index("<span>Source repairs to review</span>"))
+        # the company names to build in come next (docs/SPEC-COMPANY-MAP.md 6.3), then the configuration
+        self.assertLess(html.index("<span>Source repairs to review</span>"),
+                        html.index("<span>Company names to build in · 0</span>"))
         self.assertIn("Pilot: 4 to review · 1 approved, waiting to be applied · 1 applied, waiting for the source to "
                       "report ok · 1 recovered · 2 rejected or withdrawn", self.texts(at, "caption"))
         # replace: the catalog's entry against the new definition, the probe's answer and up to 5 titles as links

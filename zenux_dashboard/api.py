@@ -10,13 +10,14 @@ docs/SPEC-PHASE03-UI.md 3.3 for these wrappers; docs/SPEC-REPAIR-PHASE-B.md 1.2 
                                  /rejected (also ?edition_id=), /modules, /modules/<id>/inspect, /mutes, /mutes/preview,
                                  /mutes/bring-back-preview, /stars, /stars/preview, /preferences, /rules, /settings,
                                  /settings/volume/preview, /brief, /radar, /repairs, /tuneup, /diagnostics, /snapshot,
-                                 /sources
+                                 /sources, /companies/suggestions (docs/SPEC-COMPANY-MAP.md 5.2)
     writes (bearer OWNER_TOKEN): POST /preferences, /rules/<id>/<action> (reopen undoes turning a suggestion down),
                                  /feedback, /feedback/withdraw, /mutes, /stars, /promote, /promote/withdraw
                                  (docs/SPEC-ICON-ACTIONS.md), /settings/volume, /brief/suggest, /signoff,
                                  /tuneup/dismiss, /admin/stage, /admin/routines/allow-once, /radar/requests,
                                  /radar/<id>/{approve|reject}, /repairs/<id>/{approve|reject|withdraw},
-                                 /admin/sources/{ack|unack}
+                                 /admin/sources/{ack|unack}, /companies/suggestions and
+                                 /companies/suggestions/<id>/{approve|reject|withdraw} (docs/SPEC-COMPANY-MAP.md 5.2)
 The schema 11 routes (docs/SPEC-SIMPLIFY.md section 1: /rejected?edition_id=, /tuneup, /tuneup/dismiss,
 /admin/routines/allow-once) answer 404 on an older hub; the callers treat that as "not there yet".
 
@@ -67,6 +68,18 @@ STAGES = ("staging", "live")
 RADAR_KINDS = ("track_source", "missed_story", "new_coverage")
 REPAIR_ACTIONS = ("approve", "reject", "withdraw")  # POST /repairs/<id>/<action>; no route reverses one
 ROUTINE_ROLES = ("grader", "refiner", "scout")  # POST /admin/routines/allow-once {role}
+# POST /companies/suggestions (docs/SPEC-COMPANY-MAP.md 5.2): the columns of a company sheet, what a suggestion does,
+# and the sheet's lengths (a name 60, a note 140, a big customer's reason 80)
+COMPANY_COLUMNS = ("products", "units", "customers", "read_through")
+COMPANY_CHANGES = ("add", "remove", "change")
+COMPANY_ACTIONS = ("approve", "reject", "withdraw")  # POST /companies/suggestions/<id>/<action>; none is reversed
+COMPANY_USES = ("proposal", "as_typed")  # an approval writes the source finder's version, or the analyst's words
+COMPANY_STATUSES = ("queued", "proposed", "approved", "applied", "live", "rejected", "withdrawn")
+SUGGESTION_ID_RE = re.compile(r"^CS-[0-9a-f]{8}$", re.IGNORECASE)
+TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.-]{0,9}$")
+COMPANY_NAME_MAX = 60
+COMPANY_NOTE_MAX = 140
+COMPANY_REASON_MAX = 80
 REJECTED_FILTERS = ("all", "near_miss", "same_story", "muted", "old_news", "auto")
 REJECTED_LIMIT = 500        # the hub's page size cap for GET /rejected (BRAIN_LIMITS.rejectedMax)
 SEARCH_DAYS = 90            # GET /editions/search looks this far back by default
@@ -316,7 +329,8 @@ def star_preview(ws: Workspace, entity_id: str) -> dict:
 
 
 def preferences(ws: Workspace) -> dict:
-    """GET /preferences: preferences with stats, suggestions, soft_cap, summary_7d, counts."""
+    """GET /preferences: preferences with stats, suggestions, soft_cap, summary_7d, counts, and (schema 13) the
+    suggested company names waiting for the analyst's OK (`company_suggestions`, status proposed, newest first)."""
     return _dict(hub_get(ws, "/preferences"), "preferences")
 
 
@@ -352,6 +366,16 @@ def repairs(ws: Workspace) -> dict:
     with the catalog's entry before the fix, the proposal, the alternates with their labels and the probe's evidence
     (docs/SPEC-REPAIR-PHASE-B.md 1.4), and `counts` by status over every repair. An older hub answers 404."""
     return _dict(hub_get(ws, "/repairs"), "repairs")
+
+
+def company_suggestions(ws: Workspace, status: str | None = None) -> dict:
+    """GET /companies/suggestions?status= (schema 13, docs/SPEC-COMPANY-MAP.md 5.2): {suggestions, counts}; the
+    analyst's suggested changes to the company sheets with the source finder's check (`verdict`), one status when
+    given. Tuning reads the proposed ones from GET /preferences `company_suggestions` instead. An older hub answers
+    404."""
+    if status is not None and status not in COMPANY_STATUSES:
+        raise invalid("That kind of company name suggestion is not known.")
+    return _dict(hub_get(ws, "/companies/suggestions", {"status": status}), "company suggestions")
 
 
 def diagnostics(ws: Workspace) -> dict:
@@ -590,6 +614,60 @@ def suggest_brief_change(ws: Workspace, token: str, line_id: str, text: str) -> 
     if len(words) > LONG_TEXT_MAX:
         raise invalid(f"Keep it to {LONG_TEXT_MAX} characters or fewer.")
     return hub_post(ws, "/brief/suggest", {"line_id": lid, "text": words}, token)
+
+
+def suggest_company_change(ws: Workspace, token: str, *, ticker: str, column: str, action: str,
+                           name: str | None = None, target_id: str | None = None, note: str | None = None,
+                           big: bool | None = None, basis_text: str | None = None, link: str | None = None) -> dict:
+    """POST /companies/suggestions {ticker, column, action, name?, target_id?, note?, big?, basis_text?, link?}: a
+    name to add to a company's sheet, or one of its entries to remove or fix (target_id); the source finder checks it
+    and it comes back under Needs your OK. big and basis_text are for customers only. Answers 201 {suggestion,
+    effective}; 409 suggestion_exists, 404 unknown_company or unknown_entry."""
+    tick = _text(ticker).upper()
+    if not TICKER_RE.match(tick):
+        raise invalid("Choose the company.")
+    if column not in COMPANY_COLUMNS:
+        raise invalid("Choose the column.")
+    if action not in COMPANY_CHANGES:
+        raise invalid("Choose whether to add, remove or fix a name.")
+    words, target = _text(name), _text(target_id)
+    if action == "add" and not words:
+        raise invalid("Write the name to add.")
+    if action != "add" and not target:
+        raise invalid("Choose the name to remove or fix.")
+    if len(words) > COMPANY_NAME_MAX:
+        raise invalid(f"Keep the name to {COMPANY_NAME_MAX} characters or fewer.")
+    reason = _text(basis_text)
+    if big is not None and column != "customers":
+        raise invalid("Only customers are marked as big.")
+    if big and not reason:
+        raise invalid("Say why it is a big customer, for example its share of revenue.")
+    if len(reason) > COMPANY_REASON_MAX:
+        raise invalid(f"Keep the reason to {COMPANY_REASON_MAX} characters or fewer.")
+    url = with_scheme(_text(link))
+    if url and not safe_url(url):
+        raise invalid("The link must start with https:// or http://.")
+    body: dict[str, Any] = {"ticker": tick, "column": column, "action": action}
+    return hub_post(ws, "/companies/suggestions", _with(
+        body, name=words or None, target_id=target if action != "add" else None,
+        note=_note(note, COMPANY_NOTE_MAX), big=bool(big) if big is not None else None,
+        basis_text=reason if big else None, link=url or None), token)
+
+
+def company_suggestion_action(ws: Workspace, token: str, suggestion_id: str, action: str, *,
+                              note: str | None = None, use: str | None = None) -> dict:
+    """POST /companies/suggestions/<id>/<approve|reject|withdraw> {note?, use?}: use (approve only) says which version
+    the builder writes, the source finder's proposal or the analyst's words as typed. Answers {suggestion, effective};
+    409 suggestion_closed when it was decided or withdrawn meanwhile. No route reverses one."""
+    if action not in COMPANY_ACTIONS:
+        raise invalid("Choose approve, reject or withdraw.")
+    sid = _text(suggestion_id)
+    if not SUGGESTION_ID_RE.match(sid):
+        raise invalid("That suggestion is not known.")
+    if use is not None and (action != "approve" or use not in COMPANY_USES):
+        raise invalid("Choose the source finder's version or your own words.")
+    return hub_post(ws, f"/companies/suggestions/{segment(sid)}/{action}",
+                    _with({}, note=_note(note), use=use), token)
 
 
 def sign_off(ws: Workspace, token: str, *, rubric_version: str | None, catalog_versions: dict,

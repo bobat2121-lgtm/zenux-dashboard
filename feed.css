@@ -612,6 +612,47 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 .brief-title { margin: 6px 0 2px; color: var(--zx-white); font: 700 17px/1.35 var(--zx-font); overflow-wrap: anywhere; }
 .st-key-zx_brief_signoff { flex-wrap: wrap !important; align-items: center; gap: 4px 12px !important; }
 .st-key-zx_brief_signoff [data-testid="stElementContainer"]:has(.pref-meta) { flex: 1 1 240px; width: auto !important; min-width: 0; }
+/* "Your companies' big names" (docs/SPEC-COMPANY-MAP.md 6.1): one row per company, its big names as chips in four
+   columns (one column under 900 px), a lazy Show all, the suggestions not built in yet. Names are .co-name spans. */
+.co-name { overflow-wrap: anywhere; }
+.cm-lede { margin: -4px 0 2px; color: var(--zx-text-soft); font: 400 14px/21px var(--zx-font); overflow-wrap: anywhere; }
+.cm-legend { color: var(--zx-muted); font: 400 13px/20px var(--zx-font); }
+.cm-call { margin-left: 5px; color: var(--zx-warn); font: 400 12px/1 var(--zx-font); cursor: help; }
+[class*="st-key-zx_cmrow_"] { gap: 6px !important; padding: 12px 0 4px; border-top: 1px solid var(--zx-line); }
+[class*="st-key-zx_cmhead_"] { flex-wrap: wrap !important; align-items: center; gap: 2px 12px !important; }
+[class*="st-key-zx_cmhead_"] [data-testid="stElementContainer"]:has(.cm-head) { flex: 1 1 260px; width: auto !important; min-width: 0; }
+[class*="st-key-zx_cmhead_"] button p { font-size: 13px !important; }
+.cm-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cm-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 10px; color: var(--zx-white); font: 700 16px/22px var(--zx-font); }
+.cm-ticker { color: var(--zx-muted); font: 500 12px/20px var(--zx-mono); letter-spacing: .6px; }
+.cm-summary { color: var(--zx-muted); font: 400 13px/20px var(--zx-font); overflow-wrap: anywhere; }
+.cm-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px 16px; }
+.cm-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.cm-col { color: var(--zx-muted); font: 700 12px/16px var(--zx-font); letter-spacing: .6px; text-transform: uppercase; }
+.cm-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+.cm-chip { display: inline-flex; align-items: center; max-width: 100%; min-height: 22px; box-sizing: border-box; padding: 1px 9px; border: 1px solid var(--zx-line-strong); border-radius: 999px; background: rgba(255,255,255,.04); color: var(--zx-text); font: 500 13px/1.4 var(--zx-font); }
+.cm-chip.cm-reason { border-style: dashed; border-color: #5a5a5a; cursor: help; }
+.cm-chip.cm-hit { color: var(--zx-white); border: 1px solid var(--zx-green-light); background: rgba(61,220,151,.18); }
+.cm-none { color: var(--zx-muted); font: 400 13px/22px var(--zx-font); }
+.cm-pendings { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.cm-pending { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; color: var(--zx-text-soft); font: 400 13px/20px var(--zx-font); overflow-wrap: anywhere; }
+.cm-pending-state { color: var(--zx-warn); font: 600 12px/20px var(--zx-font); letter-spacing: .3px; white-space: nowrap; }
+[class*="st-key-zx_cmrow_"] [data-testid="stExpander"] details { background: transparent !important; border: 0 !important; border-radius: 0 !important; }
+[class*="st-key-zx_cmrow_"] [data-testid="stExpander"] summary { padding: 2px 0 !important; }
+[class*="st-key-zx_cmrow_"] [data-testid="stExpander"] summary p { color: var(--zx-green-light) !important; font-size: 13px !important; }
+.cm-all { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px 18px; }
+.cm-all-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.cm-entry { display: flex; flex-direction: column; gap: 2px; padding-bottom: 8px; border-bottom: 1px solid var(--zx-line); }
+.cm-entry:last-child { border-bottom: 0; }
+.cm-entry-name { color: var(--zx-text); font: 500 14px/20px var(--zx-font); overflow-wrap: anywhere; }
+.cm-entry.cm-big .cm-entry-name { color: var(--zx-white); font-weight: 700; }
+.cm-entry-reason { color: var(--zx-ok); font: 500 13px/19px var(--zx-font); overflow-wrap: anywhere; }
+.cm-entry-aka, .cm-entry-meta { color: var(--zx-muted); font: 400 12px/18px var(--zx-font); overflow-wrap: anywhere; }
+.cm-entry-note { color: var(--zx-text-soft); font: 400 13px/19px var(--zx-font); overflow-wrap: anywhere; }
+.cm-dlg-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; color: var(--zx-white); font: 700 17px/1.35 var(--zx-font); }
+@media (max-width: 900px) {
+  .cm-grid, .cm-all { grid-template-columns: minmax(0,1fr); gap: 8px; }
+}
 /* Control room: one line per routine under the card, with Allow one extra run. */
 [class*="st-key-zx_routine_"] { flex-wrap: wrap !important; align-items: center; gap: 2px 12px !important; }
 [class*="st-key-zx_routine_"] [data-testid="stElementContainer"]:has(.refine-note) { flex: 1 1 260px; width: auto !important; min-width: 0; }

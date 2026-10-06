@@ -904,8 +904,43 @@ def volume_preview(mode: str = "top") -> dict:
             "text": f"Would show about {round(would)} per briefing instead of about 9."}
 
 
+def _company_entry(eid: str, name: str, *, big: bool = True, kind_label: str = "Product", basis_text: str | None = None,
+                   call_only: bool = False, unnamed: bool = False, tags_stories: bool = True,
+                   aliases: tuple[str, ...] = ()) -> dict:
+    return {"id": eid, "name": name, "aliases": list(aliases), "big": big, "kind_label": kind_label, "note": None,
+            "basis": "share" if basis_text else None, "basis_text": basis_text, "disclosed_label": "Filing",
+            "call_only": call_only, "unnamed": unnamed, "since_label": None, "tags_stories": tags_stories}
+
+
+def brief_companies() -> dict:
+    """GET /brief `companies` (docs/SPEC-COMPANY-MAP.md 4.2): two covered companies whose real names trip the jargon
+    guard ("Sentinel Hub", "Rekor Scout"), so every Coverage test's assert_plain checks that names are skipped (6.4);
+    an unnamed, call-only big customer and a suggestion being checked."""
+    e = _company_entry
+    rows = [
+        ("REKR", "Rekor Systems", "Roadway data and license-plate recognition.", {
+            "products": [e("p-rekor-scout", "Rekor Scout", aliases=("OpenALPR by Rekor",)),
+                         e("p-rekor-command", "Rekor Command", big=False)],
+            "units": [],
+            "customers": [e("c-customer-a", "Customer A", kind_label="Customer", basis_text="40% of Q2 2026 revenue",
+                            call_only=True, unnamed=True, tags_stories=False)],
+            "read_through": [e("r-flock", "Flock Safety", kind_label="Competitor")]},
+         [{"id": "CS-1a2b3c4d", "column": "read_through", "action": "add", "name": "Motorola Solutions",
+           "status": "queued", "status_label": "Being checked", "big": None}]),
+        ("PL", "Planet Labs", "Earth-imaging satellites and data.", {
+            "products": [e("p-pelican", "Pelican")],
+            "units": [e("u-sentinel-hub", "Sentinel Hub", kind_label="Unit", aliases=("Sinergise",))],
+            "customers": [e("c-nga", "NGA", kind_label="Government buyer", basis_text="About 20% of 2025 revenue")],
+            "read_through": [e("r-blacksky", "BlackSky", kind_label="Competitor")]}, []),
+    ]
+    return {"items": [{"ticker": ticker, "name": name, "summary": summary, "columns": columns,
+                       "counts": {c: len(v) for c, v in columns.items()}, "pending": pending}
+                      for ticker, name, summary, columns, pending in rows],
+            "pending_total": 1}
+
+
 def brief(stage: str = "live") -> dict:
-    """GET /brief (5.13)."""
+    """GET /brief (5.13), with the company map's `companies` (docs/SPEC-COMPANY-MAP.md 4.2)."""
     return {
         "workspace": "pilot", "stage": stage, "generated_at": iso(0),
         # WF5 (docs/SPEC-PHASE05.md 3.1): the one-pager in the approved vocabulary, the rubric's words in original*
@@ -940,6 +975,7 @@ def brief(stage: str = "live") -> dict:
         "signoff": ({"last": {"id": 1, "signed_at": iso(200), "by": "migration", "note": None,
                               "rubric_version": None, "catalog_versions": {}}, "count": 1} if stage == "live"
                     else {"last": None, "count": 0}),
+        "companies": brief_companies(),
     }
 
 
@@ -997,6 +1033,13 @@ def repairs_v9() -> dict:
     every action and status."""
     return {"repairs": [], "counts": {"proposed": 0, "approved": 0, "applied": 0, "recovered": 0, "rejected": 0,
                                       "withdrawn": 0}}
+
+
+def company_suggestions_v13(status: str | None = None) -> dict:
+    """GET /companies/suggestions?status= (schema 13, docs/SPEC-COMPANY-MAP.md 5.2): no suggested company name yet.
+    fixtures_tuning.py holds suggestions of every kind."""
+    return {"suggestions": [], "counts": {s: 0 for s in ("queued", "proposed", "approved", "applied", "live",
+                                                         "rejected", "withdrawn")}}
 
 
 # ------------------------------------------------------------------------------------------------ WF5 reads
