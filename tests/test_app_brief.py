@@ -1,4 +1,4 @@
-"""AppTest: What ZENUX looks for (docs/SPEC-PHASE03-UI.md 7.4), at the top of Coverage (docs/SPEC-SIMPLIFY.md 2.4):
+"""AppTest: What ZENITH looks for (docs/SPEC-PHASE03-UI.md 7.4), at the top of Coverage (docs/SPEC-SIMPLIFY.md 2.4):
 one expander titled with its sign-off state, open while staging; the one-pager in plain sections, Suggest a change,
 the staging banner, the sign-off status and the sign-off itself (bound to the versions shown)."""
 
@@ -43,21 +43,21 @@ class BriefTests(BriefCase):
         body = fp.brief()
         day = fmt_date(body["signoff"]["last"]["signed_at"], TZ)
         box = self.brief_expander(at)
-        self.assertEqual(box.label, f"What ZENUX looks for · signed off by you on {day}")
+        self.assertEqual(box.label, f"What ZENITH looks for · signed off by you on {day}")
         self.assertFalse(box.proto.expanded)  # collapsed once the workspace is live
         html = self.html(at)
-        self.assertLess(html.index("What ZENUX looks for: AI infrastructure"), html.index("How ZENUX covers this area"))
+        self.assertLess(html.index("What ZENITH looks for: AI infrastructure"), html.index("How ZENITH covers this area"))
         self.assertEqual(at.segmented_control(key="cv_area").value, "ai-infra")  # the area picker follows it
         self.fresh()
         self.http.on("GET", PILOT_HUB + "/brief", fp.brief(signed_by=None))
         at = self.open()
-        self.assertEqual(self.brief_expander(at).label, "What ZENUX looks for · not signed off yet")
+        self.assertEqual(self.brief_expander(at).label, "What ZENITH looks for · not signed off yet")
 
     def test_sections_parts_and_lines(self):
         at = self.open()
         self.assert_clean(at)
         html = self.html(at)
-        self.assertIn("What ZENUX looks for: AI infrastructure and defense unmanned", html)
+        self.assertIn("What ZENITH looks for: AI infrastructure and defense unmanned", html)
         self.assertIn("AI infrastructure: data centers, colocation, AI cloud, bitcoin miners", html)
         self.assertIn('<div class="brief-part"><div class="refine-label">What ranks high</div>', html)
         self.assertIn('<li class="brief-line">Power: interconnection approvals for 100 MW or more.</li>', html)
@@ -216,7 +216,7 @@ class BriefTests(BriefCase):
         self.http.routes.pop(("GET", PILOT_HUB + "/brief"))
         at = self.open()
         self.assert_clean(at)
-        self.assertIn("Couldn't load what ZENUX looks for.", self.visible_text(at))
+        self.assertIn("Couldn't load what ZENITH looks for.", self.visible_text(at))
         self.fresh()
         self.http.on("GET", PILOT_HUB + "/brief", {**fp.brief(), "title": None, "sections": []})
         at = self.open()

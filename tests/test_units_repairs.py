@@ -1,6 +1,6 @@
 """Unit tests for the source repairs' pure helpers (repairs_view, docs/SPEC-REPAIR-PHASE-B.md section 3): the action in
 plain words, before and after for each action, the probe's evidence, the source-health window's line, the lists'
-counts and order, the plain lines for a failed read; and Coverage's line about the sources ZENUX is fixing
+counts and order, the plain lines for a failed read; and Coverage's line about the sources ZENITH is fixing
 (coverage_view.fixing_text and health_line), which the jargon guard passes."""
 
 from __future__ import annotations
@@ -179,8 +179,8 @@ class ShapeTests(unittest.TestCase):
 
 class CoverageLineTests(unittest.TestCase):
     def test_fixing_text(self):
-        self.assertEqual(coverage_view.fixing_text({"repairs_open": 1}), "ZENUX is fixing 1 source.")
-        self.assertEqual(coverage_view.fixing_text({"repairs_open": "3"}), "ZENUX is fixing 3 sources.")
+        self.assertEqual(coverage_view.fixing_text({"repairs_open": 1}), "ZENITH is fixing 1 source.")
+        self.assertEqual(coverage_view.fixing_text({"repairs_open": "3"}), "ZENITH is fixing 3 sources.")
         for card in ({"repairs_open": 0}, {"repairs_open": None}, {"repairs_open": "x"}, {"repairs_open": -2}, {},
                      None, "x"):
             with self.subTest(card=card):
@@ -190,10 +190,10 @@ class CoverageLineTests(unittest.TestCase):
         ai, defense = fr.modules(ai_open=2, def_open=1)["modules"]
         css, sentence, failing = coverage_view.health_line(fc.inspect_ai(), ai)
         self.assertEqual((css, failing), ("warn", ["ERCOT large-load interconnection reports"]))
-        self.assertIn("everything else is collected as usual. ZENUX is fixing 2 sources. 2 sources are turned off on "
+        self.assertIn("everything else is collected as usual. ZENITH is fixing 2 sources. 2 sources are turned off on "
                       "purpose", sentence)
         self.assertEqual(coverage_view.health_line(fc.inspect_def(), defense),
-                         ("ok", "All 1 source on are working. ZENUX is fixing 1 source.", []))
+                         ("ok", "All 1 source on are working. ZENITH is fixing 1 source.", []))
         self.assertEqual(coverage_view.health_line(fc.inspect_def(), fc.modules()["modules"][1])[1],
                          "All 1 source on are working.")  # an older hub sends no repairs_open
         self.assertEqual(labels.find_jargon(sentence + " " + coverage_view.fixing_text({"repairs_open": 3})), [])

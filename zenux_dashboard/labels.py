@@ -117,7 +117,7 @@ def tier_label(tier: Any) -> str:
 
 SCOPE_LABELS = {"this_story": "Just this story", "similar": "Stories like this", "standing": "Standing preference"}
 SCOPE_HELP = {"this_story": "Only updates of this same story.", "similar": "Stories like this one, from any source.",
-              "standing": "A lasting preference for everything ZENUX reads."}
+              "standing": "A lasting preference for everything ZENITH reads."}
 DIRECTION_LABELS = {"more": "Show me more like this", "less": "Show me less like this", "exact": "Exactly as I write it"}
 STATUS_LABELS = {"active": "Active", "paused": "Paused", "retired": "Ended"}
 
@@ -213,7 +213,7 @@ def clean_rationale(text: Any, names: Mapping[str, Any] | None = None) -> str:
 
 # ---------------------------------------------------------------------------------------------- routines and volume
 
-ROUTINE_NAMES = {"grader": "ZENUX editor", "refiner": "Wording assistant", "scout": "Source finder"}
+ROUTINE_NAMES = {"grader": "ZENITH editor", "refiner": "Wording assistant", "scout": "Source finder"}
 
 VOLUME_LABELS = {"top": "Only the big ones", "standard": "Standard", "broad": "Everything notable"}
 _VOLUME_CAPS = {"top": 8, "standard": 12, "broad": 20}
@@ -233,7 +233,7 @@ def volume_help(mode: str, cap: int | None) -> str:
 MUTE_KIND_LABELS = {"source": "Source", "entity": "Company", "story": "Story", "outlet": "Outlet"}
 STILL_COLLECTED = "Still collected, kept out of your briefing."
 STAR_PROMISE = "Stories about it are read first and get their own shelf in each briefing. Scores don't change."
-RATING_HONEST = "Your rating is used to calibrate the next briefing when it differs from the ZENUX editor's score."
+RATING_HONEST = "Your rating is used to calibrate the next briefing when it differs from the ZENITH editor's score."
 LOCKED_HINT = "Unlock to edit"
 LOCKED_HELP = "Unlock to edit: use Sign in to edit at the top right."
 NO_UNDO = "This can't be undone from here."
@@ -243,11 +243,11 @@ NO_UNDO = "This can't be undone from here."
 SOURCE_STATE_LABELS = {"ok": "Working", "failing": "Not responding", "quiet": "Quiet lately", "off": "Turned off",
                        "new": "Not run yet", "retired": "Removed"}
 COVERAGE_ICONS: tuple[tuple[str, str, str], ...] = (
-    ("own_feed", "Own feed", "ZENUX reads its own newsroom, investor relations or wire releases."),
-    ("sec_filings", "SEC filings", "ZENUX reads its filings with the SEC."),
-    ("federal_contracts", "Federal contracts", "ZENUX catches federal contract awards and notices that name it."),
+    ("own_feed", "Own feed", "ZENITH reads its own newsroom, investor relations or wire releases."),
+    ("sec_filings", "SEC filings", "ZENITH reads its filings with the SEC."),
+    ("federal_contracts", "Federal contracts", "ZENITH catches federal contract awards and notices that name it."),
     ("news_search", "News search", "A news search looks for it by name."),
-    ("name_only", "Name only", "ZENUX only catches it when another source names it in a story."))
+    ("name_only", "Name only", "ZENITH only catches it when another source names it in a story."))
 COLUMNS: tuple[tuple[str, str], ...] = (("public", "Public companies"), ("private", "Private and state-owned"),
                                         ("industry", "Industry sources"), ("government", "Government and public record"))
 
@@ -278,7 +278,7 @@ RADAR_STAGES: tuple[tuple[str, str], ...] = (("asked", "Asked"), ("proposal", "P
                                              ("live", "Live"))
 RADAR_REJECTED = "Not added"
 RADAR_SOURCE_STATES = {"waiting": "Waiting for setup", "in_catalog": "Added", "live": "Collecting"}
-DIAGNOSIS_LABELS = {"no_source": "No source ZENUX reads covered it.",
+DIAGNOSIS_LABELS = {"no_source": "No source ZENITH reads covered it.",
                     "source_failing": "A source that covers it wasn't responding.",
                     "gated_out": "It was collected but filtered out before review.",
                     "ranked_low": "It was reviewed and ranked too low.",
@@ -301,7 +301,7 @@ def edition_label(published_at: Any, tz: str) -> str:
 
 
 STATUS_TEXT = {"green": "Healthy", "amber": "Mostly healthy", "red": "Having trouble",
-               "staging": "Collecting · briefings start after sign-off", "unreachable": "Can't reach ZENUX right now",
+               "staging": "Collecting · briefings start after sign-off", "unreachable": "Can't reach ZENITH right now",
                "unknown": "Status unavailable"}
 # What the analyst can make of amber and red (there are no alerts), said at the end of the status line.
 STATUS_HINTS = {"sources": "some sources aren't responding (see Coverage)",

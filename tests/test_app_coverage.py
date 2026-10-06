@@ -1,5 +1,5 @@
-"""AppTest: the Coverage tab: coverage areas, How ZENUX covers this area (four steps with live numbers), the
-source-health line, What ZENUX watches (Companies or Sources, search, filters, one table whose rows open details),
+"""AppTest: the Coverage tab: coverage areas, How ZENITH covers this area (four steps with live numbers), the
+source-health line, What ZENITH watches (Companies or Sources, search, filters, one table whose rows open details),
 the star and mute switches in the details (through the card-action dialogs), and Request coverage."""
 
 from __future__ import annotations
@@ -84,7 +84,7 @@ class AreaTests(CoverageCase):
                       "Company news and filings, local permitting and zoning, trade press, power and grid, and news "
                       "search, checked around the clock.",
                       "Collect", "1,840 stories this week", coverage_view.COLLECT_TEXT,
-                      "Score", "The ZENUX editor scores each one 0 to 100", "Next run: ",
+                      "Score", "The ZENITH editor scores each one 0 to 100", "Next run: ",
                       "Brief", "14 in your briefings this week",
                       "Stories scoring 70 or more make your briefing, up to 12 at a time (How much: Standard). The rest "
                       "show under each briefing, in Left out of this briefing."):
@@ -160,13 +160,13 @@ class AreaTests(CoverageCase):
         self.assertIn("No coverage areas yet.", self.html(at))
 
     def test_staging_shows_the_sign_off_here(self):
-        # docs/SPEC-SIMPLIFY.md 2.4: What ZENUX looks for sits above the area picker, open while staging
+        # docs/SPEC-SIMPLIFY.md 2.4: What ZENITH looks for sits above the area picker, open while staging
         self.http.on("GET", PILOT_HUB + "/brief", fx.brief(stage="staging"))
         at = self.coverage()
         self.assert_clean(at)
         self.assertIn(brief_view.STAGING_BANNER, self.texts(at, "info"))
-        box = next(e for e in at.expander if str(e.label).startswith("What ZENUX looks for"))
-        self.assertEqual(box.label, "What ZENUX looks for · not signed off yet")
+        box = next(e for e in at.expander if str(e.label).startswith("What ZENITH looks for"))
+        self.assertEqual(box.label, "What ZENITH looks for · not signed off yet")
         self.assertTrue(box.proto.expanded)
         self.assertEqual(at.button(key="br_signoff").label, "Sign off")
         self.assertEqual([b.key for b in at.button if b.key == "cv_signoff"], [])  # no detour to another tab
@@ -186,7 +186,7 @@ class HealthLineTests(CoverageCase):
         self.assert_clean(at)
         line = next(str(m.value) for m in at.markdown if 'class="cov-health' in str(m.value))
         self.assertIn('class="cov-health warn"', line)
-        self.assertIn("1 source isn&#x27;t responding right now: ERCOT large-load interconnection reports. ZENUX keeps "
+        self.assertIn("1 source isn&#x27;t responding right now: ERCOT large-load interconnection reports. ZENITH keeps "
                       "trying; everything else is collected as usual. 2 sources are turned off on purpose", line)
         at.button(key="cv_show_failing").click().run()
         self.assert_clean(at)
@@ -213,15 +213,15 @@ class ListTests(CoverageCase):
         self.assertEqual(at.segmented_control(key="cv_list").value, "companies")
         self.assertEqual(list(at.segmented_control(key="cv_list").options), ["Companies · 7", "Sources · 8"])
         frame = self.table(at)
-        self.assertEqual(list(frame.columns), ["Company", "Group", "Listed", "Ticker", "How ZENUX follows it",
+        self.assertEqual(list(frame.columns), ["Company", "Group", "Listed", "Ticker", "How ZENITH follows it",
                                                "This week", "In briefings, 30 days", "You"])
         self.assertEqual(list(frame["Company"]), ["CoreWeave", "Nebius", "Crusoe", "Stargate LLC",
                                                   "Tennessee Valley Authority", "DOE Genesis Mission", "Example <b>Co</b>"])
         first = frame.iloc[0].to_dict()
         self.assertEqual(first, {"Company": "CoreWeave", "Group": "AI cloud", "Listed": "Public", "Ticker": "NASDAQ:CRWV",
-                                 "How ZENUX follows it": "Own news, SEC filings", "This week": 9,
+                                 "How ZENITH follows it": "Own news, SEC filings", "This week": 9,
                                  "In briefings, 30 days": 2, "You": "★ Watchlist"})
-        self.assertEqual(list(frame["How ZENUX follows it"])[2], "By name only")  # Crusoe
+        self.assertEqual(list(frame["How ZENITH follows it"])[2], "By name only")  # Crusoe
         self.assertEqual(list(frame["Listed"])[5], "Program or agency")
         self.assertEqual(list(frame["You"])[6], "Muted")
         self.assertIn("7 companies shown. " + coverage_view.TABLE_HINT, self.texts(at, "caption"))
@@ -409,7 +409,7 @@ class DetailsTests(CoverageCase):
         at = self.details(self.coverage(pin=PIN), "company", "crusoe")
         self.assert_clean(at)
         text = self.visible_text(at)
-        self.assertIn('<span class="why-label">Name only</span> ZENUX only catches Crusoe when another source names it.',
+        self.assertIn('<span class="why-label">Name only</span> ZENITH only catches Crusoe when another source names it.',
                       self.html(at))
         self.assertIn("1 story this week · 4 in 30 days · 0 in your briefings (30 days)", text)
         self.assertEqual(at.button(key="dlg_request").proto.type, "primary")  # a gap: asking is the main action
@@ -432,9 +432,9 @@ class DetailsTests(CoverageCase):
         at = self.details(self.coverage(pin=PIN), "company", "coreweave")
         self.assert_clean(at)
         text, html = self.visible_text(at), self.html(at)
-        self.assertIn('<span class="why-label">Own feed</span> ZENUX reads its own newsroom, investor relations or wire '
+        self.assertIn('<span class="why-label">Own feed</span> ZENITH reads its own newsroom, investor relations or wire '
                       'releases.', html)
-        self.assertIn('<span class="why-label">SEC filings</span> ZENUX reads its filings with the SEC.', html)
+        self.assertIn('<span class="why-label">SEC filings</span> ZENITH reads its filings with the SEC.', html)
         self.assertIn("CoreWeave newsroom", text)
         self.assertIn("Turned off: The site blocks automated access.", text)
         mute = at.button(key="dlg_mute")

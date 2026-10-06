@@ -112,7 +112,7 @@ class SummaryTests(unittest.TestCase):
 
     def test_unreachable_and_unknown(self):
         s = self.summary(error=ApiError("unreachable", "timed out"))
-        self.assertEqual((s["level"], s["text"]), ("unreachable", "Can't reach ZENUX right now"))
+        self.assertEqual((s["level"], s["text"]), ("unreachable", "Can't reach ZENITH right now"))
         s = self.summary(error=ApiError("unauthorized", "HTTP 401: token refused", 401))
         self.assertEqual((s["level"], s["text"]), ("unknown", "Status unavailable"))
         self.assertEqual(self.summary(body(level="purple"))["level"], "unknown")
@@ -162,7 +162,7 @@ class StatusLineTests(AppCase):
         self.assertIn("Collecting · briefings start after sign-off", self.html(at))
         at.button(key="zx_status_signoff").click().run()
         self.assert_clean(at)
-        # What ZENUX looks for and its sign-off sit at the top of Coverage (docs/SPEC-SIMPLIFY.md 2.4)
+        # What ZENITH looks for and its sign-off sit at the top of Coverage (docs/SPEC-SIMPLIFY.md 2.4)
         self.assertEqual(at.radio(key=links.TAB_KEY).value, "coverage")
         self.assertIn("stub coverage", self.html(at))
 
@@ -170,7 +170,7 @@ class StatusLineTests(AppCase):
         self.http.routes.pop(("GET", PILOT_HUB + "/status"))  # unrouted: unreachable
         at = self.app()
         self.assert_clean(at)
-        self.assertIn("<span>Can&#x27;t reach ZENUX right now</span>", self.html(at))
+        self.assertIn("<span>Can&#x27;t reach ZENITH right now</span>", self.html(at))
         self.assertEqual(at.button(key="zx_refresh_status").label, "Try again")
 
     def test_new_briefing_banner(self):

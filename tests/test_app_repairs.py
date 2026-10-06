@@ -2,7 +2,7 @@
 each proposed repair with its before and after and the probe's evidence, Approve and Reject (a toast, no undo; Reject
 asks first), the approved list with the apply command and Withdraw, the applied, recovered, rejected and withdrawn
 lists, the hub refusing or failing, who may write (the builder, open access, a workspace without an owner token),
-every workspace, and the source-health window's line. On Coverage, the plain line about the sources ZENUX is fixing."""
+every workspace, and the source-health window's line. On Coverage, the plain line about the sources ZENITH is fixing."""
 
 from __future__ import annotations
 
@@ -336,7 +336,7 @@ class ReadFailureTests(RepairsCase):
         self.assertTrue(any(e.label.startswith("Configuration · ") for e in at.expander))
 
     def test_an_older_hub_and_an_unreachable_one(self):
-        self.http.on("GET", REPAIRS, FakeResponse(404, {"error": "not_found", "message": "ZENUX has no such page."}))
+        self.http.on("GET", REPAIRS, FakeResponse(404, {"error": "not_found", "message": "ZENITH has no such page."}))
         at = self.control()
         self.assert_clean(at)
         self.assertIn("Pilot: this hub does not list source repairs yet; deploy the hub (schema 9) to add them.",
@@ -471,7 +471,7 @@ class SourceHealthWindowTests(RepairsCase):
         at.button(key=LIGHT_DEF).click().run()
         self.assert_clean(at)
         text = self.visible_text(at)
-        self.assertIn("The site asked ZENUX to slow down (HTTP 429, too many requests).", text)
+        self.assertIn("The site asked ZENITH to slow down (HTTP 429, too many requests).", text)
         self.assertNotIn("A fix is", text)
 
 
@@ -481,13 +481,13 @@ class CoverageLineTests(RepairsCase):
         at = self.app(tab="coverage")
         self.assert_clean(at)
         line = next(str(m.value) for m in at.markdown if 'class="cov-health' in str(m.value))
-        self.assertIn("ZENUX keeps trying; everything else is collected as usual. ZENUX is fixing 1 source. 2 sources "
+        self.assertIn("ZENITH keeps trying; everything else is collected as usual. ZENITH is fixing 1 source. 2 sources "
                       "are turned off on purpose", line)
         self.assert_plain(at)
         self.assertEqual(self.http.find("GET", REPAIRS), [])  # the count comes with GET /modules
         at.segmented_control(key="cv_area").set_value("defense-unmanned").run()
         self.assert_clean(at)
-        self.assertIn('class="cov-health ok">All 1 source on are working. ZENUX is fixing 3 sources.</div>',
+        self.assertIn('class="cov-health ok">All 1 source on are working. ZENITH is fixing 3 sources.</div>',
                       self.html(at))
         self.assert_plain(at)
 
@@ -498,7 +498,7 @@ class CoverageLineTests(RepairsCase):
                 self.http.on("GET", PILOT_HUB + "/modules", fr.modules(ai_open=ai_open, def_open=None))
                 at = self.app(tab="coverage")
                 self.assert_clean(at)
-                self.assertNotIn("ZENUX is fixing", self.html(at))
+                self.assertNotIn("ZENITH is fixing", self.html(at))
 
 
 if __name__ == "__main__":

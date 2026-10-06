@@ -122,7 +122,7 @@ def status_hint(level: str, codes: set[str], late: bool, *, working: bool = Fals
 
 def status_line(ws: Workspace) -> None:
     """One line at the top of Briefing: a coloured dot, the plain status, the late text, and Refresh (or "Review and
-    sign off", which opens Coverage, while staging; "Try again" while ZENUX cannot be reached)."""
+    sign off", which opens Coverage, while staging; "Try again" while ZENITH cannot be reached)."""
     s = summary(ws)
     level = s["level"]
     late = f'<span class="zx-status-late">{esc(s["late_text"])}</span>' if s.get("late_text") else ""
@@ -134,7 +134,7 @@ def status_line(ws: Workspace) -> None:
         refresh = st.button("Try again" if level == "unreachable" else "Refresh", key="zx_refresh_status",
                             type="tertiary", icon=":material/refresh:")
     if signoff:
-        links.go("coverage")  # What ZENUX looks for and its sign-off sit at the top of Coverage, open while staging
+        links.go("coverage")  # What ZENITH looks for and its sign-off sit at the top of Coverage, open while staging
     if refresh:
         data.clear_reads()
         st.rerun()

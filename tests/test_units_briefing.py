@@ -435,7 +435,7 @@ class ToastTests(unittest.TestCase):
         for text in (actions.rating_toast(), actions.__doc__):
             self.assertNotIn("teach", text.lower())
             self.assertNotIn("learn", text.lower())
-        self.assertIn("calibrate the next briefing when it differs from the ZENUX editor's score", actions.rating_toast())
+        self.assertIn("calibrate the next briefing when it differs from the ZENITH editor's score", actions.rating_toast())
 
 
 if __name__ == "__main__":

@@ -172,7 +172,7 @@ class NeedsYourOkTests(TuningCase):
     def test_cards_by_origin_with_one_impact_line(self):
         at = self.open()
         html = self.html(at)
-        heads = ["Your suggested change to What ZENUX looks for", "Suggested wording for your preference",
+        heads = ["Your suggested change to What ZENITH looks for", "Suggested wording for your preference",
                  "Suggested from your ratings", "Suggested merge of 2 preferences", "From a coverage request",
                  "Your draft, worded by the wording assistant"]
         positions = [html.index(head) for head in heads]

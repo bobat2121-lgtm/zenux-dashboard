@@ -32,7 +32,7 @@ What each write does (docs/SPEC-PHASE02.md; the copy below says exactly this and
   (its row's menu: Edit, End date). The preference is active at once (the wording assistant may later suggest a clearer
   wording, which the analyst approves or not). The Undo bar after a save retires it; after a switch it also brings
   back the preference the switch replaced (POST /rules/<id>/reactivate).
-- Wrong facts: POST /feedback {verdict: "factual_error", item_id, note} on a briefing item. The ZENUX editor
+- Wrong facts: POST /feedback {verdict: "factual_error", item_id, note} on a briefing item. The ZENITH editor
   re-checks the item at the next briefing and either corrects it or explains why it stands. No undo route.
 - Rate this story: POST /feedback {scope: "item", verdict, score}. The 0-100 slider and the four ratings move
   together (a score picks its rating, a rating moves the score into its band); the hub stores both and the next lease
@@ -106,7 +106,7 @@ RATE_SCORE_KEY = "dlg_score"
 RATE_SCORE_SET_KEY = "dlg_score_set"  # True once the analyst moved the slider: only then is the exact score sent
 # Where the slider lands when a rating is picked (inside the rating's band).
 RATING_SCORES = {"lead": 95, "digest": 80, "watch": 55, "reject": 20}
-# The firm core's bands, as the ZENUX editor reads a score (rubric/core/firm-core.md section 1).
+# The firm core's bands, as the ZENITH editor reads a score (rubric/core/firm-core.md section 1).
 SCORE_SCALE = (
     ("90–100", "Top story", "A major, confirmed event. Leads the briefing."),
     ("70–89", "In the briefing", "Material news worth reporting."),
@@ -202,7 +202,7 @@ class Target:
     outlet: str | None = None            # WF5 AW-1: the outlet behind a news-search story ("Yahoo Finance")
     outlet_domain: str | None = None     # its domain, what an outlet mute keys on ("finance.yahoo.com")
     my_prefs: tuple[dict, ...] = ()      # WF5 AW-2: the analyst's preferences made from this story [{id, direction}]
-    score: int | None = None             # the ZENUX editor's score (the Rate dialog shows it beside the slider)
+    score: int | None = None             # the ZENITH editor's score (the Rate dialog shows it beside the slider)
     rating: str | None = None            # the analyst's newest rating of it (lead, digest, watch, reject): the star glows
     requested: bool = False              # its "Should have been in" request is open: the arrow glows
 
@@ -990,7 +990,7 @@ def request_toast(result: Any) -> str:
 def wrong_facts_toast(result: Any, tz: str) -> str:
     when = pick(effective_of(result), "next_briefing_at")
     at = f"the {fmt_clock(when, tz)} briefing" if parse_time(when) != MIN_TIME else "the next briefing"
-    return f"Flagged. The ZENUX editor re-checks it at {at} and either corrects it or explains why it stands."
+    return f"Flagged. The ZENITH editor re-checks it at {at} and either corrects it or explains why it stands."
 
 
 def rating_toast(score: int | None = None) -> str:
@@ -999,7 +999,7 @@ def rating_toast(score: int | None = None) -> str:
 
 
 def promote_toast(result: Any, tz: str) -> str:
-    return (f"Sent back to the ZENUX editor with your note. {ui.effective_text(effective_of(result), tz)} "
+    return (f"Sent back to the ZENITH editor with your note. {ui.effective_text(effective_of(result), tz)} "
             "It may still stay out if the evidence is thin.")
 
 
@@ -1124,7 +1124,7 @@ def _score_moved() -> None:
 
 
 def score_scale_html() -> str:
-    """What each part of the 0-100 scale means to the ZENUX editor (the firm core's bands)."""
+    """What each part of the 0-100 scale means to the ZENITH editor (the firm core's bands)."""
     rows = "".join(f'<div class="why-row"><span class="why-label">{esc(span)} · {esc(name)}</span>'
                    f'<span>{esc(meaning)}</span></div>' for span, name, meaning in SCORE_SCALE)
     return f'<div class="why-block score-scale">{rows}</div>'
@@ -1149,7 +1149,7 @@ def rate_dialog(workspace_id: str, target: Target) -> None:
     score = st.slider("Your score, 0 to 100 (optional)", min_value=0, max_value=100, step=1, key=RATE_SCORE_KEY,
                       on_change=_score_moved)
     if target.score is not None:
-        st.caption(f"The ZENUX editor scored it {target.score}.")
+        st.caption(f"The ZENITH editor scored it {target.score}.")
     st.markdown(score_scale_html(), unsafe_allow_html=True)
     st.caption(RATE_SCALE_NOTE)
     if not buttons(ws, "Save"):

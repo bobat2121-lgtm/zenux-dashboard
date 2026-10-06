@@ -392,7 +392,7 @@ class DeepLinkTests(ShellCase):
         self.assertEqual(at.query_params, {"tab": "tuning", "rules": "muted"})
 
     def test_old_links_open_their_successors(self):
-        # docs/SPEC-SIMPLIFY.md 2.1: My preferences became Tuning (a pref= link still highlights its rule; What ZENUX
+        # docs/SPEC-SIMPLIFY.md 2.1: My preferences became Tuning (a pref= link still highlights its rule; What ZENITH
         # looks for moved to Coverage) and Filtered out went (its links open Briefing)
         seen = {}
 
@@ -467,7 +467,7 @@ class PageErrorTests(ShellCase):
         self.stub()
         at = self.app({})
         self.assert_clean(at)
-        self.assertIn("No Zenux workspace is configured.", self.html(at))
+        self.assertIn("No Zenith workspace is configured.", self.html(at))
         self.assertEqual(self.http.calls, [])
 
 
@@ -493,11 +493,11 @@ class PlainShellTests(ShellCase):
         at = self.app()
         html = self.html(at)
         self.assertIn('<header class="zx-masthead"><div class="brand" role="heading" aria-level="1" '
-                      'aria-label="ZENUX"><span class="brand-lockup"><img class="brand-mark" '
-                      'src="data:image/png;base64,..." alt="ZENUX" width="42" height="42"><span class="brand-core">'
-                      'ZENUX</span></span><span class="brand-sub">NEWS INTELLIGENCE</span>'
+                      'aria-label="ZENITH"><span class="brand-lockup"><img class="brand-mark" '
+                      'src="data:image/png;base64,..." alt="ZENITH" width="42" height="42"><span class="brand-core">'
+                      'ZENITH</span></span><span class="brand-sub">NEWS INTELLIGENCE</span>'
                       '<span class="brand-workspace">PILOT</span></div></header>', html)
-        self.assertIn('<footer class="zx-footer">ZENUX · internal research tool · data from public sources</footer>',
+        self.assertIn('<footer class="zx-footer">ZENITH · internal research tool · data from public sources</footer>',
                       html)
 
     def test_there_is_no_page_wide_timer(self):
@@ -509,7 +509,7 @@ class PlainShellTests(ShellCase):
         self.assertEqual(self.popover_labels(self.app()), ["Sign in to edit"])  # no Search popover in the bar
 
 
-FOOTER = '<footer class="zx-footer">ZENUX · internal research tool · data from public sources</footer>'
+FOOTER = '<footer class="zx-footer">ZENITH · internal research tool · data from public sources</footer>'
 
 
 class BrandAndConfigTests(ShellCase):
@@ -521,7 +521,7 @@ class BrandAndConfigTests(ShellCase):
         self.assert_clean(at)
         masthead = next(str(m.value) for m in at.markdown if str(m.value).startswith('<header class="zx-masthead">'))
         match = re.search(r'<span class="brand-lockup"><img class="brand-mark" src="data:image/png;base64,'
-                          r'([A-Za-z0-9+/=]+)" alt="ZENUX" width="42" height="42"><span class="brand-core">ZENUX'
+                          r'([A-Za-z0-9+/=]+)" alt="ZENITH" width="42" height="42"><span class="brand-core">ZENITH'
                           r'</span></span>', masthead)
         self.assertIsNotNone(match, "the mark sits immediately left of the wordmark")
         self.assertEqual(base64.b64decode(match.group(1)), (DASHBOARD / "assets" / "zenux-favicon.png").read_bytes())
@@ -535,7 +535,7 @@ class BrandAndConfigTests(ShellCase):
         icon = Path(spy.call_args.kwargs["page_icon"])
         self.assertEqual(icon.resolve(), (DASHBOARD / "assets" / "zenux-favicon.png").resolve())
         self.assertTrue(icon.is_file())
-        self.assertEqual(spy.call_args.kwargs["page_title"], "ZENUX")
+        self.assertEqual(spy.call_args.kwargs["page_title"], "ZENITH")
 
     def test_theme_is_black_with_the_brand_green(self):
         with open(DASHBOARD / ".streamlit" / "config.toml", "rb") as handle:
@@ -561,7 +561,7 @@ class BrandAndConfigTests(ShellCase):
                 self.assertTrue(self.html(at).endswith(FOOTER))
         at = self.app({"zenux": {"note": "no workspaces here"}})
         self.assertIn(FOOTER, self.html(at))
-        self.assertIn("No Zenux workspace is configured", self.html(at))
+        self.assertIn("No Zenith workspace is configured", self.html(at))
 
     def test_invalid_configuration_lists_problems_without_values(self):
         self.stub()

@@ -1,19 +1,19 @@
-"""Coverage: what ZENUX looks for (with the sign-off), how ZENUX covers each coverage area, in four steps, and who and
+"""Coverage: what ZENITH looks for (with the sign-off), how ZENITH covers each coverage area, in four steps, and who and
 what it watches (GET /brief, GET /modules, GET /modules/<id>/inspect, with GET /settings and GET /status for the
 editor's bar and next run).
 
 Built to be read cold by a new analyst (owner, 2026-10-04: "simple and efficient ... intuitively process how this
-engine runs"). At the top, "What ZENUX looks for" (brief_view.render_brief, docs/SPEC-SIMPLIFY.md 2.4): one expander
+engine runs"). At the top, "What ZENITH looks for" (brief_view.render_brief, docs/SPEC-SIMPLIFY.md 2.4): one expander
 titled with its sign-off state, open while the workspace is staging (then a banner says so), with Sign off and Suggest
 a change. Then pick a coverage area (a module: `cv_area`, mirrored as `module` in the page's link), then:
 
 - the area's title and one-sentence description;
 - How it works: four steps with this area's live numbers. Watch (companies and sources, and the kinds of sources),
-  Collect (stories this week), Score (the ZENUX editor scores every story 0 to 100; its next run), Brief (what made
+  Collect (stories this week), Score (the ZENITH editor scores every story 0 to 100; its next run), Brief (what made
   your briefings this week, and the bar and size of a briefing from "How much");
 - one line on source health ("All 151 sources are working", or which are not responding, with Show them), and, while
-  the area has open source repairs (GET /modules `repairs_open`), "ZENUX is fixing 2 sources.";
-- What ZENUX watches: a search box, Companies or Sources, a filter (watchlist, muted, by name only; not responding,
+  the area has open source repairs (GET /modules `repairs_open`), "ZENITH is fixing 2 sources.";
+- What ZENITH watches: a search box, Companies or Sources, a filter (watchlist, muted, by name only; not responding,
   turned off, muted) and one sortable table. Clicking a row opens its details (the `company` or `source` dialog,
   registered here), where Star, Mute and Request coverage live; Mute, unmute and star go through the card-action
   dialogs of `actions` (preview first, a toast, undo). A dialog cannot open another one, so these dialogs close
@@ -127,7 +127,7 @@ def listed(entity: Mapping) -> str:
 
 
 def follows_text(entity: Mapping) -> str:
-    """How ZENUX follows a company: 'Own news, SEC filings', or 'By name only' when nothing reads it directly."""
+    """How ZENITH follows a company: 'Own news, SEC filings', or 'By name only' when nothing reads it directly."""
     flags = [flag for flag, _, _ in coverage_flags(entity)]
     parts = [FOLLOWS[f] for f in flags if f in FOLLOWS]
     return ", ".join(parts) if parts else ("By name only" if "name_only" in flags else "")
@@ -181,7 +181,7 @@ def company_rows(insp: Mapping, terms: list[str], filter_: str) -> tuple[list[st
         stats = stats_of(entity)
         ids.append(one_line(entity.get("id")))
         rows.append({"Company": one_line(entity.get("name")) or "Unnamed company", "Group": entity_group(entity),
-                     "Listed": listed(entity), "Ticker": tickers_of(entity), "How ZENUX follows it": follows_text(entity),
+                     "Listed": listed(entity), "Ticker": tickers_of(entity), "How ZENITH follows it": follows_text(entity),
                      "This week": as_int(stats.get("items_7d")) or 0,
                      "In briefings, 30 days": as_int(stats.get("briefing_30d")) or 0, "You": you_text(entity)})
     return ids, rows
@@ -221,7 +221,7 @@ def counts_of(insp: Mapping, card: Mapping | None) -> dict[str, int]:
 
 
 def removed_week(insp: Mapping) -> str:
-    """'Includes 9 from a removed source that ZENUX no longer collects.' when this week's total counts stories from
+    """'Includes 9 from a removed source that ZENITH no longer collects.' when this week's total counts stories from
     sources no longer in the area's list (the hub's orphans: retired, or renamed in the module); '' otherwise. The
     number is the week's total minus what the listed sources account for."""
     orphans = dicts(insp.get("orphans"))
@@ -235,7 +235,7 @@ def removed_week(insp: Mapping) -> str:
         return ""
     if all(o.get("retired") is True for o in orphans):
         what = "a removed source" if len(orphans) == 1 else "removed sources"
-        return f"Includes {number(gone)} from {what} that ZENUX no longer collects."
+        return f"Includes {number(gone)} from {what} that ZENITH no longer collects."
     return f"Includes {number(gone)} from sources no longer listed in this area."
 
 
@@ -275,7 +275,7 @@ def flow_steps(insp: Mapping, card: Mapping | None, bar: int | None, cap: int | 
         ("Watch", f"{plural(c['companies'], 'company', 'companies')} · "
                   f"{plural(c['on'] + c['off'], 'source')}" + (f" ({c['on']} on)" if c["off"] else ""), watch),
         ("Collect", f"{number(c['week'])} stories this week", " ".join(p for p in (COLLECT_TEXT, removed_week(insp)) if p)),
-        ("Score", "The ZENUX editor scores each one 0 to 100", score),
+        ("Score", "The ZENITH editor scores each one 0 to 100", score),
         ("Brief", brief_big, brief),
     ]
 
@@ -288,14 +288,14 @@ def flow_html(steps: list[tuple[str, str, str]]) -> str:
         cells.append(f'<div class="cov-step"><div class="cov-step-k"><span class="cov-step-n">{n}</span>'
                      f'{esc(title)}</div><div class="cov-step-big">{esc(big)}</div>'
                      f'<div class="cov-step-d">{esc(text)}</div></div>')
-    return f'<div class="cov-flow" role="list" aria-label="How ZENUX works">{"".join(cells)}</div>'
+    return f'<div class="cov-flow" role="list" aria-label="How ZENITH works">{"".join(cells)}</div>'
 
 
 def fixing_text(card: Mapping | None) -> str:
-    """'ZENUX is fixing 1 source.' or 'ZENUX is fixing 3 sources.' while the area has open source repairs (GET /modules
+    """'ZENITH is fixing 1 source.' or 'ZENITH is fixing 3 sources.' while the area has open source repairs (GET /modules
     `repairs_open`: proposed, approved or applied, not yet recovered); '' otherwise and from an older hub."""
     n = as_int(card.get("repairs_open")) if isinstance(card, Mapping) else None
-    return f"ZENUX is fixing {plural(n, 'source')}." if n is not None and n > 0 else ""
+    return f"ZENITH is fixing {plural(n, 'source')}." if n is not None and n > 0 else ""
 
 
 def health_line(insp: Mapping, card: Mapping | None) -> tuple[str, str, list[str]]:
@@ -311,7 +311,7 @@ def health_line(insp: Mapping, card: Mapping | None) -> tuple[str, str, list[str
     if failing:
         names = join_and(failing[:3]) + (f" and {len(failing) - 3} more" if len(failing) > 3 else "")
         verb = "isn't" if len(failing) == 1 else "aren't"
-        return ("warn", f"{plural(len(failing), 'source')} {verb} responding right now: {names}. ZENUX keeps trying; "
+        return ("warn", f"{plural(len(failing), 'source')} {verb} responding right now: {names}. ZENITH keeps trying; "
                         f"everything else is collected as usual.{fixing}{off}", failing)
     return "ok", f"All {plural(c['on'], 'source')} on are working.{fixing}{off}", []
 
@@ -444,8 +444,8 @@ def styled_table(rows: list[dict], kind: str) -> Any:
 
 
 def render_lists(ws: Workspace, module_id: str, insp: Mapping) -> None:
-    """What ZENUX watches: the search box, Companies or Sources, its filter, and one table whose rows open details."""
-    ui.section("What ZENUX watches")
+    """What ZENITH watches: the search box, Companies or Sources, its filter, and one table whose rows open details."""
+    ui.section("What ZENITH watches")
     entities, sources = dicts(insp.get("entities")), dicts(insp.get("sources"))
     if st.session_state.get(LIST_KEY) not in LISTS:
         st.session_state[LIST_KEY] = "companies"
@@ -539,7 +539,7 @@ def next_run_text(ws: Workspace) -> str:
 
 def render_flow(ws: Workspace, insp: Mapping, card: Mapping | None) -> None:
     """How it works: the four steps with this area's numbers, then the source-health line."""
-    ui.section("How ZENUX covers this area")
+    ui.section("How ZENITH covers this area")
     bar, cap, how_much = volume_of(ws)
     st.markdown(flow_html(flow_steps(insp, card, bar, cap, how_much, next_run_text(ws))), unsafe_allow_html=True)
     css, sentence, failing = health_line(insp, card)
@@ -568,7 +568,7 @@ def render_area(ws: Workspace, module_id: str, card: Mapping | None) -> None:
 
 
 def render(ws: Workspace) -> None:
-    """Coverage: what ZENUX looks for (and the sign-off), then pick a coverage area, how ZENUX covers it, what it
+    """Coverage: what ZENITH looks for (and the sign-off), then pick a coverage area, how ZENITH covers it, what it
     watches, then coverage requests."""
     brief_view.render_brief(ws)
     # The request form sits at the bottom; a jump to it at the top (WF5 AW-13).
@@ -619,7 +619,7 @@ def _close_button() -> None:
 
 def _company_dialog(workspace_id: str, module_id: str, entity_id: str) -> None:
     """A company's coverage: flags with their meaning, its own feeds (with mute switches), stats, Mute company,
-    Star or Remove from watchlist, and Request coverage (primary when ZENUX only catches it by name)."""
+    Star or Remove from watchlist, and Request coverage (primary when ZENITH only catches it by name)."""
     ws = _dialog_ws(workspace_id)
     if ws is None:
         return
@@ -638,7 +638,7 @@ def _company_dialog(workspace_id: str, module_id: str, entity_id: str) -> None:
                 unsafe_allow_html=True)
     lines = [(label, help_) for flag, label, help_ in coverage_flags(entity) if flag != "name_only"]
     if pick(entity, "coverage.name_only"):
-        lines.append(("Name only", f"ZENUX only catches {name} when another source names it."))
+        lines.append(("Name only", f"ZENITH only catches {name} when another source names it."))
     st.markdown('<div class="why-block">' + ("".join(
         f'<div class="why-row"><span class="why-label">{esc(label)}</span> {esc(text)}</div>' for label, text in lines)
         or '<div class="why-row">No coverage details yet.</div>') + "</div>", unsafe_allow_html=True)

@@ -1,4 +1,4 @@
-"""HTTP client for the Zenux hub and module Workers.
+"""HTTP client for the Zenith hub and module Workers.
 
 Plain functions over `requests` (no Streamlit calls), so they also run in worker threads. Tokens travel only in
 the Authorization header, never in a URL, and no error carries a token, a header or a URL query: `str(exc)` is a
@@ -337,7 +337,7 @@ def volume_preview(ws: Workspace, mode: str, near_miss_shelf: bool | None = None
 
 
 def brief(ws: Workspace) -> dict:
-    """GET /brief: what ZENUX looks for, the analyst's tuning and the sign-off state."""
+    """GET /brief: what ZENITH looks for, the analyst's tuning and the sign-off state."""
     return _dict(hub_get(ws, "/brief"), "brief")
 
 

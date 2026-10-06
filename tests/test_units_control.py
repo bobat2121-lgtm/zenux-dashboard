@@ -371,7 +371,7 @@ class RadarShapeTests(unittest.TestCase):
         self.assertEqual(radar_view.sources_table({}), "")
         self.assertIn(["Source key", "x-key"], radar_view.proposal_rows({"source": {"key": "x-key"}}))
         self.assertIn("1 registry change: Oncor Electric Delivery", radar_view.registry_html(proposal))
-        self.assertIn("Diagnosis: no_source (No source ZENUX reads covered it.)",
+        self.assertIn("Diagnosis: no_source (No source ZENITH reads covered it.)",
                       radar_view.diagnosis_html(proposal, self.rows[45]))
         self.assertIn("rule draft #77", radar_view.diagnosis_html(self.rows[42]["proposal"], self.rows[42]))
         self.assertEqual(radar_view.diagnosis_html({}, {}), "")
@@ -481,10 +481,10 @@ class CoverageShapeTests(unittest.TestCase):
                     "sources": [{"key": f"s{n}", "stats": {"items_7d": v}} for n, v in enumerate(listed)]}
         retired = [{"source_key": "ent-havocai-rss", "events": 9, "retired": True}]
         self.assertEqual(coverage_view.removed_week(insp(1248, [1000, 239], retired)),
-                         "Includes 9 from a removed source that ZENUX no longer collects.")
+                         "Includes 9 from a removed source that ZENITH no longer collects.")
         two = retired + [{"source_key": "old-key", "events": 41, "retired": True}]
         self.assertEqual(coverage_view.removed_week(insp(1250, [1239], two)),
-                         "Includes 11 from removed sources that ZENUX no longer collects.")
+                         "Includes 11 from removed sources that ZENITH no longer collects.")
         renamed = [{"source_key": "old-key", "events": 41, "retired": False}]
         self.assertEqual(coverage_view.removed_week(insp(1250, [1239], renamed)),
                          "Includes 11 from sources no longer listed in this area.")
@@ -492,7 +492,7 @@ class CoverageShapeTests(unittest.TestCase):
         self.assertEqual(coverage_view.removed_week(insp(1248, [1239], [])), "", "no orphans: no label")
         steps = coverage_view.flow_steps(insp(1248, [1239], retired), None, None, None, "", "")
         self.assertEqual(steps[1][1], "1,248 stories this week")
-        self.assertTrue(steps[1][2].endswith("Includes 9 from a removed source that ZENUX no longer collects."))
+        self.assertTrue(steps[1][2].endswith("Includes 9 from a removed source that ZENITH no longer collects."))
         self.assertEqual(labels.find_jargon(steps[1][2]), [])
 
     def test_every_analyst_string_is_plain(self):

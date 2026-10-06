@@ -262,7 +262,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(call.bearer, READ)
         self.assertEqual(call.params, {"days": 3})
         self.assertNotIn(READ, call.url)
-        self.assertIn("Zenux-Dashboard", call.headers["User-Agent"])
+        self.assertIn("Zenith-Dashboard", call.headers["User-Agent"])
 
     def test_error_mapping(self):
         cases = [
@@ -716,7 +716,7 @@ class StylesheetTests(unittest.TestCase):
                     "cov-chip-news_search", "cov-chip-name_only", "cov-stats", "timeline", "timeline-step",
                     "zx-locked",
                     # docs/SPEC-SIMPLIFY.md: the banners, the tune-up, the receipt, the groups, the left-out section,
-                    # Tuning's rows, What ZENUX looks for on Coverage and the routines' lines
+                    # Tuning's rows, What ZENITH looks for on Coverage and the routines' lines
                     "st-key-zx_ok_banner", "st-key-zx_tuneup_banner", "zx-banner-text", "st-key-zx_tu_", "tu-row",
                     "tu-editor", "tu-done", "edition-receipt", "zx-group-title", "zx-group-empty", "st-key-zx_leftout_",
                     "zx-leftout-auto", "tn-title", "tn-rule", "tn-hint", "st-key-zx_rule_", "st-key-zx_how_much",
@@ -862,7 +862,7 @@ class LabelsTests(unittest.TestCase):
     def test_honest_copy(self):
         self.assertEqual(labels.STILL_COLLECTED, "Still collected, kept out of your briefing.")
         self.assertEqual(labels.RATING_HONEST, "Your rating is used to calibrate the next briefing when it differs from "
-                                               "the ZENUX editor's score.")
+                                               "the ZENITH editor's score.")
         for text in (labels.STAR_PROMISE, labels.RATING_HONEST, labels.LOCKED_HELP, labels.NO_UNDO):
             self.assertEqual(labels.find_jargon(text), [])
 
@@ -919,7 +919,7 @@ class LinksTests(unittest.TestCase):
 
     def test_old_links_are_translated(self):
         # docs/SPEC-SIMPLIFY.md 2.1: tab=preferences opens Tuning, tab=filtered opens Briefing; the old section= of My
-        # preferences picks the part of Tuning, or opens Coverage for What ZENUX looks for; it is never kept
+        # preferences picks the part of Tuning, or opens Coverage for What ZENITH looks for; it is never kept
         self.assertEqual(links.parse({"tab": "preferences", "pref": "R-0012", "section": "active"}, None),
                          {"tab": "tuning", "pref": "R-0012"})
         self.assertEqual(links.parse({"tab": "preferences", "section": "muted"}, None), {"tab": "tuning", "rules": "muted"})

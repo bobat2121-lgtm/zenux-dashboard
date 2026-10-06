@@ -1,6 +1,6 @@
-"""What ZENUX looks for: the analyst's one-pager in plain sections, "Suggest a change", and the sign-off
+"""What ZENITH looks for: the analyst's one-pager in plain sections, "Suggest a change", and the sign-off
 (docs/SPEC-PHASE03-UI.md section 7.4). Drawn by coverage_view at the top of Coverage, above the coverage-area picker
-(docs/SPEC-SIMPLIFY.md 2.4): one expander titled with its sign-off state ("What ZENUX looks for · signed off by you on
+(docs/SPEC-SIMPLIFY.md 2.4): one expander titled with its sign-off state ("What ZENITH looks for · signed off by you on
 Oct 3" / "· not signed off yet"), open while the workspace is staging, under the staging banner.
 
     GET  /brief           (READ_TOKEN)  sections -> parts -> lines {id, text}, in the approved vocabulary (Top story,
@@ -35,17 +35,17 @@ SUGGEST_MAX = 2000
 NOTE_MAX = 500
 LINE_CLIP = 120
 
-STAGING_BANNER = ("ZENUX is collecting but not publishing yet. Read What ZENUX looks for and your coverage below, "
+STAGING_BANNER = ("ZENITH is collecting but not publishing yet. Read What ZENITH looks for and your coverage below, "
                   "then sign off to start your briefings.")
-LABEL = "What ZENUX looks for"
-CONFIRM = "Sign off on what ZENUX looks for and your coverage? This records the versions you are looking at."
+LABEL = "What ZENITH looks for"
+CONFIRM = "Sign off on what ZENITH looks for and your coverage? This records the versions you are looking at."
 CONFIRM_STAGING = "Your briefings start at the next scheduled time."
 CHANGED = "Coverage or this page changed while you were reading. It has been reloaded; look again and sign off."
 UNKNOWN_LINE = "This page changed; reload and try again."
 SUGGEST_SENT = "Sent to the wording assistant. It comes back in Tuning, under Needs your OK, for you to approve."
 SUGGEST_SHORT = f"Write at least {SUGGEST_MIN} characters so the wording assistant knows what to change."
 NOT_SIGNED = "Not signed off yet. Read below and press Sign off when it matches what you want."
-EMPTY_BRIEF = "What ZENUX looks for isn't ready yet. The builder is setting it up."
+EMPTY_BRIEF = "What ZENITH looks for isn't ready yet. The builder is setting it up."
 
 
 class Handled(Exception):
@@ -127,7 +127,7 @@ def part_html(part: Mapping, heading: str = "") -> str:
 
 
 def expander_label(brief: Any, tz: str) -> str:
-    """The expander's title with the sign-off state: 'What ZENUX looks for · signed off by you on Oct 3', '· signed
+    """The expander's title with the sign-off state: 'What ZENITH looks for · signed off by you on Oct 3', '· signed
     off by the builder on Oct 3', or '· not signed off yet' (also while briefings run on a sign-off recorded when the
     workspace was set up, which the analyst has not given yet)."""
     last = pick(brief, "signoff.last")
@@ -178,7 +178,7 @@ def close_and_rerun() -> None:
 
 
 def render_brief(ws: Workspace) -> None:
-    """The staging banner (while ZENUX collects but does not publish yet) and the expander: the sign-off line with
+    """The staging banner (while ZENITH collects but does not publish yet) and the expander: the sign-off line with
     Sign off, then the page's sections, each part with Suggest a change. Open while staging."""
     notice = st.session_state.pop(NOTICE_KEY, None)
     if notice:
@@ -186,7 +186,7 @@ def render_brief(ws: Workspace) -> None:
     try:
         brief = data.brief(ws.id)
     except api.ApiError as exc:
-        ui.error_box("what ZENUX looks for", exc, key="brief")
+        ui.error_box("what ZENITH looks for", exc, key="brief")
         return
     brief = brief if isinstance(brief, Mapping) else {}
     staging = is_staging(brief)

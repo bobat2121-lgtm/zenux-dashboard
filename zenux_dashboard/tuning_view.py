@@ -105,7 +105,7 @@ MENU_LABEL = "Options"  # each rule's ⋯ menu (the icon shows; the word is for 
 SUGGESTION_HEADS = {
     "grades": "Suggested from your ratings",
     "preference": "Suggested wording for your preference",
-    "brief": "Your suggested change to What ZENUX looks for",
+    "brief": "Your suggested change to What ZENITH looks for",
     "radar": "From a coverage request",
 }
 LEGACY_HEAD = "Your draft, worded by the wording assistant"
@@ -672,7 +672,7 @@ def render_ok(ws: Workspace, prefs: Any, rules: Any) -> None:
 
 
 def brief_lines(ws: Workspace) -> dict[str, str]:
-    """{line id: the line as What ZENUX looks for shows it} from GET /brief (cached), so a suggested change names its
+    """{line id: the line as What ZENITH looks for shows it} from GET /brief (cached), so a suggested change names its
     line in the approved words (the draft's context keeps the original words for the wording assistant)."""
     brief, _ = attempt(data.brief, ws.id)
     out: dict[str, str] = {}

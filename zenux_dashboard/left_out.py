@@ -47,7 +47,7 @@ SEARCH_FAILED = "Couldn't search what was left out: {reason}"
 AUTO_CAPTION = "Kept out before the editor read them: {muted} muted, {old} old news."
 SEE_MUTES = "See your mutes"
 LATER = "Later in your briefing"
-AUTO_OLD = "It was already old when it arrived, so the ZENUX editor never saw it."
+AUTO_OLD = "It was already old when it arrived, so the ZENITH editor never saw it."
 CALIBRATED_RE = re.compile(r"calibrated:\s*owner grade #(\d+)", re.IGNORECASE)
 RULE_NOTE_RE = re.compile(r"\s*\(rule\s+[^)]*\)", re.IGNORECASE)
 SHOWN_KEY = "lo_shown"   # {(edition id, group): rows shown} and {("search", query): rows shown}
@@ -76,7 +76,7 @@ def area_of(row: Mapping) -> str:
 
 
 def is_auto(row: Mapping) -> bool:
-    """Decided by the hub's own rule (old news, a mute), not by the ZENUX editor."""
+    """Decided by the hub's own rule (old news, a mute), not by the ZENITH editor."""
     return row.get("auto") is True
 
 

@@ -271,27 +271,27 @@ def plain_error(exc: Exception) -> tuple[str, str | None]:
                 "Try again in a minute. If it keeps happening, tell the builder.")
     if exc.kind == "unreachable":
         if str(exc) == "timed out":
-            return "ZENUX took too long to answer.", "This is usually brief. Try again in a minute."
-        return "ZENUX can't be reached right now.", "This is usually brief. Try again in a minute."
+            return "ZENITH took too long to answer.", "This is usually brief. Try again in a minute."
+        return "ZENITH can't be reached right now.", "This is usually brief. Try again in a minute."
     if exc.kind == "unauthorized":
         return "The dashboard's access was refused.", "Tell the builder: the workspace's keys may have changed."
     if exc.kind == "not_configured":
         return "This workspace isn't fully set up yet.", "Tell the builder."
     if exc.kind == "bad_response":
-        return "ZENUX sent an answer the dashboard couldn't read.", "Tell the builder."
+        return "ZENITH sent an answer the dashboard couldn't read.", "Tell the builder."
     sentence = hub_sentence(exc)
     if sentence:
         gone = one_line(exc.code) in GONE_CODES and REFRESH_AGAIN.casefold() not in sentence.casefold()
         return sentence, REFRESH_AGAIN if gone else None
     if exc.kind == "not_found":
-        return "ZENUX couldn't find that. It may have changed meanwhile.", "Refresh and try again."
+        return "ZENITH couldn't find that. It may have changed meanwhile.", "Refresh and try again."
     if exc.kind == "http" and (exc.status or 0) >= 500:
         return "Something went wrong on the server.", "Try again in a minute."
-    return "ZENUX refused that request.", "Tell the builder if it keeps happening."
+    return "ZENITH refused that request.", "Tell the builder if it keeps happening."
 
 
 def write_error_text(exc: Exception) -> str:
-    """"Not saved. <plain headline> <its explanation>", e.g. "Not saved. ZENUX can't be reached right now. This is
+    """"Not saved. <plain headline> <its explanation>", e.g. "Not saved. ZENITH can't be reached right now. This is
     usually brief. Try again in a minute." """
     headline, explanation = plain_error(exc)
     return "Not saved. " + headline + (" " + explanation if explanation else "")
@@ -318,7 +318,7 @@ def show_write_error(exc: Exception) -> None:
     _forget_stale(exc)
     st.error(md_label(write_error_text(exc)))
     if isinstance(exc, ApiError) and exc.detail and hub_sentence(exc) is None and owner.is_builder():
-        st.caption(md_label("ZENUX said: " + one_line(exc.detail)))  # the builder reads the engine's own sentence
+        st.caption(md_label("ZENITH said: " + one_line(exc.detail)))  # the builder reads the engine's own sentence
     _builder_details(exc)
 
 

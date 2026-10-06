@@ -1,4 +1,4 @@
-"""ZENUX: the Zenux news-intelligence dashboard (Streamlit).
+"""ZENITH: the Zenith news-intelligence dashboard (Streamlit).
 
 Four tabs over a workspace's hub (docs/SPEC-SIMPLIFY.md 2.1): Briefing (daily), Tuning (weekly) and Coverage (setup)
 for the analyst, and the Control room for the builder (in the tab list only while the builder is unlocked; it spans
@@ -12,7 +12,7 @@ a PIN preset by a test, the tab (a pending switch applied, the Control room drop
 the queued toasts; the green top bar (masthead, tabs, workspace switcher, sign-in popover); the content band (the
 undo bar, then the tab); the footer; the pending dialog; the query string.
 
-This is a Zenux app. It is separate from the legacy PHYSAI news dashboard and never talks to it.
+This is a Zenith app. It is separate from the legacy PHYSAI news dashboard and never talks to it.
 """
 
 import importlib
@@ -38,7 +38,7 @@ MARK = ASSETS / "zenux-favicon.png"  # the logo mark beside the wordmark: the 12
 st.set_page_config(page_title=APP_TITLE, page_icon=FAVICON, layout="wide", initial_sidebar_state="collapsed")
 st.markdown("<style>" + (HERE / "feed.css").read_text(encoding="utf-8") + "</style>", unsafe_allow_html=True)
 
-FOOTER = "ZENUX · internal research tool · data from public sources"
+FOOTER = "ZENITH · internal research tool · data from public sources"
 SIGNIN_KEY = "zx_signin"  # the sign-in popover (its open state)
 LOG = logging.getLogger("zenux_dashboard.app")
 
@@ -62,7 +62,7 @@ def load_views() -> tuple[dict, dict]:
 
 
 def masthead(ws: Workspace | None) -> None:
-    """The wordmark row of the green top bar: the mark and ZENUX, the tagline and the workspace tag."""
+    """The wordmark row of the green top bar: the mark and ZENITH, the tagline and the workspace tag."""
     workspace = f'<span class="brand-workspace">{esc(ws.label.upper())}</span>' if ws else ""
     src = png_data_uri(str(MARK))  # inline, so it renders without static-file serving (Streamlit Community Cloud)
     mark = f'<img class="brand-mark" src="{src}" alt="{esc(APP_TITLE)}" width="42" height="42">' if src else ""
@@ -216,7 +216,7 @@ def main() -> None:
     if ws is None:
         with st.container(key="zx_view"):
             st.markdown(empty_state(
-                "No Zenux workspace is configured. Add a [[workspaces]] table to dashboard/.streamlit/secrets.toml "
+                "No Zenith workspace is configured. Add a [[workspaces]] table to dashboard/.streamlit/secrets.toml "
                 "(copy secrets.example.toml), or paste it into the app's Secrets on Streamlit Community Cloud."),
                 unsafe_allow_html=True)
             for problem in conf.problems:

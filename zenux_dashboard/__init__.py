@@ -1,9 +1,9 @@
-"""ZENUX dashboard package: config, hub client, sign-in, the shared shell modules (labels, ui, links, status) and the
+"""ZENITH dashboard package: config, hub client, sign-in, the shared shell modules (labels, ui, links, status) and the
 four tabs (Briefing, Tuning, Coverage and the builder's Control room; docs/SPEC-SIMPLIFY.md).
 
-Everything here is Zenux-made and separate from the legacy PHYSAI news dashboard.
+Everything here is Zenith-made and separate from the legacy PHYSAI news dashboard.
 """
 
-APP_TITLE = "ZENUX"
+APP_TITLE = "ZENITH"
 VERSION = "0.2.0"
-USER_AGENT = f"Zenux-Dashboard/{VERSION} (Streamlit; research news monitor)"
+USER_AGENT = f"Zenith-Dashboard/{VERSION} (Streamlit; research news monitor)"

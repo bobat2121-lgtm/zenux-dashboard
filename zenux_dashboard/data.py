@@ -160,7 +160,7 @@ def volume_preview(workspace_id: str, mode: str, near_miss_shelf: bool | None = 
 
 @st.cache_data(ttl=SLOW_TTL, show_spinner=False)
 def brief(workspace_id: str) -> dict:
-    """GET /brief: what ZENUX looks for (sign-off sends the versions of exactly this cached read)."""
+    """GET /brief: what ZENITH looks for (sign-off sends the versions of exactly this cached read)."""
     return api.brief(_ws(workspace_id))
 
 

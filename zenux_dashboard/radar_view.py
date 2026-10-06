@@ -1,7 +1,7 @@
 """Coverage requests (GET /radar): the analyst's asks inside Coverage, and the builder's review inside the Control room.
 
 The analyst asks in their own words (POST /radar/requests {kind, text, url?, module?}): a source, a company or topic,
-or a story ZENUX missed. The Source finder routine (the Radar scout) answers at its next run with a proposal; the
+or a story ZENITH missed. The Source finder routine (the Radar scout) answers at its next run with a proposal; the
 builder approves or rejects it in the Control room (POST /radar/:id/{approve|reject}) and sets it up with
 `node tools/zenux.js radar apply <ws> <id>`; the hub then marks it applied (in the coverage catalog) and live (its new
 sources report). Every request carries a plain `stage` (asked, proposal, approved, applied, live, rejected) and a
@@ -57,7 +57,7 @@ STAGE_NOTES = {
     "proposal": "A proposal is ready. The builder reviews it and sets it up.",
     "approved": "Approved. The builder is setting it up.",
     "applied": "Set up. It shows as live once the new source reports.",
-    "live": "Live: ZENUX collects from it now.",
+    "live": "Live: ZENITH collects from it now.",
 }
 APPLY_COMMAND = "node tools/zenux.js radar apply {ws} {id}"
 STATE_CSS = {"live": "ok", "in_catalog": "warn", "waiting": "idle", "applied": "ok"}  # pills the shared map lacks
@@ -330,7 +330,7 @@ def render_requests(ws: Workspace, module_id: str | None) -> None:
     """Coverage requests, under Coverage's four columns: the composer, then every request, newest first."""
     st.markdown(f'<div id="{REQUESTS_ANCHOR}"></div>', unsafe_allow_html=True)  # Coverage's jump link lands here
     ui.section("Coverage requests")
-    st.caption("Ask for a source, a company or a topic, or report a story ZENUX missed. The source finder looks into "
+    st.caption("Ask for a source, a company or a topic, or report a story ZENITH missed. The source finder looks into "
                "it at its next run, and the builder sets up what it finds.")
     names = area_names(ws)
     render_composer(ws, module_id, names)

@@ -294,9 +294,9 @@ class ErrorBoxTests(AppCase):
 
     def test_plain_headlines(self):
         cases = [
-            (requests.ConnectionError("down"), "ZENUX can't be reached right now. This is usually brief. Try again in "
+            (requests.ConnectionError("down"), "ZENITH can't be reached right now. This is usually brief. Try again in "
                                                "a minute."),
-            (requests.Timeout("slow"), "ZENUX took too long to answer. This is usually brief. Try again in a minute."),
+            (requests.Timeout("slow"), "ZENITH took too long to answer. This is usually brief. Try again in a minute."),
             (FakeResponse(401, {"error": "unauthorized"}),
              "The dashboard's access was refused. Tell the builder: the workspace's keys may have changed."),
             # an older hub's technical sentence: the dashboard's words for the code
@@ -308,11 +308,11 @@ class ErrorBoxTests(AppCase):
             (FakeResponse(404, {"error": "unknown_item", "message": "That story is no longer in that briefing.",
                                 "edition_id": 12, "item_rank": 3}),
              "That story is no longer in that briefing. Refresh and try again."),
-            (FakeResponse(404, {"error": "not_found"}), "ZENUX couldn't find that. It may have changed meanwhile. "
+            (FakeResponse(404, {"error": "not_found"}), "ZENITH couldn't find that. It may have changed meanwhile. "
                                                         "Refresh and try again."),
             (FakeResponse(500, {"error": "internal_error"}), "Something went wrong on the server. Try again in a "
                                                               "minute."),
-            (FakeResponse(200, no_json=True), "ZENUX sent an answer the dashboard couldn't read. Tell the builder."),
+            (FakeResponse(200, no_json=True), "ZENITH sent an answer the dashboard couldn't read. Tell the builder."),
         ]
         for response, text in cases:
             with self.subTest(text=text):
@@ -362,7 +362,7 @@ class PureTests(unittest.TestCase):
         self.assertEqual(ui.effective_text(eff, TZ, now=after), "Applies from the 12:30 PM briefing.")
 
     def test_plain_error_mapping(self):
-        self.assertEqual(ui.plain_error(ApiError("unreachable", "timed out"))[0], "ZENUX took too long to answer.")
+        self.assertEqual(ui.plain_error(ApiError("unreachable", "timed out"))[0], "ZENITH took too long to answer.")
         self.assertEqual(ui.plain_error(ApiError("not_configured", "x"))[0], "This workspace isn't fully set up yet.")
         self.assertEqual(ui.plain_error(ApiError("invalid", "Write a sentence."))[0], "Write a sentence.")
         # any code: the hub's plain sentence is shown as written (every refusal is one plain sentence since WF5)
@@ -370,9 +370,9 @@ class PureTests(unittest.TestCase):
                          ("That can't change now.", None))
         # an unknown code whose sentence fails the guard: the plain default by kind
         self.assertEqual(ui.plain_error(ApiError("http", "HTTP 409: x", 409, "x", detail="lease 7 held by rv-1")),
-                         ("ZENUX refused that request.", "Tell the builder if it keeps happening."))
+                         ("ZENITH refused that request.", "Tell the builder if it keeps happening."))
         self.assertEqual(ui.plain_error(ApiError("not_found", "HTTP 404", 404))[0],
-                         "ZENUX couldn't find that. It may have changed meanwhile.")
+                         "ZENITH couldn't find that. It may have changed meanwhile.")
         self.assertEqual(ui.plain_error(ValueError("x"))[0], "Something went wrong on this page.")
 
     def test_hub_refusals_in_plain_words(self):
@@ -410,9 +410,9 @@ class PureTests(unittest.TestCase):
             ("invalid_preference", "Say what you want more or less of."): "Say what you want more or less of.",
             # engine text inside and no words of the dashboard's for the code: the plain default instead
             ("company_starred", "ent-coreweave-1 is on your watchlist. Remove the star first."):
-                "ZENUX refused that request.",
-            ("invalid_mute", "Say what to mute: { action, kind, module, ref }."): "ZENUX refused that request.",
-            ("invalid_feedback", "rule draft 3 cannot be graded"): "ZENUX refused that request.",
+                "ZENITH refused that request.",
+            ("invalid_mute", "Say what to mute: { action, kind, module, ref }."): "ZENITH refused that request.",
+            ("invalid_feedback", "rule draft 3 cannot be graded"): "ZENITH refused that request.",
         }
         for (code, message), plain in cases.items():
             with self.subTest(code=code, message=message):
@@ -442,7 +442,7 @@ class PureTests(unittest.TestCase):
     def test_write_errors_keep_the_next_step(self):
         # WF3 review CV10: "Not saved. <headline> <explanation>"
         self.assertEqual(ui.write_error_text(ApiError("unreachable", "unreachable (ConnectionError)")),
-                         "Not saved. ZENUX can't be reached right now. This is usually brief. Try again in a minute.")
+                         "Not saved. ZENITH can't be reached right now. This is usually brief. Try again in a minute.")
         self.assertEqual(ui.write_error_text(ApiError("unauthorized", "HTTP 401: token refused", 401)),
                          "Not saved. The dashboard's access was refused. Tell the builder: the workspace's keys may "
                          "have changed.")

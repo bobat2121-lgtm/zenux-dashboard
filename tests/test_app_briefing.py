@@ -511,7 +511,7 @@ class StateTests(BriefingCase):
         at = self.app()
         self.assert_clean(at)
         message = next(m for m in re.findall(r'<div class="empty-state">(.*?)</div>', self.html(at)))
-        self.assertTrue(message.startswith("No briefings yet. The ZENUX editor publishes one at each scheduled time "
+        self.assertTrue(message.startswith("No briefings yet. The ZENITH editor publishes one at each scheduled time "
                                            "(next: "), message)
         self.assertTrue(message.endswith(" ET)."), message)
 
@@ -521,7 +521,7 @@ class StateTests(BriefingCase):
             {"level": "amber", "code": "awaiting_signoff", "text": "Collecting. Briefings start after you sign off."}]))
         at = self.app()
         self.assert_clean(at)
-        self.assertIn("ZENUX is collecting. Briefings start after you sign off on What ZENUX looks for, at the top "
+        self.assertIn("ZENITH is collecting. Briefings start after you sign off on What ZENITH looks for, at the top "
                       "of Coverage.", self.html(at))
         at.button(key="br_signoff").click().run()
         self.assert_clean(at)

@@ -1,4 +1,4 @@
-/* ZENUX dashboard: black base, white accents, brand-green top bar and footer, coloured tags. */
+/* ZENITH dashboard: black base, white accents, brand-green top bar and footer, coloured tags. */
 @import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;900&family=Roboto+Mono:wght@400;500&display=swap");
 :root {
   --zx-green: #006341;            /* brand: top bar, footer, primary buttons */
@@ -359,7 +359,7 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 .conf-more, .conf-text-block { margin-top: 10px; color: var(--zx-text-soft); font: 400 14px/21px var(--zx-font); }
 .filtered-row { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .filtered-row .rejected-title { font-size: 17px; }
-/* ------------------------------------------------------------------ Tuning and What ZENUX looks for */
+/* ------------------------------------------------------------------ Tuning and What ZENITH looks for */
 .pref-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .pref-text { color: var(--zx-text); font: 400 15px/23px var(--zx-font); overflow-wrap: anywhere; }
 .pref-stats { color: var(--zx-text-soft); font: 400 12px/18px var(--zx-font); }
@@ -537,7 +537,7 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 .failing-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 8px; }
 .failing-name { color: var(--zx-white); font: 700 15px/1.4 var(--zx-font); }
 .failing-title .mono { color: var(--zx-muted); font: 500 12.5px/1.4 var(--zx-mono); }
-/* Coverage (owner, 2026-10-04): how ZENUX covers the area, in four steps with live numbers, then one health line. */
+/* Coverage (owner, 2026-10-04): how ZENITH covers the area, in four steps with live numbers, then one health line. */
 .cov-flow { display: grid; grid-template-columns: minmax(0,1fr) 24px minmax(0,1fr) 24px minmax(0,1fr) 24px minmax(0,1fr); align-items: stretch; gap: 0; margin: 4px 0 12px; }
 .cov-step { display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; background: var(--zx-card); border: 1px solid var(--zx-line); border-radius: 10px; }
 .cov-step-k { display: flex; align-items: center; gap: 8px; color: var(--zx-muted); font: 700 12px/1.4 var(--zx-font); letter-spacing: 1px; text-transform: uppercase; }
@@ -608,7 +608,7 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 .tn-hint { color: var(--zx-warn); font: 500 13px/20px var(--zx-font); overflow-wrap: anywhere; }
 [class*="st-key-zx_ended_"] { flex-wrap: wrap !important; align-items: center; gap: 4px 12px !important; padding: 8px 0; border-bottom: 1px solid var(--zx-line); }
 [class*="st-key-zx_ended_"] [data-testid="stElementContainer"]:has(.pref-card) { flex: 1 1 240px; width: auto !important; min-width: 0; }
-/* Coverage: What ZENUX looks for, the expander at the top. */
+/* Coverage: What ZENITH looks for, the expander at the top. */
 .brief-title { margin: 6px 0 2px; color: var(--zx-white); font: 700 17px/1.35 var(--zx-font); overflow-wrap: anywhere; }
 .st-key-zx_brief_signoff { flex-wrap: wrap !important; align-items: center; gap: 4px 12px !important; }
 .st-key-zx_brief_signoff [data-testid="stElementContainer"]:has(.pref-meta) { flex: 1 1 240px; width: auto !important; min-width: 0; }

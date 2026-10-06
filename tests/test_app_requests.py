@@ -76,7 +76,7 @@ class ListTests(RequestsCase):
         # proposal: the plain summary (the area id replaced by its name), the diagnosis and the source's state
         self.assertIn(self.step("done", "Asked", 26) + self.step("current", "Proposal ready", 20), html)
         self.assertIn('<div class="rule-text">Add the PUCT docket filings feed to AI infrastructure.</div>', html)
-        self.assertIn("No source ZENUX reads covered it.", html)
+        self.assertIn("No source ZENITH reads covered it.", html)
         self.assertIn("Texas PUC large-load docket: Waiting for setup", html)
         self.assertIn("A proposal is ready. The builder reviews it and sets it up.", html)
         # approved
@@ -120,7 +120,7 @@ class ListTests(RequestsCase):
         html = self.html(at)
         self.assertIn('<div class="rule-text">Add the docket filings feed to AI infrastructure.</div>', html)
         self.assertIn("None of your sources carries it.", html)
-        self.assertNotIn("No source ZENUX reads covered it.", html)
+        self.assertNotIn("No source ZENITH reads covered it.", html)
         self.assertIn(f"First stories: ERCOT posts the &lt;October&gt; large-load report ({self.date(30)})", html)
         self.assertNotIn("5 stories collected from it so far.", html)
         self.assertIn(f"The newest {len(body['requests'])} of 240 coverage requests are listed.",

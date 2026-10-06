@@ -283,7 +283,7 @@ class HealthPanelTests(ControlCase):
         # the light of a module that is down explains that the module itself did not answer
         at.button(key="cr_light_bad_pilot_ai-infra").click().run()
         self.assert_clean(at)
-        self.assertIn("ZENUX could not reach ai-infra itself: unreachable (ConnectionError).", self.visible_text(at))
+        self.assertIn("ZENITH could not reach ai-infra itself: unreachable (ConnectionError).", self.visible_text(at))
 
     def test_the_degraded_light_opens_the_failing_sources(self):
         at = self.control()
@@ -294,7 +294,7 @@ class HealthPanelTests(ControlCase):
         text = self.visible_text(at)
         self.assertIn("Source health · defense-unmanned", text)
         self.assertIn("sam-opps", text)
-        self.assertIn("The site asked ZENUX to slow down (HTTP 429, too many requests).", text)
+        self.assertIn("The site asked ZENITH to slow down (HTTP 429, too many requests).", text)
         self.assertIn("Failed checks in a row 3", text)
         self.assertIn("Health backoff (retrying less often)", text)
         self.assertIn("Last worked", text)
@@ -349,18 +349,18 @@ class HealthPanelTests(ControlCase):
 
     def test_failure_reasons_in_plain_words(self):
         reason = control_view.failure_reason
-        self.assertEqual(reason({"http": 403}), "The site refused ZENUX's request (HTTP 403). It may block automated "
+        self.assertEqual(reason({"http": 403}), "The site refused ZENITH's request (HTTP 403). It may block automated "
                                                 "readers.")
         self.assertEqual(reason({"http": 404}), "The page wasn't found (HTTP 404). It may have moved.")
         self.assertEqual(reason({"http": 503}), "The site's server had an error (HTTP 503).")
         self.assertEqual(reason({"status": "timeout"}), "The site didn't answer in time.")
         self.assertEqual(reason({"kind": "structural_empty", "empty_streak": 4}),
-                         "The page loads, but ZENUX found no stories on it 4 runs in a row. The site's layout may have "
+                         "The page loads, but ZENITH found no stories on it 4 runs in a row. The site's layout may have "
                          "changed.")
         self.assertEqual(reason({"kind": "quota_streak", "quota_streak": 2}),
                          "The daily allowance for this source's service was used up 2 runs in a row.")
         self.assertEqual(reason({"http": 429, "error": "rate limited by api.sam.gov"}),
-                         "The site asked ZENUX to slow down (HTTP 429, too many requests). Last error: rate limited by "
+                         "The site asked ZENITH to slow down (HTTP 429, too many requests). Last error: rate limited by "
                          "api.sam.gov")
         self.assertEqual(reason({}), "The last check failed.")
 
@@ -693,7 +693,7 @@ class ReviewTests(ControlCase):
         self.assertIn('href="https://interchange.puc.texas.gov/"', html)
         self.assertIn("1 registry change: Oncor Electric Delivery", html)
         self.assertIn("Verified one fetch: 200, 40 filings listed.", html)
-        self.assertIn("Diagnosis: no_source (No source ZENUX reads covered it.)", html)
+        self.assertIn("Diagnosis: no_source (No source ZENITH reads covered it.)", html)
         self.assertEqual(at.json[0].value.count("puct-large-load"), 1)
         self.assertIn("node tools/zenux.js radar apply pilot 44", [c.value for c in at.code])
         self.assertIn("pilot · approved, waiting for setup · 1", [e.label for e in at.expander])

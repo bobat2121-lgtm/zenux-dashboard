@@ -70,7 +70,7 @@ EARLIER_MORE = "Showing the newest {n} matches from earlier briefings. Add a wor
 SEARCH_FAILED = "Couldn't search earlier briefings: {reason}"
 LINKED = "Showing the briefing you linked."
 LINKED_GONE = "The briefing you linked isn't available any more."
-STAGING_EMPTY = ("ZENUX is collecting. Briefings start after you sign off on What ZENUX looks for, at the top of "
+STAGING_EMPTY = ("ZENITH is collecting. Briefings start after you sign off on What ZENITH looks for, at the top of "
                  "Coverage.")
 SHELF_TITLES = {"watchlist": "On your watchlist · not in this briefing", "near": "Near misses · just under your bar"}
 SHELF_FIELDS = {"watchlist": "watchlist", "near": "near_misses"}
@@ -831,7 +831,7 @@ def render_empty(ws: Workspace) -> None:
         return
     when = _map(summary).get("next_at")
     clock = f" (next: {fmt_clock(when, ws.timezone)})" if known_time(when) else ""
-    st.markdown(empty_state(f"No briefings yet. The ZENUX editor publishes one at each scheduled time{clock}."),
+    st.markdown(empty_state(f"No briefings yet. The ZENITH editor publishes one at each scheduled time{clock}."),
                 unsafe_allow_html=True)
 
 

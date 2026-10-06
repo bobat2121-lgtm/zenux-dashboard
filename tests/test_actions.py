@@ -270,14 +270,14 @@ class FeedbackTests(ActionCase):
         self.assert_sent(FEEDBACK, {"verdict": "factual_error", "scope": "item", "item_id": 1201,
                                     "note": "The term is 12 years, not 15 years."})
         clock = fmt_clock(answer["effective"]["next_briefing_at"], TZ)
-        self.assertIn(f"Flagged. The ZENUX editor re-checks it at the {clock} briefing and either corrects it or "
+        self.assertIn(f"Flagged. The ZENITH editor re-checks it at the {clock} briefing and either corrects it or "
                       "explains why it stands.", self.toasts(at))
         self.assertIsNone(self.undo(at))
         self.assert_dialog_closed(at)
 
     def test_wrong_facts_without_a_known_time(self):
         self.assertEqual(actions.wrong_facts_toast({"effective": {"next_briefing_at": None}}, TZ),
-                         "Flagged. The ZENUX editor re-checks it at the next briefing and either corrects it or "
+                         "Flagged. The ZENITH editor re-checks it at the next briefing and either corrects it or "
                          "explains why it stands.")
 
     def test_rate_this_story(self):
@@ -291,7 +291,7 @@ class FeedbackTests(ActionCase):
         # the slider sits under the note, in the rating's band, with the editor's score and the scale beside it
         self.assertEqual(at.slider(key="dlg_score").value, actions.RATING_SCORES["digest"])
         self.assertEqual((at.slider(key="dlg_score").min, at.slider(key="dlg_score").max), (0, 100))
-        self.assertIn("The ZENUX editor scored it 78.", self.texts(at, "caption"))
+        self.assertIn("The ZENITH editor scored it 78.", self.texts(at, "caption"))
         self.assertIn(actions.RATE_SCALE_NOTE, self.texts(at, "caption"))
         scale = next(str(m.value) for m in at.markdown if 'class="why-block score-scale"' in str(m.value))
         for span, name, meaning in actions.SCORE_SCALE:
@@ -340,7 +340,7 @@ class FeedbackTests(ActionCase):
         at.button(key="dlg_save").click().run()
         self.assert_clean(at)
         self.assert_sent(PROMOTE, {"event_id": 1301, "note": "Capital for capacity matters to me"})
-        self.assertIn(f"Sent back to the ZENUX editor with your note. {ui.effective_text(answer['effective'], TZ)} "
+        self.assertIn(f"Sent back to the ZENITH editor with your note. {ui.effective_text(answer['effective'], TZ)} "
                       "It may still stay out if the evidence is thin.", self.toasts(at))
         self.assertIsNone(self.undo(at))
 

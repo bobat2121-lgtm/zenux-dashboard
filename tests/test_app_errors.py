@@ -18,7 +18,7 @@ EXPECTED = {
     "tuning": "Couldn't load your preferences.",
     "coverage": "Couldn't load coverage areas.",
 }
-UNREACHABLE = "ZENUX can't be reached right now. This is usually brief. Try again in a minute."
+UNREACHABLE = "ZENITH can't be reached right now. This is usually brief. Try again in a minute."
 
 
 class ErrorStateTests(AppCase):
@@ -49,7 +49,7 @@ class ErrorStateTests(AppCase):
         self.http.on("GET", PILOT_HUB + "/editions", requests.Timeout("read timed out"))
         at = self.app()
         self.assert_clean(at)
-        self.assertIn("ZENUX took too long to answer.", self.visible_text(at))
+        self.assertIn("ZENITH took too long to answer.", self.visible_text(at))
         self.fresh()
         self.http.on("GET", PILOT_HUB + "/editions", FakeResponse(401, {"error": "unauthorized"}))
         at = self.app()

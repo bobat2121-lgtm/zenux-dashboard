@@ -240,7 +240,7 @@ def diagnostics(workspace: str = "pilot", *, failing: bool = True, legacy: bool 
     body["routines"] = {
         "timezone": "America/New_York", "schedule_source": "deploy",
         "grader": {"schedule": ["07:30", "12:30", "16:30"], "state": "ok", "last_seen_at": iso(2),
-                   "last_route": "/review/lease", "last_status": 200, "agent": "Zenux · pilot · Grader · lease ab12cd34",
+                   "last_route": "/review/lease", "last_status": 200, "agent": "Zenith · pilot · Grader · lease ab12cd34",
                    "cli_version": "0.2.0", "prompt_hash": "0123456789ab", "prompt_hash_expected": "0123456789ab",
                    "prompt_current": True, "last_due_at": iso(2.5), "last_due_state": "done",
                    "next_due_at": iso(-1.5), "missed_7d": 1},
@@ -909,7 +909,7 @@ def brief(stage: str = "live") -> dict:
     return {
         "workspace": "pilot", "stage": stage, "generated_at": iso(0),
         # WF5 (docs/SPEC-PHASE05.md 3.1): the one-pager in the approved vocabulary, the rubric's words in original*
-        "title": "What ZENUX looks for: AI infrastructure and defense unmanned",
+        "title": "What ZENITH looks for: AI infrastructure and defense unmanned",
         "original_title": "Pilot rubric v0: AI infrastructure and defense unmanned",
         "rubric_version": "64154d4b0a1b2c3d", "precedents_version": "p-1",
         "catalog_versions": {"ai-infra": "0.1.0-ai-i9c1b7d4e", "defense-unmanned": "0.1.0-defe9c1b7d4e"},

@@ -7,7 +7,7 @@ shell reads them once per session into session state (read_once) and writes the 
 run (sync), so a reload or a shared link lands on the same tab and object.
 
 Old links keep working (TAB_ALIASES): `tab=preferences` opens Tuning (a `pref=` link still highlights its rule; the
-old `section=` says which part: `looks_for` opens Coverage, where What ZENUX looks for now lives, and `muted` or
+old `section=` says which part: `looks_for` opens Coverage, where What ZENITH looks for now lives, and `muted` or
 `watchlist` picks that filter of Your rules), and `tab=filtered` (with any `view=`) opens Briefing. `section` is only
 ever read, never written.
 

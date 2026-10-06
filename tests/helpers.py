@@ -1,4 +1,4 @@
-"""Test harness for the ZENUX dashboard: fake secrets, a routed fake for requests.get/post, and AppTest setup.
+"""Test harness for the ZENITH dashboard: fake secrets, a routed fake for requests.get/post, and AppTest setup.
 
 Nothing here touches the network: every request goes through FakeHttp, and an unrouted URL behaves like an
 unreachable host (requests.ConnectionError). Tokens below are obvious test values, never real ones.

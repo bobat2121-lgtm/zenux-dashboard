@@ -1,4 +1,4 @@
-"""Unit tests: the pure helpers of Tuning (docs/SPEC-SIMPLIFY.md 2.3) and What ZENUX looks for (no Streamlit run)."""
+"""Unit tests: the pure helpers of Tuning (docs/SPEC-SIMPLIFY.md 2.3) and What ZENITH looks for (no Streamlit run)."""
 
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ class NeedsYourOkShapeTests(unittest.TestCase):
         self.assertEqual(pv.suggestion_head(fp.grades_draft()), "Suggested from your ratings")
         self.assertEqual(pv.suggestion_head(fp.wording_draft()), "Suggested wording for your preference")
         self.assertEqual(pv.suggestion_head(fp.merge_draft()), "Suggested merge of 2 preferences")
-        self.assertEqual(pv.suggestion_head(fp.brief_draft()), "Your suggested change to What ZENUX looks for")
+        self.assertEqual(pv.suggestion_head(fp.brief_draft()), "Your suggested change to What ZENITH looks for")
         self.assertEqual(pv.suggestion_head(fp.radar_draft()), "From a coverage request")
         self.assertEqual(pv.suggestion_head(fp.legacy_draft()), "Your draft, worded by the wording assistant")
         self.assertEqual(pv.suggestion_head({"origin": "feedback"}), "Your draft, worded by the wording assistant")
@@ -287,11 +287,11 @@ class BriefShapeTests(unittest.TestCase):
     def test_expander_label_says_the_sign_off(self):
         body = fp.brief()
         day = bv.fmt_date(body["signoff"]["last"]["signed_at"], fp.TZ)
-        self.assertEqual(bv.expander_label(body, fp.TZ), f"What ZENUX looks for · signed off by you on {day}")
+        self.assertEqual(bv.expander_label(body, fp.TZ), f"What ZENITH looks for · signed off by you on {day}")
         self.assertEqual(bv.expander_label(fp.brief(signed_by="admin"), fp.TZ),
-                         f"What ZENUX looks for · signed off by the builder on {day}")
+                         f"What ZENITH looks for · signed off by the builder on {day}")
         for unsigned in (fp.brief(signed_by=None), fp.brief(signed_by="migration"), None):
-            self.assertEqual(bv.expander_label(unsigned, fp.TZ), "What ZENUX looks for · not signed off yet")
+            self.assertEqual(bv.expander_label(unsigned, fp.TZ), "What ZENITH looks for · not signed off yet")
         self.assertEqual(labels.find_jargon(bv.expander_label(body, fp.TZ)), [])
 
     def test_parts(self):

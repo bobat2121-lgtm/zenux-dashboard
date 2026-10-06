@@ -22,7 +22,7 @@ render_review(conf), every workspace:
   proposal), recovered, and rejected or withdrawn, most recent first.
 The writes need the owner token, like every Control room write (open access makes everyone the builder during the
 beta). A failed read is one plain line, never a crash. The source-health window (control_view.failing_dialog) reads
-the same cached list (open_fixes, window_line); Coverage says "ZENUX is fixing 2 sources." from GET /modules
+the same cached list (open_fixes, window_line); Coverage says "ZENITH is fixing 2 sources." from GET /modules
 `repairs_open` (coverage_view.fixing_text).
 """
 

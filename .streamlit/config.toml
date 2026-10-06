@@ -1,4 +1,4 @@
-# ZENUX dashboard theme: a black base with white accents, the brand-green top bar and footer. feed.css carries the rest.
+# ZENITH dashboard theme: a black base with white accents, the brand-green top bar and footer. feed.css carries the rest.
 [theme]
 base = "dark"
 primaryColor = "#006341"

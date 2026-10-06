@@ -215,7 +215,7 @@ class SharedRowTests(LeftOutCase):
         self.assert_clean(at)
         post = self.http.find("POST", PILOT_HUB + "/promote")[-1]
         self.assertEqual((post.bearer, sent(post)), (OWNER, {"event_id": 7201, "note": "A big customer win for the region"}))
-        self.assertTrue(any(t.startswith("Sent back to the ZENUX editor with your note.") for t in self.toasts(at)))
+        self.assertTrue(any(t.startswith("Sent back to the ZENITH editor with your note.") for t in self.toasts(at)))
 
     def test_a_plain_click_saves_and_ctrl_click_opens_the_options(self):
         self.http.on("POST", PILOT_HUB + "/preferences", FakeResponse(201, fl.preference_created()))

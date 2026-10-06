@@ -993,17 +993,17 @@ def failure_reason(row: Mapping) -> str:
     status = one_line(row.get("status")).lower()
     if kind == "structural_empty":
         n = as_int(row.get("empty_streak")) or 0
-        text = ("The page loads, but ZENUX found no stories on it"
+        text = ("The page loads, but ZENITH found no stories on it"
                 + (f" {n} runs in a row" if n else "") + ". The site's layout may have changed.")
     elif kind == "quota_streak":
         n = as_int(row.get("quota_streak")) or 0
         text = "The daily allowance for this source's service was used up" + (f" {n} runs in a row" if n else "") + "."
     elif http in (401, 403):
-        text = f"The site refused ZENUX's request (HTTP {http}). It may block automated readers."
+        text = f"The site refused ZENITH's request (HTTP {http}). It may block automated readers."
     elif http == 404:
         text = "The page wasn't found (HTTP 404). It may have moved."
     elif http == 429:
-        text = "The site asked ZENUX to slow down (HTTP 429, too many requests)."
+        text = "The site asked ZENITH to slow down (HTTP 429, too many requests)."
     elif http is not None and 500 <= http < 600:
         text = f"The site's server had an error (HTTP {http})."
     elif "timeout" in status or "timed out" in one_line(row.get("error")).lower():
@@ -1147,7 +1147,7 @@ def failing_dialog(workspace_id: str, module_id: str) -> None:
     elif m["status"] in QUIET_LIGHT and (m.get("retrying") or m.get("slowed")):
         st.markdown("No source is failing.")
     elif m["status"] == "down":
-        st.markdown(f"ZENUX could not reach {module_id} itself: {m['reason'] or 'no answer'}. Its sources are not "
+        st.markdown(f"ZENITH could not reach {module_id} itself: {m['reason'] or 'no answer'}. Its sources are not "
                     "being checked until it answers again.")
     elif m["status"] == "stale":
         st.markdown(f"{module_id} has stopped reporting runs ({m['reason']}). No single source is to blame: the module "
@@ -1418,7 +1418,7 @@ def render_stage(ws: Workspace) -> None:
                 f"Switch {ws.label} to {target}?",
                 ("The workspace keeps collecting but publishes no briefings until the analyst signs off or you go "
                  "live again." if target == "staging" else
-                 "Briefings start at the next scheduled ZENUX editor run. Going live here records a sign-off by the "
+                 "Briefings start at the next scheduled ZENITH editor run. Going live here records a sign-off by the "
                  "builder."),
                 "Switch to staging" if target == "staging" else "Go live",
                 lambda: set_stage(ws, target, stage))

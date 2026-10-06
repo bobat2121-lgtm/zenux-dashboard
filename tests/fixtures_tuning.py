@@ -1,4 +1,4 @@
-"""Hub bodies for the Tuning tests and What ZENUX looks for (docs/SPEC-PHASE02.md 5.6-5.13, the shapes
+"""Hub bodies for the Tuning tests and What ZENITH looks for (docs/SPEC-PHASE02.md 5.6-5.13, the shapes
 hub/src/preferences.js and hub/src/tuning.js return; the page is docs/SPEC-SIMPLIFY.md 2.3). Fresh copies per call;
 markup in a few texts checks the escaping.
 
@@ -158,7 +158,7 @@ def merge_draft() -> dict:
 
 
 def brief_draft() -> dict:
-    """The analyst's suggested change to a line of What ZENUX looks for, worded (origin brief); no preview."""
+    """The analyst's suggested change to a line of What ZENITH looks for, worded (origin brief); no preview."""
     return {"id": 45, "kind": "rule", "text": "Also rank power purchase agreements over 100 MW.", "origin": "brief",
             "feedback_id": None,
             "context": {"brief_line": {"section": "AI infrastructure", "subsection": "What ranks high",
@@ -289,7 +289,7 @@ def brief(stage: str = "live", signed_by: str | None = "owner") -> dict:
     return {
         "workspace": "pilot", "stage": stage, "generated_at": iso(0),
         # WF5 (docs/SPEC-PHASE05.md 3.1): the approved vocabulary; the rubric's own words only in original*
-        "title": "What ZENUX looks for: AI infrastructure and defense unmanned",
+        "title": "What ZENITH looks for: AI infrastructure and defense unmanned",
         "original_title": "Pilot rubric v0: AI infrastructure and defense unmanned",
         "rubric_version": "64154d4b0a1b2c3d", "precedents_version": "pv-1",
         "catalog_versions": {"ai-infra": "0.1.0-3f2a9c1b7d4e", "defense-unmanned": "0.1.0-77aa00bb11cc"},
@@ -396,7 +396,7 @@ def refusal(http_status: int, code: str, message: str, **extra: Any):
 
 
 def route_reads(http, base: str = HUB) -> None:
-    """Every read Tuning (and What ZENUX looks for) makes, routed to the bodies above."""
+    """Every read Tuning (and What ZENITH looks for) makes, routed to the bodies above."""
     http.on("GET", base + "/preferences", preferences())
     http.on("GET", base + "/rules", rules())
     http.on("GET", base + "/mutes", mutes())
