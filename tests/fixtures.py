@@ -1086,13 +1086,18 @@ def edition_single(edition_id: int = 12) -> dict:
     return {"edition": found}
 
 
-def search_hits(query: str, hits: list[dict] | None = None, *, total: int | None = None) -> dict:
-    """GET /editions/search (WF5, gap 4)."""
+def search_hits(query: str, hits: list[dict] | None = None, *, total: int | None = None,
+                legacy: list[dict] | None = None, legacy_total: int | None = None) -> dict:
+    """GET /editions/search (WF5, gap 4), with schema 14's `legacy`: the old tracker's matches (none by default)."""
     hits = list(hits or [])
     true_total = len(hits) if total is None else total
+    old = list(legacy or [])
+    old_total = len(old) if legacy_total is None else legacy_total
     return {"q": query, "days": 90, "limit": 50, "offset": 0, "total": true_total, "returned": len(hits),
             "has_more": true_total > len(hits), "next_offset": len(hits) if true_total > len(hits) else None,
-            "hits": hits}
+            "hits": hits,
+            "legacy": {"total": old_total, "returned": len(old), "has_more": old_total > len(old),
+                       "next_offset": len(old) if old_total > len(old) else None, "hits": old}}
 
 
 def search_hit(edition_id: int, item_id: int, headline: str, hours: float = 300) -> dict:
@@ -1100,6 +1105,19 @@ def search_hit(edition_id: int, item_id: int, headline: str, hours: float = 300)
     return {"edition_id": edition_id, "item_id": item_id, "rank": 1, "headline": headline, "event_id": 5000 + item_id,
             "story_id": f"s-{item_id}", "title": headline, "url": f"https://example.com/hit-{item_id}",
             "published_at": published, "briefing_label": briefing_name(published)["briefing_label"]}
+
+
+def legacy_hit(post: int, headline: str, summary: str | None = None, *, date: str = "2026-09-20", slot: str = "9am ET",
+               url: str | None = "https://news.example.com/old", corrected: bool = False, correction: str | None = None,
+               tickers: list[str] | None = None, companies: list[str] | None = None) -> dict:
+    """One story of the old tracker in GET /editions/search `legacy.hits` (hub/src/legacy.js hitView), with the hub's
+    plain label ("From the old tracker · Sep 20, 2026 · 9am digest")."""
+    day = datetime.strptime(date, "%Y-%m-%d")
+    when = "catch-up digest" if "backfill" in slot else f"{slot.split()[0].lower()} digest"
+    return {"kind": "old_tracker", "ref": f"post:{post}:item:1", "date": date, "slot": slot,
+            "label": f"From the old tracker · {day:%b} {day.day}, {day.year} · {when}", "headline": headline,
+            "summary": summary, "url": url, "corrected": corrected, "correction": correction,
+            "tickers": list(tickers or []), "companies": list(companies or []), "entity_ids": [], "reruns": []}
 
 
 def tuneup(*, due: bool = False, items: list[dict] | None = None, week: str = "2026-W40", rated: int = 0,

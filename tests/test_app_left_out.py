@@ -179,6 +179,31 @@ class SharedRowTests(LeftOutCase):
         self.assert_clean(at)
         self.assertEqual((at.query_params.get("edition"), at.query_params.get("item")), ("12", "1201"))
 
+    def test_a_story_the_old_tracker_ran_is_named_with_no_story_scope(self):
+        def answer(call):
+            body = fl.rejected_for(call.params or {})
+            if (call.params or {}).get("edition_id") is not None:
+                body["items"].append(dict(fl.old_tracker_row(), group="same_story"))
+            return body
+
+        self.http.on("GET", REJECTED, answer)
+        self.http.on("POST", PILOT_HUB + "/preferences", FakeResponse(201, fl.preference_created()))
+        at = self.briefing(pin=PIN)
+        self.assertIn("Same story as: <strong>Red Cat ships Black Widow drones to the Army</strong> · "
+                      f"{esc('From the old tracker · Sep 20, 2026 · 9am digest')}</div>", self.row_markdown(at, "l12s_7320"))
+        self.assertNotIn("Already reported", self.row_markdown(at, "l12s_7320"))  # the line names what it repeats
+        keys = {getattr(b, "key", None) for b in at.button}
+        self.assertNotIn("lo_show_l12s_7320", keys)  # no Zenith briefing ran it
+        self.open_expander(at, OPEN)
+        self.click(at, "act_morefull_l12s_7320")
+        options = list(at.radio(key="dlg_scope").options)
+        self.assertNotIn(labels.SCOPE_LABELS["this_story"], options)  # not a Zenith story: no "Just this story"
+        self.assertIn(labels.SCOPE_LABELS["similar"], options)
+        at.button(key="dlg_save").click().run()
+        self.assert_clean(at)
+        self.assertEqual(sent(self.http.find("POST", PILOT_HUB + "/preferences")[-1]),
+                         {"direction": "more", "scope": "similar", "event_id": 7320})
+
     def test_a_row_a_later_briefing_published_says_so(self):
         def answer(call):
             body = fl.rejected_for(call.params or {})

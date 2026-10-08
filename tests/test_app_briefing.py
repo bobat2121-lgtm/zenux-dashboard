@@ -14,6 +14,7 @@ from helpers import (AppCase, BETA_HUB, BETA_READ, DASHBOARD, FakeResponse, PILO
 from zenux_dashboard import feed_view, labels
 
 EDITIONS = PILOT_HUB + "/editions"
+SEARCH = PILOT_HUB + "/editions/search"
 ITEM_CARD = re.compile(r'<article class="feed-item[^"]*">.*?</article>')
 BLANK_LINE = chr(10) * 2
 TZ = "America/New_York"
@@ -295,8 +296,12 @@ class SearchTests(BriefingCase):
         self.assert_clean(at)
         self.assertIn("No matching stories in your briefings of the last 90 days.", self.html(at))
         self.assertEqual(self.cards(at), [])
-        # every briefing is loaded here: the hub's search is not needed
-        self.assertEqual(self.http.find("GET", PILOT_HUB + "/editions/search"), [])
+        # every briefing is loaded here: the hub's search is read for the old tracker only (none here: no group)
+        self.assertEqual({c.params.get("q") for c in self.http.find("GET", SEARCH)},
+                         {"anduril", "microsoft", "war.gov", "defense unmanned", "coreweave newsroom", "army anduril",
+                          "capacity deal", "no such company"})
+        self.assertNotIn(feed_view.OLD_TRACKER, self.html(at))
+        self.assertNotIn("Earlier briefings", self.html(at))
 
     def test_earlier_briefings_are_searched_by_the_hub(self):
         # gap 4: matches in briefings not loaded come from GET /editions/search, each with Show it
@@ -337,7 +342,165 @@ class SearchTests(BriefingCase):
         at.text_input(key="br_search").set_value("zeppelin").run()
         self.assert_clean(at)
         self.assertIn("Couldn't search earlier briefings: Something went wrong on the server.", self.texts(at, "caption"))
+        self.assertIn("Couldn't search the old tracker: Something went wrong on the server.", self.texts(at, "caption"))
         self.assertIn(feed_view.NO_HITS, self.html(at))
+
+
+def old_tracker_hits() -> list[dict]:
+    """Two stories of the old tracker: a corrected one with its own headline, and a catch-up digest's story whose
+    headline is the cut-off start of its summary, with no link stored."""
+    return [fx.legacy_hit(201, "Spetstechnoexport offers <new> counter-UAS jammers abroad",
+                          "The Ukrainian state exporter listed three counter-UAS systems for foreign buyers.",
+                          date="2026-09-25", slot="5pm ET", url="https://www.defensenews.com/spetstechnoexport",
+                          corrected=True, correction="three systems, not five."),
+            fx.legacy_hit(150, "Red Cat's Black Widow passes counter-UAS trials at Fort",
+                          "Red Cat's Black Widow passes counter-UAS trials at Fort Novosel, the Army said.",
+                          date="2026-08-09", slot="manual backfill", url=None, tickers=["RCAT"])]
+
+
+class OldTrackerSearchTests(BriefingCase):
+    """docs/SPEC-LEGACY-CONTEXT.md section 4: the search lists the old tracker's matching stories (GET /editions/search
+    `legacy`) as plain cards after your briefings and what was left out, 5 at a time, with no story icons."""
+
+    def search(self, query: str, legacy: list[dict] | None = None, total: int | None = None, **app):
+        self.http.on("GET", SEARCH, lambda call: fx.search_hits(call.params.get("q"), legacy=legacy, legacy_total=total))
+        at = self.app(**app)
+        at.text_input(key="br_search").set_value(query).run()
+        self.assert_clean(at)
+        return at
+
+    @staticmethod
+    def legacy_cards(at) -> list[str]:
+        return [str(m.value) for m in at.markdown if str(m.value).startswith('<article class="legacy-card">')]
+
+    def group_titles(self, at) -> list[str]:
+        return re.findall(r'<div class="zx-group-title">(.*?)</div>', self.html(at))
+
+    def old_tracker_block(self, at):
+        return next(n for n in self.walk(at._tree) if str(getattr(getattr(n, "proto", None), "id", "")).endswith(
+            "-zx_old_tracker"))
+
+    def test_the_search_shows_both_kinds(self):
+        at = self.search("counter-uas", old_tracker_hits())
+        call = self.http.find("GET", SEARCH)[-1]
+        self.assertEqual((call.params.get("q"), call.params.get("days"), call.bearer), ("counter-uas", 90, READ))
+        titles = self.group_titles(at)
+        self.assertEqual(titles[0], "In your briefings · 2")
+        self.assertTrue(titles[1].startswith("Left out · "), titles)
+        self.assertEqual(titles[2:], ["From the old tracker · 2"])
+        html = self.html(at)
+        cards = self.cards(at)
+        first, second = self.legacy_cards(at)
+        self.assertEqual(len(cards), 2)
+        # ZENITH's own stories first, then what was left out, then the old tracker's (newest first, as the hub lists them)
+        self.assertLess(html.index(cards[-1]), html.index('<div class="zx-group-title">Left out · '))
+        self.assertLess(html.index('<div class="zx-group-title">Left out · '), html.index(first))
+        self.assertLess(html.index(first), html.index(second))
+        self.assertEqual(first, (
+            '<article class="legacy-card"><div class="legacy-label">From the old tracker · Sep 25, 2026 · 5pm digest</div>'
+            '<div class="legacy-title">Spetstechnoexport offers &lt;new&gt; counter-UAS jammers abroad</div>'
+            '<div class="legacy-summary">The Ukrainian state exporter listed three counter-UAS systems for foreign '
+            'buyers.</div><div class="legacy-source"><a class="source-link" '
+            'href="https://www.defensenews.com/spetstechnoexport" target="_blank" rel="noopener noreferrer">'
+            'defensenews.com ↗</a></div><div class="legacy-correction"><b>Corrected later:</b> three systems, not '
+            'five.</div></article>'))
+        # a headline the old tracker cut from its summary shows once, in full; no link was stored: no link line
+        self.assertEqual(second, (
+            '<article class="legacy-card"><div class="legacy-label">From the old tracker · Aug 9, 2026 · catch-up '
+            'digest</div><div class="legacy-title">Red Cat&#x27;s Black Widow passes counter-UAS trials at Fort '
+            'Novosel, the Army said.</div></article>'))
+        self.assertIn(feed_view.OLD_TRACKER_NOTE, self.texts(at, "caption"))
+        self.assertNotIn("Showing the newest", " ".join(self.texts(at, "caption")))
+        self.assert_plain(at)
+        self.assert_no_secrets(at)
+
+    def test_old_tracker_cards_have_no_story_actions(self):
+        at = self.search("counter-uas", old_tracker_hits(), pin=PIN)
+        block = self.old_tracker_block(at)
+        self.assertEqual({getattr(n, "type", None) for n in self.walk(block) if not getattr(n, "children", None)},
+                         {"markdown", "caption"})
+        with_old = sorted(str(n.key) for n in self.walk(at._tree) if getattr(n, "key", None))
+        self.assertIn("zx_old_tracker", with_old)
+        # the same search without the old tracker's stories draws exactly the same buttons and icons, less the group
+        self.fresh()
+        at = self.search("counter-uas", None, pin=PIN)
+        self.assertEqual(self.legacy_cards(at), [])
+        self.assertEqual(sorted(str(n.key) for n in self.walk(at._tree) if getattr(n, "key", None)),
+                         [k for k in with_old if k != "zx_old_tracker"])
+        self.assertTrue([k for k in with_old if k.startswith("act_rate_")])  # ZENITH's stories keep theirs
+
+    def test_a_broad_word_draws_five_old_tracker_cards_then_more_on_demand(self):
+        # "drone" matches hundreds of the old tracker's stories: the hub sends its page of 50, the first 5 are drawn,
+        # and the analyst's own left-out stories still come right after the briefings.
+        hits = [fx.legacy_hit(300 - k, f"Old drone story {k}", f"Summary {k}.", date=f"2026-10-{6 - k // 10:02d}")
+                for k in range(50)]
+        at = self.search("counter-uas", hits, total=232)
+        titles = self.group_titles(at)
+        self.assertEqual(titles[0], "In your briefings · 2")
+        self.assertTrue(titles[1].startswith("Left out · "), titles)
+        self.assertEqual(titles[2:], ["From the old tracker · 232"])
+        html = self.html(at)
+        self.assertLess(html.index(self.cards(at)[-1]), html.index('<div class="zx-group-title">Left out · '))
+        self.assertLess(html.index('<div class="zx-group-title">Left out · '), html.index("From the old tracker · 232"))
+        drawn = self.legacy_cards(at)
+        self.assertEqual(len(drawn), feed_view.OLD_TRACKER_PAGE)
+        self.assertIn("Old drone story 0</div>", drawn[0])
+        self.assertIn("Old drone story 4</div>", drawn[-1])
+        self.assertIn("Showing the newest 5 of 232. Add a word to narrow the search.", self.texts(at, "caption"))
+        reads = len(self.http.find("GET", SEARCH))
+        more = at.button(key=feed_view.OLD_TRACKER_MORE_KEY)
+        self.assertEqual(more.label, "Show 5 more")
+        more.click().run()
+        self.assert_clean(at)
+        self.assertEqual(len(self.legacy_cards(at)), 10)
+        self.assertIn("Showing the newest 10 of 232. Add a word to narrow the search.", self.texts(at, "caption"))
+        self.assertEqual(len(self.http.find("GET", SEARCH)), reads, "the next cards come from the page already read")
+        # Up to the hub's page of 50: then no more button, and the caption says how many the hub has.
+        for _ in range(8):
+            at.button(key=feed_view.OLD_TRACKER_MORE_KEY).click().run()
+        self.assert_clean(at)
+        self.assertEqual(len(self.legacy_cards(at)), 50)
+        self.assertNotIn(feed_view.OLD_TRACKER_MORE_KEY, [b.key for b in at.button])
+        self.assertIn("Showing the newest 50 of 232. Add a word to narrow the search.", self.texts(at, "caption"))
+        # Another query starts at the first page again.
+        at.text_input(key="br_search").set_value("counter-uas army").run()
+        self.assert_clean(at)
+        self.assertEqual(len(self.legacy_cards(at)), feed_view.OLD_TRACKER_PAGE)
+        self.assert_plain(at)
+
+    def test_a_search_only_the_old_tracker_matches(self):
+        hits = old_tracker_hits()[:1]
+        at = self.search("spetstechnoexport", hits, total=60)
+        titles = self.group_titles(at)
+        self.assertEqual(titles[0], "In your briefings · 0")
+        self.assertEqual(titles[-1], "From the old tracker · 60")
+        self.assertIn(feed_view.NO_HITS_ANYWHERE, self.html(at))
+        self.assertEqual(len(self.legacy_cards(at)), 1)
+        self.assertIn("Showing the newest 1 of 60. Add a word to narrow the search.", self.texts(at, "caption"))
+        self.assert_plain(at)
+
+    def test_no_old_tracker_group_without_matches_or_on_an_older_hub(self):
+        at = self.search("counter-uas", [])
+        self.assertNotIn(feed_view.OLD_TRACKER, self.html(at))
+        body = fx.search_hits("counter-uas")
+        del body["legacy"]  # a hub before schema 14
+        self.http.on("GET", SEARCH, body)
+        self.fresh()
+        at.text_input(key="br_search").set_value("counter-uas").run()
+        self.assert_clean(at)
+        self.assertEqual(self.group_titles(at)[0], "In your briefings · 2")
+        self.assertNotIn(feed_view.OLD_TRACKER, self.html(at))
+
+    def test_a_failed_old_tracker_search_is_said(self):
+        # every briefing is loaded: the failure costs only the old tracker's list
+        self.http.on("GET", SEARCH, FakeResponse(500, {"error": "internal_error"}))
+        at = self.app()
+        at.text_input(key="br_search").set_value("counter-uas").run()
+        self.assert_clean(at)
+        self.assertIn("Couldn't search the old tracker: Something went wrong on the server.", self.texts(at, "caption"))
+        self.assertNotIn("Couldn't search earlier briefings", " ".join(self.texts(at, "caption")))
+        self.assertEqual(self.group_titles(at)[0], "In your briefings · 2")
+        self.assertEqual(len(self.cards(at)), 2)
 
 
 class PagingTests(BriefingCase):

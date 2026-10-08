@@ -117,7 +117,8 @@ def requested_of(row: Mapping) -> dict | None:
 
 
 def canonical_of(row: Mapping) -> dict | None:
-    """The story a repeated row repeats (`canonical`: {event_id, title, url, story_id, briefing}), or None."""
+    """The story a repeated row repeats (`canonical`: {event_id, title, url, story_id, briefing}, and `label` for one the
+    old tracker ran), or None."""
     canonical = row.get("canonical")
     return dict(canonical) if isinstance(canonical, Mapping) else None
 
@@ -217,14 +218,16 @@ def dateline_html(row: Mapping, tz: str) -> str:
 
 def same_html(row: Mapping) -> str:
     """'Same story as: <headline> · in your Sat Oct 3 · morning briefing', from the hub's `canonical`; '' when the hub
-    names no story."""
+    names no story. A story the old tracker ran (hub schema v14) has no briefing; its `label` says where it ran:
+    'Same story as: <headline> · From the old tracker · Sep 20, 2026 · 9am digest'."""
     canonical = canonical_of(row) or {}
     title = one_line(canonical.get("title"))
     if not title:
         return ""
     briefing = briefing_of(canonical.get("briefing"))
     name = one_line(briefing.get("briefing_label")) if briefing else ""
-    where = f" · in your {name}" if name else (" · in your briefing" if briefing else "")
+    label = one_line(canonical.get("label"))
+    where = (f" · in your {name}" if name else " · in your briefing") if briefing else (f" · {label}" if label else "")
     return f'<div class="rejected-rationale">Same story as: <strong>{esc(title)}</strong>{esc(where)}</div>'
 
 

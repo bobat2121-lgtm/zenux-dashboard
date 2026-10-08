@@ -56,7 +56,8 @@ def latest_edition_id(workspace_id: str) -> int | None:
 
 @st.cache_data(ttl=READ_TTL, show_spinner=False)
 def search_editions(workspace_id: str, query: str, days: int = api.SEARCH_DAYS, limit: int = api.SEARCH_LIMIT) -> dict:
-    """GET /editions/search: briefing stories of the last `days` days matching every word of the query."""
+    """GET /editions/search: briefing stories of the last `days` days matching every word of the query, and the old
+    tracker's matching stories (`legacy`)."""
     return api.search_editions(_ws(workspace_id), query, days=days, limit=limit)
 
 

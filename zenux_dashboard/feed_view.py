@@ -9,7 +9,12 @@ page reruns on a timer (the new-briefing check is the shell's own small fragment
 The search ("Search your briefings and what was left out (last 90 days)") shows two groups: "In your briefings · N"
 (matching stories of the briefings loaded below show as full cards, and GET /editions/search lists the matches of
 earlier briefings of the last 90 days under them, each with Show it) and "Left out · N" (left_out.render_search_group:
-GET /rejected?q=&days=90, with the shared left-out row).
+GET /rejected?q=&days=90, with the shared left-out row). After them, only when it has matches, "From the old tracker ·
+N" (docs/SPEC-LEGACY-CONTEXT.md, section 4): the stories the old tracker published before ZENITH, from the same GET
+/editions/search (its `legacy` list, the whole archive), newest first, OLD_TRACKER_PAGE at a time with "Show N more".
+Each is a plain card ("From the old tracker · Sep 20, 2026 · 9am digest", the headline, the summary, its link and a
+corrected note when there is one) with no story icons: it is reference, not a story to rate, so it comes last and a
+broad word ("drone") never pushes the analyst's own left-out stories screens down.
 
 A briefing (edition) card: the kicker (LATEST on the newest, the hub's briefing name "Sat Oct 4 · morning briefing",
 age, clock time, story count, and the "how much" setting when it is not Standard), the editor's one-sentence
@@ -40,15 +45,16 @@ left out of the story counts, the hero tiles, the coverage-area split and "Why a
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any, Mapping
 
 import streamlit as st
 
 from . import actions, api, data, labels, left_out, links, owner, status, tuneup, tuning_view, ui
 from .config import Workspace
-from .fmt import (MIN_TIME, as_int, as_list, chip, clip, dicts, empty_state, esc, esc_lines, fmt_clock, fmt_date,
-                  fmt_day, join_and, link, md_label, module_color, module_name, one_line, parse_time, pick, plural,
-                  relative_time, safe_url, tag_style)
+from .fmt import (MIN_TIME, as_int, as_list, chip, clip, dicts, domain_of, empty_state, esc, esc_lines, fmt_clock,
+                  fmt_date, fmt_day, join_and, link, md_label, module_color, module_name, one_line, parse_time, pick,
+                  plural, relative_time, safe_url, tag_style)
 
 PAGE_SIZE = 5
 MAX_PAGES = 20
@@ -68,6 +74,15 @@ NO_HITS_ANYWHERE = "No matching stories in your briefings of the last 90 days."
 EARLIER = "Earlier briefings"
 EARLIER_MORE = "Showing the newest {n} matches from earlier briefings. Add a word to narrow the search."
 SEARCH_FAILED = "Couldn't search earlier briefings: {reason}"
+OLD_TRACKER = "From the old tracker"
+OLD_TRACKER_NOTE = ("Stories from the old tracker's daily digests (Aug 9 to Oct 6, 2026), newest first. For reference "
+                    "only.")
+OLD_TRACKER_PAGE = 5  # old-tracker cards shown before "Show N more"
+OLD_TRACKER_MORE_KEY = "br_old_more"
+OLD_TRACKER_MORE = "Showing the newest {n} of {total}. Add a word to narrow the search."
+OLD_TRACKER_FAILED = "Couldn't search the old tracker: {reason}"
+OLD_TRACKER_CORRECTED = "Corrected later:"
+OLD_TRACKER_FIXED = "A later digest corrected it."  # a corrected story without the hub's note
 LINKED = "Showing the briefing you linked."
 LINKED_GONE = "The briefing you linked isn't available any more."
 STAGING_EMPTY = ("ZENITH is collecting. Briefings start after you sign off on What ZENITH looks for, at the top of "
@@ -743,15 +758,20 @@ def group_title_html(title: str, count: int) -> str:
     return f'<div class="zx-group-title">{esc(title)} · {count}</div>'
 
 
-def earlier_hits(ws: Workspace, query: str, shown_ids: set) -> tuple[list[dict], bool, api.ApiError | None]:
-    """(hits of GET /editions/search outside the briefings drawn here, more beyond this page, the read's error)."""
+def hub_search(ws: Workspace, query: str) -> tuple[Any, api.ApiError | None]:
+    """(GET /editions/search for the query, the read's error): one read serves the earlier briefings and the old
+    tracker."""
     try:
-        body = data.search_editions(ws.id, query)
+        return data.search_editions(ws.id, query), None
     except api.ApiError as exc:
-        return [], False, exc
+        return None, exc
+
+
+def earlier_hits(body: Any, shown_ids: set) -> tuple[list[dict], bool]:
+    """(hits of GET /editions/search outside the briefings drawn here, more beyond this page)."""
     hits = [h for h in dicts(pick(body, "hits", default=[]))
             if as_int(h.get("edition_id")) is not None and as_int(h.get("edition_id")) not in shown_ids]
-    return hits, pick(body, "has_more") is True, None
+    return hits, pick(body, "has_more") is True
 
 
 def _open_hit(edition: int, item: int | None) -> None:
@@ -787,6 +807,76 @@ def render_earlier(ws: Workspace, hits: list[dict], more: bool, error: api.ApiEr
                       icon=":material/arrow_forward:", on_click=_open_hit, args=(edition, item))
         if more:
             st.caption(EARLIER_MORE.format(n=len(hits)))
+
+
+def old_tracker_of(body: Any) -> tuple[list[dict], int]:
+    """(the old tracker's matches in a GET /editions/search body, their true total): its `legacy` list (schema 14),
+    newest first as the hub orders them. An older hub has none: ([], 0)."""
+    legacy = _map(pick(body, "legacy"))
+    hits = [h for h in dicts(legacy.get("hits")) if one_line(pick(h, "headline", "summary"))]
+    total = as_int(legacy.get("total"))
+    return hits, max(total if total is not None else len(hits), len(hits))
+
+
+def old_tracker_label(hit: Mapping) -> str:
+    """The card's first line, "From the old tracker · Sep 20, 2026 · 9am digest": the hub's `label`, else the date
+    alone (the digest's time is left out, not guessed)."""
+    label = one_line(hit.get("label"))
+    if label:
+        return label
+    try:
+        day = datetime.strptime(one_line(hit.get("date")), "%Y-%m-%d")
+    except ValueError:
+        return OLD_TRACKER
+    return f"{OLD_TRACKER} · {day:%b} {day.day}, {day.year}"
+
+
+def old_tracker_html(hit: Mapping) -> str:
+    """One old-tracker story as a plain card: its label, headline, summary, link and a corrected note. A headline the
+    old tracker built from the summary (the same text, or its cut-off start) shows once: the summary in full."""
+    headline, summary = one_line(hit.get("headline")), one_line(hit.get("summary"))
+    stem = headline.rstrip(" .…")
+    if summary and (not headline or summary == headline or (stem and summary.startswith(stem))):
+        headline, summary = summary, ""
+    url = safe_url(hit.get("url"))
+    parts = [f'<div class="legacy-label">{esc(old_tracker_label(hit))}</div>',
+             f'<div class="legacy-title">{esc(headline)}</div>']
+    if summary:
+        parts.append(f'<div class="legacy-summary">{esc(summary)}</div>')
+    if url:
+        source = domain_of(url) or "Read the story"
+        parts.append(f'<div class="legacy-source">{link(url, source + " ↗")}</div>')
+    if hit.get("corrected") is True:
+        note = one_line(hit.get("correction")) or OLD_TRACKER_FIXED
+        parts.append(f'<div class="legacy-correction"><b>{esc(OLD_TRACKER_CORRECTED)}</b> {esc(note)}</div>')
+    return f'<article class="legacy-card">{"".join(parts)}</article>'
+
+
+def render_old_tracker(body: Any, error: api.ApiError | None, query: str) -> None:
+    """"From the old tracker · N": the old tracker's matches as plain cards, newest first, with no story icons: the
+    first OLD_TRACKER_PAGE, then "Show N more" up to the hub's page (kept per query the way the left-out search keeps
+    its rows), and "Showing the newest n of N" while the hub has more than are drawn. Drawn only when there are matches
+    (or the read failed, which is said)."""
+    if error is not None:
+        st.caption(md_label(OLD_TRACKER_FAILED.format(reason=ui.plain_error(error)[0])))
+        return
+    hits, total = old_tracker_of(body)
+    if not hits:
+        return
+    slot = ("old_tracker", one_line(query).casefold())
+    limit = left_out.shown(slot, OLD_TRACKER_PAGE)
+    drawn = hits[:limit]
+    with st.container(key="zx_old_tracker"):
+        st.markdown(group_title_html(OLD_TRACKER, total), unsafe_allow_html=True)
+        st.caption(OLD_TRACKER_NOTE)
+        for hit in drawn:
+            st.markdown(old_tracker_html(hit), unsafe_allow_html=True)
+        remaining = len(hits) - len(drawn)
+        if remaining > 0:
+            left_out.more_button(f"Show {min(OLD_TRACKER_PAGE, remaining)} more", OLD_TRACKER_MORE_KEY, slot,
+                                 limit + OLD_TRACKER_PAGE)
+        if total > len(drawn):
+            st.caption(OLD_TRACKER_MORE.format(n=len(drawn), total=total))
 
 
 def back_to_latest(message: str) -> None:
@@ -890,9 +980,11 @@ def render(ws: Workspace) -> None:
     shown = search(editions, query)
     earlier: list[dict] = []
     earlier_more, earlier_error = False, None
+    found, found_error = hub_search(ws, query) if query else (None, None)  # the old tracker is searched on every query
     if query and more:  # every briefing is loaded otherwise
         drawn = {as_int(edition_id(e)) for e in editions} | ({as_int(links.focus("edition"))} if linked else set())
-        earlier, earlier_more, earlier_error = earlier_hits(ws, query, drawn)
+        earlier, earlier_more = earlier_hits(found, drawn)
+        earlier_error = found_error
     if query:
         hits = sum(len(items_of(e)) for e in shown) + len(earlier)
         st.markdown(group_title_html(IN_BRIEFINGS, hits), unsafe_allow_html=True)
@@ -907,6 +999,7 @@ def render(ws: Workspace) -> None:
     if query:
         render_earlier(ws, earlier, earlier_more, earlier_error, used)
         left_out.render_search_group(ws, query, used)
+        render_old_tracker(found, found_error, query)  # reference only: after the analyst's own stories
     if more and st.button("Load earlier briefings", key=MORE_KEY):
         st.session_state[pages_key(ws)] = page_count(ws) + 1
         st.rerun()

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import unittest
 
+import fixtures as fx
 import fixtures_briefing as fb
 import helpers  # noqa: F401  (puts dashboard/ on sys.path)
 from zenux_dashboard import actions, feed_view, fmt, labels
@@ -253,6 +254,52 @@ class ConferenceListTests(unittest.TestCase):
         hits = feed_view.search([edition], "ausa")
         self.assertEqual([i.get("kind") for i in hits[0]["items"]], ["conference_list"])
         self.assertEqual(feed_view.search([edition], "conference_id"), [])
+
+
+class OldTrackerTests(unittest.TestCase):
+    """docs/SPEC-LEGACY-CONTEXT.md section 4: the old tracker's matches in the story search, read tolerantly."""
+
+    def test_the_list_and_its_total(self):
+        hit = fx.legacy_hit(7, "Teal 2 drones reach a new Army unit", "Deliveries to the 10th Mountain Division.")
+        body = fx.search_hits("teal", legacy=[hit, {"headline": " ", "summary": None}, "x"], legacy_total=1)
+        self.assertEqual(feed_view.old_tracker_of(body), ([hit], 1))  # never fewer than the stories listed
+        self.assertEqual(feed_view.old_tracker_of(fx.search_hits("teal", legacy=[hit], legacy_total=40)), ([hit], 40))
+        self.assertEqual(feed_view.old_tracker_of(fx.search_hits("teal", legacy=[hit]))[1], 1)
+        for older in ({"hits": []}, {"legacy": None}, {"legacy": {"hits": "nope"}}, None, []):
+            with self.subTest(body=older):
+                self.assertEqual(feed_view.old_tracker_of(older), ([], 0))
+
+    def test_the_label(self):
+        hit = fx.legacy_hit(7, "A story", date="2026-09-20", slot="9am ET")
+        self.assertEqual(feed_view.old_tracker_label(hit), "From the old tracker · Sep 20, 2026 · 9am digest")
+        # without the hub's label, the date alone: the digest's time is not guessed
+        self.assertEqual(feed_view.old_tracker_label({"date": "2026-08-09", "slot": "7am ET"}),
+                         "From the old tracker · Aug 9, 2026")
+        for odd in ({}, {"date": "2026-02-30"}, {"date": None}, {"label": "  "}):
+            with self.subTest(hit=odd):
+                self.assertEqual(feed_view.old_tracker_label(odd), "From the old tracker")
+
+    def test_the_card(self):
+        head = '<article class="legacy-card"><div class="legacy-label">From the old tracker · Sep 20, 2026 · 9am digest</div>'
+        plain = fx.legacy_hit(7, "Teal 2 drones <b>reach</b> a new Army unit", None, url="javascript:alert(1)")
+        self.assertEqual(feed_view.old_tracker_html(plain),
+                         head + '<div class="legacy-title">Teal 2 drones &lt;b&gt;reach&lt;/b&gt; a new Army unit</div>'
+                         '</article>')
+        # a headline the same as the summary, or cut from it (with or without its ellipsis), shows once in full
+        for headline in ("Waymo is blocked in Santa Monica overnight.", "Waymo is blocked in Santa", "Waymo is blocked…"):
+            with self.subTest(headline=headline):
+                hit = fx.legacy_hit(7, headline, "Waymo is blocked in Santa Monica overnight.", url=None)
+                self.assertEqual(feed_view.old_tracker_html(hit), head + '<div class="legacy-title">Waymo is blocked in '
+                                 'Santa Monica overnight.</div></article>')
+        only = fx.legacy_hit(7, "", "Only a summary was stored.", url=None)
+        self.assertIn('<div class="legacy-title">Only a summary was stored.</div></article>', feed_view.old_tracker_html(only))
+        # a corrected story without the hub's note still says so; only a real `true` counts
+        fixed = fx.legacy_hit(7, "A story", "Its text.", url="https://news.google.com/x", corrected=True)
+        self.assertTrue(feed_view.old_tracker_html(fixed).endswith(
+            '<div class="legacy-source"><a class="source-link" href="https://news.google.com/x" target="_blank" '
+            'rel="noopener noreferrer">Google News ↗</a></div><div class="legacy-correction"><b>Corrected later:</b> '
+            'A later digest corrected it.</div></article>'))
+        self.assertNotIn("legacy-correction", feed_view.old_tracker_html(dict(fixed, corrected="true")))
 
 
 class ReceiptTests(unittest.TestCase):

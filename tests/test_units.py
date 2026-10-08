@@ -744,7 +744,10 @@ class StylesheetTests(unittest.TestCase):
                     "cm-entry-note", "cm-entry-meta", "cm-dlg-head",
                     # docs/SPEC-MIGRATION-BUILD.md section 7: the Friday "Conferences coming up" card
                     "st-key-zx_conf_", "conf-card", "conf-title", "conf-summary", "conf-month", "conf-month-label",
-                    "conf-lines", "conf-line", "conf-flag", "conf-link", "conf-more", "conf-text-block"):
+                    "conf-lines", "conf-line", "conf-flag", "conf-link", "conf-more", "conf-text-block",
+                    # docs/SPEC-LEGACY-CONTEXT.md section 4: the search's "From the old tracker" cards
+                    "st-key-zx_old_tracker", "legacy-card", "legacy-label", "legacy-title", "legacy-summary",
+                    "legacy-source", "legacy-correction"):
             with self.subTest(cls=cls):
                 self.assertIn(cls, self.css)
         for colour in ("#34d399", "#fbbf24", "#f87171", "#38bdf8"):  # the pill colours of the contrast test

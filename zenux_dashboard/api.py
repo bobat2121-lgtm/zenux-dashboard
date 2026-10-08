@@ -242,7 +242,10 @@ def latest_edition(ws: Workspace) -> dict:
 def search_editions(ws: Workspace, query: str, *, days: int = SEARCH_DAYS, limit: int = SEARCH_LIMIT,
                     offset: int = 0) -> dict:
     """GET /editions/search?q=&days=&limit=&offset=: briefing stories matching every word, newest briefing first:
-    {q, days, total, returned, has_more, next_offset, hits: [{edition_id, item_id, rank, headline, ...}]}."""
+    {q, days, total, returned, has_more, next_offset, hits: [{edition_id, item_id, rank, headline, ...}]}. Schema 14
+    adds `legacy`, the old tracker's matching stories over its whole archive, newest first, with the same limit and
+    offset: {total, returned, has_more, next_offset, hits: [{kind: "old_tracker", ref, date, slot, label, headline,
+    summary, url, corrected, correction, ...}]}."""
     words = _text(query)
     if not words:
         raise invalid("Type a word to search your briefings for.")

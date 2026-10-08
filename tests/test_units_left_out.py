@@ -104,6 +104,17 @@ class SameStoryAndLaterTests(unittest.TestCase):
         hostile = fl.row(2, canonical={"title": "A <b>deal</b>", "briefing": None})
         self.assertIn("Same story as: <strong>A &lt;b&gt;deal&lt;/b&gt;</strong>", lo.same_html(hostile))
 
+    def test_same_line_names_a_story_the_old_tracker_ran(self):
+        old = fl.old_tracker_row()
+        self.assertEqual(lo.same_html(old), '<div class="rejected-rationale">Same story as: <strong>Red Cat ships Black '
+                                            'Widow drones to the Army</strong> · From the old tracker · Sep 20, 2026 · '
+                                            '9am digest</div>')
+        self.assertEqual(lo.reason_chip(old), "")  # the line already names what it repeats
+        self.assertIsNone(lo.briefing_of(lo.canonical_of(old)["briefing"]))  # nothing to show in a briefing
+        # a label never stands in for a briefing's name
+        both = fl.row(3, canonical={"title": "A deal", "label": "From the old tracker", "briefing": {"edition_id": 12}})
+        self.assertIn("</strong> · in your briefing</div>", lo.same_html(both))
+
     def test_briefing_of_needs_an_edition(self):
         self.assertIsNone(lo.briefing_of({"item_id": 3}))
         self.assertIsNone(lo.briefing_of(None))

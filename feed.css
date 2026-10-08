@@ -357,6 +357,15 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
 .conf-flag { display: inline-flex; margin-right: 8px; padding: 0 7px; border: 1px solid rgba(232,121,249,.55); border-radius: 999px; background: rgba(232,121,249,.14); color: #e879f9; font: 700 12px/18px var(--zx-font); letter-spacing: .4px; white-space: nowrap; }
 .conf-link { margin-left: 8px; font: 500 13px/21px var(--zx-font); white-space: nowrap; }
 .conf-more, .conf-text-block { margin-top: 10px; color: var(--zx-text-soft); font: 400 14px/21px var(--zx-font); }
+/* The search's "From the old tracker" group (docs/SPEC-LEGACY-CONTEXT.md 4): plain grey-edged cards, no story icons. */
+.st-key-zx_old_tracker { gap: 10px !important; }
+.legacy-card { padding: 14px 20px 12px; border: 1px solid var(--zx-line); border-left: 3px solid var(--zx-muted); border-radius: 10px; background: var(--zx-card); color: var(--zx-text-soft); font: 400 14px/21px var(--zx-font); overflow-wrap: anywhere; }
+.legacy-label { color: var(--zx-muted); font: 500 12px/18px var(--zx-font); letter-spacing: .2px; }
+.legacy-title { margin-top: 4px; color: var(--zx-white); font: 700 17px/1.45 var(--zx-font); }
+.legacy-summary { margin-top: 4px; color: var(--zx-text-soft); font: 400 14px/21px var(--zx-font); }
+.legacy-source .source-link { min-height: 26px; }
+.legacy-correction { margin-top: 8px; padding: 6px 10px; border-left: 3px solid var(--zx-warn); color: var(--zx-text-soft); font: 400 13px/20px var(--zx-font); }
+.legacy-correction b { color: var(--zx-white); font-weight: 600; }
 .filtered-row { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .filtered-row .rejected-title { font-size: 17px; }
 /* ------------------------------------------------------------------ Tuning and What ZENITH looks for */
@@ -452,6 +461,7 @@ div:has(> [class*="st-key-zx_item_"]):not(:has(+ div > [class*="st-key-zx_item_"
   .conf-card { margin-inline: 18px; padding: 12px 14px; }
   .conf-title { font-size: 18px; }
   [class*="st-key-zx_row_"] { padding: 14px 14px 8px; }
+  .legacy-card { padding: 12px 14px 10px; }
   /* Phone: the tabs take the first row; the workspace switcher and the popovers share the second. */
   [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) { flex-wrap: wrap !important; row-gap: 6px; padding-bottom: 10px; }
   [data-testid="stHorizontalBlock"]:has([aria-label="Dashboard view"]) > [data-testid="stColumn"]:first-child { flex: 1 1 100% !important; width: 100% !important; }

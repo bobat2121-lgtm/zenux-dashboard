@@ -148,6 +148,17 @@ def muted_rows() -> list[dict]:
     ]
 
 
+def old_tracker_row(event_id: int = 7320, **extra) -> dict:
+    """An already-reported row whose story the old tracker ran (hub schema v14): no Zenith story (story_id null), and a
+    `canonical` that names the old story with where it ran (`label`), with no briefing."""
+    return row(event_id, decision="already_covered", score=None, reason_code="already_covered", reason="Already reported",
+               title="Red Cat delivers more Black Widow systems", module=DEF, source_key="defense-news",
+               source_label="Defense News", hours=7, story_id=None,
+               canonical={"event_id": None, "title": "Red Cat ships Black Widow drones to the Army",
+                          "url": "https://news.example.com/old-85", "story_id": None, "briefing": None,
+                          "label": "From the old tracker · Sep 20, 2026 · 9am digest"}, **extra)
+
+
 def same_rows() -> list[dict]:
     """GET /rejected?filter=same_story: the editor's duplicate and already-reported decisions."""
     return [r for r in all_rows() if r["decision"] in ("duplicate", "already_covered")]
